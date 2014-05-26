@@ -82,7 +82,6 @@ install: $(MODULES)
 	install -D $(MODULES) $(DEST)/MaxScale/modules
 	(cd readwritesplit; make DEST=$(DEST) install)
 
-
 cleantests:
 	$(MAKE) -C readwritesplit/test cleantests
 	$(MAKE) -C test cleantests

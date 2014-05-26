@@ -49,8 +49,6 @@ MODULES= libdebugcli.so libreadconnroute.so libtestroute.so
 
 
 all:	$(MODULES)
-	(cd readwritesplit; make )
-	(cd binlog; make )
 
 libtestroute.so: $(TESTOBJ)
 	$(CC) $(LDFLAGS) $(TESTOBJ) $(LIBS) -o $@
@@ -70,18 +68,15 @@ libreadwritesplit.so:
 clean:
 	rm -f $(OBJ) $(MODULES)
 	(cd readwritesplit; touch depend.mk; make clean)
-	(cd binlog; touch depend.mk; make clean)
 
 tags:
 	ctags $(SRCS) $(HDRS)
 	(cd readwritesplit; make tags)
-	(cd binlog; make tags)
 
 depend:
 	@rm -f depend.mk
 	cc -M $(CFLAGS) $(SRCS) > depend.mk
 	(cd readwritesplit; touch depend.mk ; make depend)
-	(cd binlog; touch depend.mk ; make depend)
 
 install: $(MODULES)
 	install -D $(MODULES) $(DEST)/MaxScale/modules

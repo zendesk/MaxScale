@@ -3434,49 +3434,27 @@ static bool prep_stmt_drop(
  * SERVER_IS_DOWN is the only status to skip.
  *
  * @param servers       The list of servers
- * @param		The number of servers
+ * @param               The number of servers
  * @return              The Master found
  *
  */
+
 static BACKEND *get_root_master(backend_ref_t *servers, int router_nservers) {
-        int i = 0;
-        BACKEND * master_host = NULL;
+	int i = 0;
+	BACKEND * master_host = NULL;
 
-        /* (1) find root server(s) with lowest replication depth level */
-        for (i = 0; i< router_nservers; i++) {
-                BACKEND* b = NULL;
-                b = servers[i].bref_backend;
-                if (b && (! SERVER_IS_DOWN(b->backend_server))) {
-                        if (master_host && b->backend_server->depth < master_host->backend_server->depth) {
-                                master_host = b;
-                        } else {
-                                if (master_host == NULL) {
-                                        master_host = b;
-                                }
-                        }
-                }
-        }
-
-        /* (2) get the status of server(s) with lowest replication level and check it against SERVER_MASTER bitvalue */
-        if (master_host) {
-                int found = 0;
-                for (i = 0; i<router_nservers; i++) {
-                        BACKEND* b = NULL;
-                        b = servers[i].bref_backend;
-                        if (b && (! SERVER_IS_DOWN(b->backend_server)) && (b->backend_server->depth == master_host->backend_server->depth)) {
-                                if (b->backend_server->status & SERVER_MASTER) {
-                                        master_host = b;
-                                        found = 1;
-                                }
-                        }
-                }
-                if (!found)
-                        master_host = NULL;
-
-		if (found && SERVER_IN_MAINT(master_host->backend_server))
-			master_host = NULL;
-        }
-
-        return master_host;
+	for (i = 0; i< router_nservers; i++) {
+		BACKEND* b = NULL;
+		b = servers[i].bref_backend;
+		if (b && (b->backend_server->status & (SERVER_MASTER|SERVER_MAINT)) == SERVER_MASTER) {
+			if (master_host && b->backend_server->depth < master_host->backend_server->depth) {
+				master_host = b;
+			} else {
+				if (master_host == NULL) {
+					master_host = b;
+				}
+			}
+		}
+	}
+	return master_host;
 }
-

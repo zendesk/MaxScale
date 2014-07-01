@@ -47,7 +47,7 @@ CLIOBJ=$(CLISRCS:.c=.o)
 SRCS=$(TESTSRCS) $(READCONSRCS) $(DEBUGCLISRCS) cli.c
 OBJ=$(SRCS:.c=.o)
 LIBS=$(UTILSPATH)/skygw_utils.o -lssl -llog_manager
-MODULES= libdebugcli.so libreadconnroute.so libtestroute.so libcli.so
+MODULES= libdebugcli.so libreadconnroute.so libtestroute.so libcli.so libapi.so
 
 
 all:	$(MODULES)
@@ -67,25 +67,31 @@ libcli.so: $(CLIOBJ)
 libreadwritesplit.so:
 #	(cd readwritesplit; touch depend.mk ; make; cp $@ ..)
 
+libapi.so:
+	(cd api; touch depend.mk ; make; cp $@ ..)
 .c.o:
 	$(CC) $(CFLAGS) $< -o $@
 
 clean:
 	rm -f $(OBJ) $(MODULES)
 	(cd readwritesplit; touch depend.mk; make clean)
+	(cd api; touch depend.mk; make clean)
 
 tags:
 	ctags $(SRCS) $(HDRS)
 	(cd readwritesplit; make tags)
+	(cd api; make tags)
 
 depend:
 	@rm -f depend.mk
 	cc -M $(CFLAGS) $(SRCS) > depend.mk
 	(cd readwritesplit; touch depend.mk ; make depend)
+	(cd api; touch depend.mk ; make depend)
 
 install: $(MODULES)
 	install -D $(MODULES) $(DEST)/MaxScale/modules
 	(cd readwritesplit; make DEST=$(DEST) install)
+	(cd api; make DEST=$(DEST) install)
 
 cleantests:
 	$(MAKE) -C readwritesplit/test cleantests

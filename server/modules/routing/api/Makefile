@@ -16,7 +16,7 @@
 #
 # Revision History
 # Date		Who			Description
-# 27/06/13	Mark Riddoch		Initial framework put in place
+# 9 July 2014	Martin Brampton		Makefile for API
 
 include ../../../../build_gateway.inc
 
@@ -25,6 +25,8 @@ UTILSPATH 	:= $(ROOT_PATH)/utils
 QCLASSPATH 	:= $(ROOT_PATH)/query_classifier
 
 CC=cc
+# Note that in the paths below "php" is correct for CentOS, but needs
+# to be replaced by "php5" for Ubuntu/Debian
 CFLAGS=-c -fPIC -I/usr/include -I../../include -I../../../include \
 	-I/usr/include/php/ \
 	-I/usr/include/php/main \

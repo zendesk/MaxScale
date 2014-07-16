@@ -44,10 +44,13 @@ DEBUGCLISRCS=debugcli.c debugcmd.c
 DEBUGCLIOBJ=$(DEBUGCLISRCS:.c=.o)
 CLISRCS=cli.c debugcmd.c
 CLIOBJ=$(CLISRCS:.c=.o)
+WEBSRCS=webserver.o
+WEBOBJ=$(WEBSRCS:.c=.o)
 SRCS=$(TESTSRCS) $(READCONSRCS) $(DEBUGCLISRCS) cli.c
 OBJ=$(SRCS:.c=.o)
 LIBS=$(UTILSPATH)/skygw_utils.o -lssl -llog_manager
-MODULES= libdebugcli.so libreadconnroute.so libtestroute.so libcli.so libapi.so
+MODULES= libdebugcli.so libreadconnroute.so libtestroute.so libcli.so \
+	libwebserver.so
 
 
 all:	$(MODULES)
@@ -63,6 +66,9 @@ libdebugcli.so: $(DEBUGCLIOBJ)
 
 libcli.so: $(CLIOBJ)
 	$(CC) $(LDFLAGS) $(CLIOBJ) $(LIBS) -o $@
+
+libwebserver.so: $(WEBOBJ)
+	$(CC) $(LDFLAGS) $(WEBOBJ) $(LIBS) -o $@
 
 libreadwritesplit.so:
 #	(cd readwritesplit; touch depend.mk ; make; cp $@ ..)
@@ -89,7 +95,7 @@ depend:
 	(cd api; touch depend.mk ; make depend)
 
 install: $(MODULES)
-	install -D $(MODULES) $(DEST)/MaxScale/modules
+	install -D $(MODULES) $(DEST)/modules
 	(cd readwritesplit; make DEST=$(DEST) install)
 	(cd api; make DEST=$(DEST) install)
 

@@ -35,7 +35,7 @@
 
 MODULE_INFO 	info = {
 	MODULE_API_ROUTER,
-	MODULE_ALPHA_RELEASE,
+	MODULE_BETA_RELEASE,
 	ROUTER_VERSION,
 	"A Read/Write splitting router for enhancement read scalability"
 };
@@ -99,6 +99,13 @@ static backend_ref_t* get_bref_from_dcb(ROUTER_CLIENT_SES* rses, DCB* dcb);
 
 static  uint8_t getCapabilities (ROUTER* inst, void* router_session);
 
+#if defined(NOT_USED)
+static bool router_option_configured(
+        ROUTER_INSTANCE* router,
+        const char*      optionstr,
+        void*            data);
+#endif
+
 #if defined(PREP_STMT_CACHING)
 static prep_stmt_t* prep_stmt_init(prep_stmt_type_t type, void* id);
 static void         prep_stmt_done(prep_stmt_t* pstmt);
@@ -120,7 +127,10 @@ int bref_cmp_current_load(
         const void* bref1,
         const void* bref2);
 
-
+/**
+ * The order of functions _must_ match with the order the select criteria are
+ * listed in select_criteria_t definition in readwritesplit.h
+ */
 int (*criteria_cmpfun[LAST_CRITERIA])(const void*, const void*)=
 {
         NULL,
@@ -145,7 +155,7 @@ static bool get_dcb(
         ROUTER_CLIENT_SES* rses,
         backend_type_t     btype);
 
-static void rwsplit_process_options(
+static void rwsplit_process_router_options(
         ROUTER_INSTANCE* router,
         char**           options);
 
@@ -302,39 +312,104 @@ ROUTER_OBJECT* GetModuleObject()
 
 static void refreshInstance(
         ROUTER_INSTANCE*  router,
-        CONFIG_PARAMETER* param)
+        CONFIG_PARAMETER* singleparam)
 {
-        config_param_type_t paramtype;
+        CONFIG_PARAMETER*   param;
+        bool                refresh_single;
         
-        paramtype = config_get_paramtype(param);
+        if (singleparam != NULL)
+        {
+                param = singleparam;
+                refresh_single = true;
+        }
+        else
+        {
+                param = router->service->svc_config_param;
+                refresh_single = false;
+        }
         
-        if (paramtype == COUNT_TYPE)
+        while (param != NULL)         
         {
-                if (strncmp(param->name, "max_slave_connections", MAX_PARAM_LEN) == 0)
+                config_param_type_t paramtype;
+                
+                paramtype = config_get_paramtype(param);
+        
+                if (paramtype == COUNT_TYPE)
                 {
-                        router->rwsplit_config.rw_max_slave_conn_percent = 0;
-                        router->rwsplit_config.rw_max_slave_conn_count = 
-                                config_get_valint(param, NULL, paramtype);
+                        if (strncmp(param->name, "max_slave_connections", MAX_PARAM_LEN) == 0)
+                        {
+                                router->rwsplit_config.rw_max_slave_conn_percent = 0;
+                                router->rwsplit_config.rw_max_slave_conn_count = 
+                                        config_get_valint(param, NULL, paramtype);
+                        }
+                        else if (strncmp(param->name, 
+                                        "max_slave_replication_lag", 
+                                        MAX_PARAM_LEN) == 0)
+                        {
+                                router->rwsplit_config.rw_max_slave_replication_lag = 
+                                        config_get_valint(param, NULL, paramtype);
+                        }
                 }
-                else if (strncmp(param->name, 
-                                "max_slave_replication_lag", 
-                                 MAX_PARAM_LEN) == 0)
+                else if (paramtype == PERCENT_TYPE)
                 {
-                        router->rwsplit_config.rw_max_slave_replication_lag = 
+                        if (strncmp(param->name, "max_slave_connections", MAX_PARAM_LEN) == 0)
+                        {
+                                router->rwsplit_config.rw_max_slave_conn_count = 0;
+                                router->rwsplit_config.rw_max_slave_conn_percent = 
                                 config_get_valint(param, NULL, paramtype);
+                        }
                 }
-        } 
-        else if (paramtype == PERCENT_TYPE)
+                
+                if (refresh_single)
+                {
+                        break;
+                }
+                param = param->next;
+        }
+        
+#if defined(NOT_USED) /*< can't read monitor config parameters */
+        if ((*router->servers)->backend_server->rlag == -2)
         {
-                if (strncmp(param->name, "max_slave_connections", MAX_PARAM_LEN) == 0)
+                rlag_enabled = false;
+        }
+        else
+        {
+                rlag_enabled = true;
+        }
+        /** 
+         * If replication lag detection is not enabled the measure can't be
+         * used in slave selection.
+         */
+        if (!rlag_enabled)
+        {                                
+                if (rlag_limited)
                 {
-                        router->rwsplit_config.rw_max_slave_conn_count = 0;
-                        router->rwsplit_config.rw_max_slave_conn_percent = 
-                        config_get_valint(param, NULL, paramtype);
+                        LOGIF(LE, (skygw_log_write_flush(
+                                LOGFILE_ERROR,
+                                "Warning : Configuration Failed, max_slave_replication_lag "
+                                "is set to %d,\n\t\t      but detect_replication_lag "
+                                "is not enabled. Replication lag will not be checked.",
+                                router->rwsplit_config.rw_max_slave_replication_lag)));
+                }
+            
+                if (router->rwsplit_config.rw_slave_select_criteria == 
+                        LEAST_BEHIND_MASTER)
+                {
+                        LOGIF(LE, (skygw_log_write_flush(
+                                LOGFILE_ERROR,
+                                "Warning : Configuration Failed, router option "
+                                "\n\t\t      slave_selection_criteria=LEAST_BEHIND_MASTER "
+                                "is specified, but detect_replication_lag "
+                                "is not enabled.\n\t\t      "
+                                "slave_selection_criteria=%s will be used instead.",
+                                STRCRITERIA(DEFAULT_CRITERIA))));
+                        
+                        router->rwsplit_config.rw_slave_select_criteria =
+                                DEFAULT_CRITERIA;
                 }
         }
+#endif /*< NOT_USED */
 }
-
 
 /**
  * Create an instance of read/write statement router within the MaxScale.
@@ -345,15 +420,15 @@ static void refreshInstance(
  *
  * @return NULL in failure, pointer to router in success.
  */
-static ROUTER* createInstance(
-        SERVICE* service,
-        char**   options)
+static ROUTER *
+createInstance(SERVICE *service, char **options)
 {
         ROUTER_INSTANCE*    router;
         SERVER*             server;
         int                 nservers;
         int                 i;
         CONFIG_PARAMETER*   param;
+	char		    *weightby;
         
         if ((router = calloc(1, sizeof(ROUTER_INSTANCE))) == NULL) {
                 return NULL; 
@@ -399,6 +474,7 @@ static ROUTER* createInstance(
                 router->servers[nservers]->backend_server = server;
                 router->servers[nservers]->backend_conn_count = 0;
                 router->servers[nservers]->be_valid = false;
+                router->servers[nservers]->weight = 1000;
 #if defined(SS_DEBUG)
                 router->servers[nservers]->be_chk_top = CHK_NUM_BACKEND;
                 router->servers[nservers]->be_chk_tail = CHK_NUM_BACKEND;
@@ -407,6 +483,59 @@ static ROUTER* createInstance(
                 server = server->nextdb;
         }
         router->servers[nservers] = NULL;
+
+	/*
+	 * If server weighting has been defined calculate the percentage
+	 * of load that will be sent to each server. This is only used for
+	 * calculating the least connections, either globally or within a
+	 * service, or the numebr of current operations on a server.
+	 */
+	if ((weightby = serviceGetWeightingParameter(service)) != NULL)
+	{
+		int 	n, total = 0;
+		BACKEND	*backend;
+
+		for (n = 0; router->servers[n]; n++)
+		{
+			backend = router->servers[n];
+			total += atoi(serverGetParameter(
+					backend->backend_server, weightby));
+		}
+		if (total == 0)
+		{
+			LOGIF(LE, (skygw_log_write(LOGFILE_ERROR,
+				"WARNING: Weighting Parameter for service '%s' "
+				"will be ignored as no servers have values "
+				"for the parameter '%s'.\n",
+				service->name, weightby)));
+		}
+		else
+		{
+			for (n = 0; router->servers[n]; n++)
+			{
+				int perc;
+				backend = router->servers[n];
+				perc = (atoi(serverGetParameter(
+						backend->backend_server,
+						weightby)) * 1000) / total;
+				if (perc == 0)
+					perc = 1;
+				backend->weight = perc;
+				if (perc == 0)
+				{
+					LOGIF(LE, (skygw_log_write(
+							LOGFILE_ERROR,
+						"Server '%s' has no value "
+						"for weighting parameter '%s', "
+						"no queries will be routed to "
+						"this server.\n",
+						server->unique_name,
+						weightby)));
+				}
+		
+			}
+		}
+	}
         
         /**
          * vraa : is this necessary for readwritesplit ?
@@ -419,9 +548,11 @@ static ROUTER* createInstance(
 	 */
 	router->bitmask = 0;
 	router->bitvalue = 0;
+        
+        /** Call this before refreshInstance */
 	if (options)
 	{
-                rwsplit_process_options(router, options);
+                rwsplit_process_router_options(router, options);
 	}
 	/** 
          * Set default value for max_slave_connections and for slave selection
@@ -443,7 +574,6 @@ static ROUTER* createInstance(
         if (param != NULL)
         {
                 refreshInstance(router, param);
-                router->rwsplit_version = service->svc_config_version;
         }
         /** 
          * Read default value for slave replication lag upper limit and then
@@ -455,8 +585,8 @@ static ROUTER* createInstance(
         if (param != NULL)
         {
                 refreshInstance(router, param);
-                router->rwsplit_version = service->svc_config_version;
         }
+        router->rwsplit_version = service->svc_config_version;
         /**
          * We have completed the creation of the router data, so now
          * insert this router into the linked list of routers
@@ -514,16 +644,12 @@ static void* newSession(
         
         if (router->service->svc_config_version > router->rwsplit_version)
         {
-                CONFIG_PARAMETER* param = router->service->svc_config_param;
-                
-                while (param != NULL)
-                {
-                        refreshInstance(router, param);
-                        param = param->next;
-                }
+                /** re-read all parameters to rwsplit config structure */
+                refreshInstance(router, NULL); /*< scan through all parameters */
+                /** increment rwsplit router's config version number */
                 router->rwsplit_version = router->service->svc_config_version;  
                 /** Read options */
-                rwsplit_process_options(router, router->service->routerOptions);
+                rwsplit_process_router_options(router, router->service->routerOptions);
         }
         /** Copy config struct from router instance */
         client_rses->rses_config = router->rwsplit_config;
@@ -612,9 +738,9 @@ static void* newSession(
         client_rses->rses_master_ref   = master_ref;
 	/* assert with master_host */
 	ss_dassert(master_ref && (master_ref->bref_backend->backend_server && SERVER_MASTER));
+        client_rses->rses_capabilities = RCAP_TYPE_STMT_INPUT;
         client_rses->rses_backend_ref  = backend_ref;
         client_rses->rses_nbackends    = router_nservers; /*< # of backend servers */
-        client_rses->rses_capabilities = RCAP_TYPE_STMT_INPUT;
         router->stats.n_sessions      += 1;
         
         /**
@@ -694,21 +820,27 @@ static void closeSession(
 
                 for (i=0; i<router_cli_ses->rses_nbackends; i++)
                 {
-                        DCB* dcb = backend_ref[i].bref_dcb;                        
+                        backend_ref_t* bref = &backend_ref[i];
+                        DCB* dcb = bref->bref_dcb;
              
                         /** Close those which had been connected */
-                        if (BREF_IS_IN_USE((&backend_ref[i])))
+                        if (BREF_IS_IN_USE(bref))
                         {
                                 CHK_DCB(dcb);
-                                bref_clear_state(&backend_ref[i], BREF_IN_USE);
-                                bref_set_state(&backend_ref[i], BREF_CLOSED);
+                                /** Clean operation counter in bref and in SERVER */
+                                while (BREF_IS_WAITING_RESULT(bref))
+                                {
+                                        bref_clear_state(bref, BREF_WAITING_RESULT);
+                                }
+                                bref_clear_state(bref, BREF_IN_USE);
+                                bref_set_state(bref, BREF_CLOSED);
                                 /**
                                  * closes protocol and dcb
                                  */
                                 dcb_close(dcb);
                                 /** decrease server current connection counters */
-                                atomic_add(&backend_ref[i].bref_backend->backend_server->stats.n_current, -1);
-                                atomic_add(&backend_ref[i].bref_backend->backend_conn_count, -1);
+                                atomic_add(&bref->bref_backend->backend_server->stats.n_current, -1);
+                                atomic_add(&bref->bref_backend->backend_conn_count, -1);
                         }
                 }
                 /** Unlock */
@@ -920,6 +1052,9 @@ static int routeQuery(
         {
                 rses_is_closed = true;
         }
+        
+        ss_dassert(!GWBUF_IS_TYPE_UNDEFINED(querybuf));
+        
         packet = GWBUF_DATA(querybuf);
         packet_type = packet[4];
         
@@ -1271,9 +1406,11 @@ static void rses_end_locked_router_action(
 static	void
 diagnostic(ROUTER *instance, DCB *dcb)
 {
-        ROUTER_CLIENT_SES *router_cli_ses;
-        ROUTER_INSTANCE	  *router = (ROUTER_INSTANCE *)instance;
-        int		  i = 0;
+ROUTER_CLIENT_SES *router_cli_ses;
+ROUTER_INSTANCE	  *router = (ROUTER_INSTANCE *)instance;
+int		  i = 0;
+BACKEND		  *backend;
+char		  *weightby;
 
 	spinlock_acquire(&router->lock);
 	router_cli_ses = router->connections;
@@ -1302,6 +1439,30 @@ diagnostic(ROUTER *instance, DCB *dcb)
 	dcb_printf(dcb,
                    "\tNumber of queries forwarded to all:   	%d\n",
                    router->stats.n_all);
+	if ((weightby = serviceGetWeightingParameter(router->service)) != NULL)
+        {
+                dcb_printf(dcb,
+		   "\tConnection distribution based on %s "
+                                "server parameter.\n", weightby);
+                dcb_printf(dcb,
+                        "\t\tServer               Target %%    Connections  "
+			"Operations\n");
+                dcb_printf(dcb,
+                        "\t\t                               Global  Router\n");
+                for (i = 0; router->servers[i]; i++)
+                {
+                        backend = router->servers[i];
+                        dcb_printf(dcb,
+				"\t\t%-20s %3.1f%%     %-6d  %-6d  %d\n",
+                                backend->backend_server->unique_name,
+                                (float)backend->weight / 10,
+				backend->backend_server->stats.n_current,
+				backend->backend_conn_count,
+				backend->backend_server->stats.n_current_ops);
+                }
+
+        }
+
 }
 
 /**
@@ -1376,7 +1537,8 @@ static void clientReply (
          */
 	if (sescmd_cursor_is_active(scur))
 	{
-                if (MYSQL_IS_ERROR_PACKET(((uint8_t *)GWBUF_DATA(writebuf))))
+                if (LOG_IS_ENABLED(LOGFILE_ERROR) && 
+                        MYSQL_IS_ERROR_PACKET(((uint8_t *)GWBUF_DATA(writebuf))))
                 {
                         SESSION* ses = backend_dcb->session;
                         uint8_t* buf = 
@@ -1394,14 +1556,9 @@ static void clientReply (
                                 bref->bref_backend->backend_server->port)));
                         
                         free(cmdstr);
-                        /** Inform the client */
-                        handle_error_reply_client(ses, writebuf);
-                        
-                        /** Unlock router session */
-                        rses_end_locked_router_action(router_cli_ses);
-                        goto lock_failed;
                 }
-                else if (GWBUF_IS_TYPE_SESCMD_RESPONSE(writebuf))
+                
+                if (GWBUF_IS_TYPE_SESCMD_RESPONSE(writebuf))
                 {
                         /** 
                         * Discard all those responses that have already been sent to
@@ -1409,10 +1566,6 @@ static void clientReply (
                         * needs to be sent to client or NULL.
                         */
                         writebuf = sescmd_cursor_process_replies(writebuf, bref);
-                }
-                else
-                {
-                        ss_dassert(false);
                 }
                 /** 
                  * If response will be sent to client, decrease waiter count.
@@ -1473,7 +1626,7 @@ lock_failed:
         return;
 }
 
-
+/** Compare nunmber of connections from this router in backend servers */
 int bref_cmp_router_conn(
         const void* bref1,
         const void* bref2)
@@ -1481,10 +1634,11 @@ int bref_cmp_router_conn(
         BACKEND* b1 = ((backend_ref_t *)bref1)->bref_backend;
         BACKEND* b2 = ((backend_ref_t *)bref2)->bref_backend;
 
-        return ((b1->backend_conn_count < b2->backend_conn_count) ? -1 :
-                ((b1->backend_conn_count > b2->backend_conn_count) ? 1 : 0));
+        return ((1000 * b1->backend_conn_count) / b1->weight)
+			  - ((1000 * b2->backend_conn_count) / b2->weight);
 }
 
+/** Compare nunmber of global connections in backend servers */
 int bref_cmp_global_conn(
         const void* bref1,
         const void* bref2)
@@ -1492,30 +1646,37 @@ int bref_cmp_global_conn(
         BACKEND* b1 = ((backend_ref_t *)bref1)->bref_backend;
         BACKEND* b2 = ((backend_ref_t *)bref2)->bref_backend;
         
-        return ((b1->backend_server->stats.n_current < b2->backend_server->stats.n_current) ? -1 :
-        ((b1->backend_server->stats.n_current > b2->backend_server->stats.n_current) ? 1 : 0));
+        return ((1000 * b1->backend_server->stats.n_current) / b1->weight)
+		  - ((1000 * b2->backend_server->stats.n_current) / b2->weight);
 }
 
 
+/** Compare relication lag between backend servers */
 int bref_cmp_behind_master(
         const void* bref1, 
         const void* bref2)
 {
-        return 1;
+        BACKEND* b1 = ((backend_ref_t *)bref1)->bref_backend;
+        BACKEND* b2 = ((backend_ref_t *)bref2)->bref_backend;
+        
+        return ((b1->backend_server->rlag < b2->backend_server->rlag) ? -1 :
+        ((b1->backend_server->rlag > b2->backend_server->rlag) ? 1 : 0));
 }
 
+/** Compare nunmber of current operations in backend servers */
 int bref_cmp_current_load(
         const void* bref1,
         const void* bref2)
 {
         SERVER*  s1 = ((backend_ref_t *)bref1)->bref_backend->backend_server;
         SERVER*  s2 = ((backend_ref_t *)bref2)->bref_backend->backend_server;
+        BACKEND* b1 = ((backend_ref_t *)bref1)->bref_backend;
+        BACKEND* b2 = ((backend_ref_t *)bref2)->bref_backend;
         
-        return ((s1->stats.n_current_ops < s2->stats.n_current_ops) ? -1 :
-        ((s1->stats.n_current_ops > s2->stats.n_current_ops) ? 1 : 0));
+        return ((1000 * s1->stats.n_current_ops) - b1->weight)
+			- ((1000 * s2->stats.n_current_ops) - b2->weight);
 }
         
-
 static void bref_clear_state(
         backend_ref_t* bref,
         bref_state_t   state)
@@ -1531,20 +1692,17 @@ static void bref_clear_state(
                 
                 /** Decrease waiter count */
                 prev1 = atomic_add(&bref->bref_num_result_wait, -1);
-                ss_dassert(prev1 > 0);
                 
-                /** Decrease global operation count */
-                prev2 = atomic_add(
-                        &bref->bref_backend->backend_server->stats.n_current_ops, -1);
-                ss_dassert(prev2 > 0);
-                
-                LOGIF(LT, (skygw_log_write(
-                        LOGFILE_TRACE,
-                        "Current waiters %d and ops %d after in %s:%d",
-                        prev1-1,
-                        prev2-1,
-                        bref->bref_backend->backend_server->name,
-                        bref->bref_backend->backend_server->port)));
+                if (prev1 <= 0) {
+                        atomic_add(&bref->bref_num_result_wait, 1);
+                }
+                else
+                {
+                        /** Decrease global operation count */
+                        prev2 = atomic_add(
+                                &bref->bref_backend->backend_server->stats.n_current_ops, -1);
+                        ss_dassert(prev2 > 0);
+                }       
         }
 }
 
@@ -1568,24 +1726,8 @@ static void bref_set_state(
                 /** Increase global operation count */
                 prev2 = atomic_add(
                         &bref->bref_backend->backend_server->stats.n_current_ops, 1);
-                ss_dassert(prev2 >= 0);
-                
-                LOGIF(LT, (skygw_log_write(
-                        LOGFILE_TRACE,
-                        "Current waiters %d and ops %d before in %s:%d",
-                        prev1,
-                        prev2,
-                        bref->bref_backend->backend_server->name,
-                        bref->bref_backend->backend_server->port)));
+                ss_dassert(prev2 >= 0);                
         }
-        LOGIF(LD, (skygw_log_write(
-                LOGFILE_DEBUG,
-                "%lu [bref_set_state] Set state %d for %s:%d fd %d",
-                pthread_self(),
-                bref->bref_state,
-                bref->bref_backend->backend_server->name,
-                bref->bref_backend->backend_server->port,
-                bref->bref_dcb->fd)));
 }
 
 /** 
@@ -1675,11 +1817,11 @@ static bool select_connect_backend_servers(
         {
                 LOGIF(LD, (skygw_log_write(
                         LOGFILE_DEBUG,
-                        "%lu [select_connect_backend_servers] Didn't find master ",
-                        "for session %p rses %p.",
+                        "%lu [select_connect_backend_servers] Session %p doesn't "
+                        "currently have a master chosen. Proceeding to master "
+                        "selection.",
                         pthread_self(),
-                        session,
-                        backend_ref)));
+                        session)));
                 
                 master_found     = false;
                 master_connected = false;
@@ -1732,7 +1874,9 @@ static bool select_connect_backend_servers(
         if (LOG_IS_ENABLED(LOGFILE_TRACE))
         {
                 if (select_criteria == LEAST_GLOBAL_CONNECTIONS ||
-                        select_criteria == LEAST_ROUTER_CONNECTIONS)
+                        select_criteria == LEAST_ROUTER_CONNECTIONS ||
+                        select_criteria == LEAST_BEHIND_MASTER ||
+                        select_criteria == LEAST_CURRENT_OPERATIONS)
                 {
                         LOGIF(LT, (skygw_log_write(LOGFILE_TRACE, 
                                 "Servers and %s connection counts:",
@@ -1746,7 +1890,7 @@ static bool select_connect_backend_servers(
                                 switch(select_criteria) {
                                         case LEAST_GLOBAL_CONNECTIONS:
                                                 LOGIF(LT, (skygw_log_write_flush(LOGFILE_TRACE, 
-                                                        "%s %d:%d",
+                                                        "%s:%d MaxScale connections : %d",
                                                         b->backend_server->name,
                                                         b->backend_server->port,
                                                         b->backend_server->stats.n_current)));
@@ -1754,7 +1898,7 @@ static bool select_connect_backend_servers(
                                         
                                         case LEAST_ROUTER_CONNECTIONS:
                                                 LOGIF(LT, (skygw_log_write_flush(LOGFILE_TRACE, 
-                                                        "%s %d:%d",
+                                                        "%s:%d RWSplit connections : %d",
                                                         b->backend_server->name,
                                                         b->backend_server->port,
                                                         b->backend_conn_count)));
@@ -1762,11 +1906,18 @@ static bool select_connect_backend_servers(
                                                 
                                         case LEAST_CURRENT_OPERATIONS:
                                                 LOGIF(LT, (skygw_log_write_flush(LOGFILE_TRACE, 
-                                                        "%s %d:%d",
+                                                        "%s:%d current operations : %d",
                                                         b->backend_server->name,
                                                         b->backend_server->port,
                                                         b->backend_server->stats.n_current_ops)));
                                                 break;
+                                                
+                                        case LEAST_BEHIND_MASTER:
+                                                LOGIF(LT, (skygw_log_write_flush(LOGFILE_TRACE, 
+                                                        "%s:%d replication lag : %d",
+                                                        b->backend_server->name,
+                                                        b->backend_server->port,
+                                                        b->backend_server->rlag)));
                                         default:
                                                 break;
                                 }
@@ -1782,15 +1933,6 @@ static bool select_connect_backend_servers(
              i++)
         {
                 BACKEND* b = backend_ref[i].bref_backend;
-                                
-                LOGIF(LT, (skygw_log_write_flush(
-                        LOGFILE_TRACE,
-                        "Examine server "
-                        "%s:%d %s with %d active operations.",
-                        b->backend_server->name,
-                        b->backend_server->port,
-                        STRSRVSTATUS(b->backend_server),
-                        b->backend_server->stats.n_current_ops)));
 
                 if (SERVER_IS_RUNNING(b->backend_server) &&
                         ((b->backend_server->status & router->bitmask) ==
@@ -1798,7 +1940,9 @@ static bool select_connect_backend_servers(
                 {
 			/* check also for relay servers and don't take the master_host */
                         if (slaves_found < max_nslaves &&
-                                b->backend_server->rlag <= max_slave_rlag &&
+                                (max_slave_rlag == -2 || 
+                                (b->backend_server->rlag != -1 && /*< information currently not available */
+                                 b->backend_server->rlag <= max_slave_rlag)) &&
                                 (SERVER_IS_SLAVE(b->backend_server) || SERVER_IS_RELAY_SERVER(b->backend_server)) &&
 				(master_host != NULL && (b->backend_server != master_host->backend_server)))
                         {
@@ -1859,7 +2003,8 @@ static bool select_connect_backend_servers(
                                 }
                         }
 			/* take the master_host for master */
-			else if (master_host && (b->backend_server == master_host->backend_server))
+			else if (master_host && 
+                                (b->backend_server == master_host->backend_server))
                         {
                                 *p_master_ref = &backend_ref[i];
                                 
@@ -2885,7 +3030,44 @@ return_succp:
         return succp;
 }
 
-static void rwsplit_process_options(
+#if defined(NOT_USED)
+static bool router_option_configured(
+        ROUTER_INSTANCE* router,
+        const char*      optionstr,
+        void*            data)
+{
+        bool   succp = false;
+        char** option;
+        
+        option = router->service->routerOptions;
+        
+        while (option != NULL)
+        {
+                char*  value;
+
+                if ((value = strchr(options[i], '=')) == NULL)
+                {
+                        break;
+                }
+                else
+                {
+                        *value = 0;
+                        value++;
+                        if (strcmp(options[i], "slave_selection_criteria") == 0)
+                        {
+                                if (GET_SELECT_CRITERIA(value) == (select_criteria_t *)*data)
+                                {
+                                        succp = true;
+                                        break;
+                                }
+                        }
+                }
+        }
+        return succp;
+}
+#endif
+
+static void rwsplit_process_router_options(
         ROUTER_INSTANCE* router,
         char**           options)
 {
@@ -2922,9 +3104,10 @@ static void rwsplit_process_options(
                                         LOGIF(LE, (skygw_log_write(
                                                 LOGFILE_ERROR, "Warning : Unknown "
                                                 "slave selection criteria \"%s\". "
-                                                "Allowed values are \"LEAST_GLOBAL_CONNECTIONS\", "
+                                                "Allowed values are LEAST_GLOBAL_CONNECTIONS, "
                                                 "LEAST_ROUTER_CONNECTIONS, "
-                                                "and \"LEAST_CURRENT_OPERATIONS\".",
+                                                "LEAST_BEHIND_MASTER,"
+                                                "and LEAST_CURRENT_OPERATIONS.",
                                                 STRCRITERIA(router->rwsplit_config.rw_slave_select_criteria))));
                                 }
                                 else
@@ -2969,12 +3152,15 @@ static void handleError (
         backend_dcb->dcb_errhandle_called = true;
 #endif
         session = backend_dcb->session;
-        CHK_SESSION(session);
+        
+        if (session != NULL)
+                CHK_SESSION(session);
         
         switch (action) {
                 case ERRACT_NEW_CONNECTION:
                 {
-                        CHK_CLIENT_RSES(rses);
+                        if (rses != NULL)
+                                CHK_CLIENT_RSES(rses);
                         
                         if (!rses_begin_locked_router_action(rses))
                         {
@@ -3425,28 +3611,26 @@ static bool prep_stmt_drop(
 #endif /*< PREP_STMT_CACHING */
 
 /********************************
- * This routine return the root master server from MySQL replication tree
+ * This routine returns the root master server from MySQL replication tree
  * Get the root Master rule:
  *
- * (1) find server(s) with lowest replication depth level
- * (2) check for SERVER_MASTER bitvalue in those servers
+ * find server with the lowest replication depth level
+ * and the SERVER_MASTER bitval
  * Servers are checked even if they are in 'maintenance'
- * SERVER_IS_DOWN is the only status to skip.
  *
- * @param servers       The list of servers
- * @param		The number of servers
- * @return              The Master found
+ * @param	servers		The list of servers
+ * @param	router_nservers	The number of servers
+ * @return			The Master found
  *
  */
 static BACKEND *get_root_master(backend_ref_t *servers, int router_nservers) {
         int i = 0;
         BACKEND * master_host = NULL;
 
-        /* (1) find root server(s) with lowest replication depth level */
         for (i = 0; i< router_nservers; i++) {
                 BACKEND* b = NULL;
                 b = servers[i].bref_backend;
-                if (b && (! SERVER_IS_DOWN(b->backend_server))) {
+                if (b && (b->backend_server->status & (SERVER_MASTER|SERVER_MAINT)) == SERVER_MASTER) {
                         if (master_host && b->backend_server->depth < master_host->backend_server->depth) {
                                 master_host = b;
                         } else {
@@ -3456,27 +3640,6 @@ static BACKEND *get_root_master(backend_ref_t *servers, int router_nservers) {
                         }
                 }
         }
-
-        /* (2) get the status of server(s) with lowest replication level and check it against SERVER_MASTER bitvalue */
-        if (master_host) {
-                int found = 0;
-                for (i = 0; i<router_nservers; i++) {
-                        BACKEND* b = NULL;
-                        b = servers[i].bref_backend;
-                        if (b && (! SERVER_IS_DOWN(b->backend_server)) && (b->backend_server->depth == master_host->backend_server->depth)) {
-                                if (b->backend_server->status & SERVER_MASTER) {
-                                        master_host = b;
-                                        found = 1;
-                                }
-                        }
-                }
-                if (!found)
-                        master_host = NULL;
-
-		if (found && SERVER_IN_MAINT(master_host->backend_server))
-			master_host = NULL;
-        }
-
-        return master_host;
+	return master_host;
 }
 

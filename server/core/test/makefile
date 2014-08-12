@@ -32,7 +32,7 @@ runtests:
 	@echo $(shell date)			>> $(TESTLOG)
 	@echo "Test MaxScale core"		>> $(TESTLOG)
 	@echo "-------------------------------"	>> $(TESTLOG)
-	@gcov -./testhash 	 			2>> $(TESTLOG)
+	@gcov ./testhash 	 			2>> $(TESTLOG)
 ifeq ($?,0)
 	@echo "MaxScale core PASSED"		>> $(TESTLOG)
 else

@@ -13,7 +13,7 @@ CPP = g++
 TESTPATH 	:= $(shell pwd)
 TESTLOG		:= $(TESTPATH)/testlog.log	
 LOG_MANAGER_PATH:= $(ROOT_PATH)/log_manager
-TESTAPP 	:= gcov $(TESTPATH)/testlog
+TESTAPP 	:= $(TESTPATH)/testlog
 UTILS_PATH	:= $(ROOT_PATH)/utils
 
 # Use two threads by default

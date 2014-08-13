@@ -15,7 +15,7 @@ TESTLOG			:= $(TESTPATH)/testqclass.log
 QUERY_CLASSIFIER_PATH 	:= $(ROOT_PATH)/query_classifier
 LOG_MANAGER_PATH 	:= $(ROOT_PATH)/log_manager
 UTILS_PATH		:= $(ROOT_PATH)/utils
-TESTAPP = gcov $(TESTPATH)/testmain
+TESTAPP = $(TESTPATH)/testmain
 
 testall:buildtests
 	

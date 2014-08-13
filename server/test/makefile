@@ -66,7 +66,7 @@ runtests:
 	@echo "-------------------------------"	>> $(TESTLOG)
 	@echo "MAXSCALE_HOME="$(MAXSCALE_HOME) >> $(TESTLOG)
 	cp $(CUR_DIR)/MaxScale_test.cnf $(MAXSCALE_HOME)/etc/MaxScale.cnf
-	gcov bin/maxscale			2>> $(TESTLOG)
+	bin/maxscale			2>> $(TESTLOG)
 	@echo "Put your tests here"
 	@sleep 5
 	@echo "MaxScale server PASSED"	>> $(TESTLOG)

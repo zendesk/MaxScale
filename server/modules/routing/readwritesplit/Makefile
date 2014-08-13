@@ -27,7 +27,7 @@ QCLASSPATH 	:= $(ROOT_PATH)/query_classifier
 CC=cc
 CFLAGS=-c -fPIC -I/usr/include -I../../include -I../../../include \
 	-I$(LOGPATH) -I$(UTILSPATH) -I$(QCLASSPATH) \
-	$(MYSQL_HEADERS) -Wall -g
+	$(MYSQL_HEADERS) -Wall -g -fprofile-arcs -ftest-coverage
 
 include ../../../../makefile.inc
 
@@ -38,7 +38,7 @@ LDFLAGS=-shared -L$(LOGPATH) -L$(QCLASSPATH) -L$(EMBEDDED_LIB) \
 
 SRCS=readwritesplit.c
 OBJ=$(SRCS:.c=.o)
-LIBS=-lssl -pthread -llog_manager -lquery_classifier -lmysqld
+LIBS=-lssl -pthread -llog_manager -lquery_classifier -lmysqld -lgcov -coverage
 MODULES=libreadwritesplit.so
 
 all:	$(MODULES)

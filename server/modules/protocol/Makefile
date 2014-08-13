@@ -51,7 +51,7 @@ MAXSCALEDOBJ=$(MAXSCALEDSRCS:.c=.o)
 SRCS=$(MYSQLCLIENTSRCS) $(MYSQLBACKENDSRCS) $(TELNETDSRCS) $(HTTPDSRCS) \
 	$(MAXSCALEDSRCS)
 OBJ=$(SRCS:.c=.o)
-LIBS=$(UTILSPATH)/skygw_utils.o -lgcov -coverage
+LIBS=$(UTILSPATH)/skygw_utils.o -lgcov
 MODULES=libMySQLClient.so libMySQLBackend.so libtelnetd.so libHTTPD.so \
 	libmaxscaled.so
 

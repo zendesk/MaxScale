@@ -46,7 +46,7 @@ CLISRCS=cli.c debugcmd.c
 CLIOBJ=$(CLISRCS:.c=.o)
 SRCS=$(TESTSRCS) $(READCONSRCS) $(DEBUGCLISRCS) cli.c
 OBJ=$(SRCS:.c=.o)
-LIBS=$(UTILSPATH)/skygw_utils.o -lssl -llog_manager -lgcov -coverage
+LIBS=$(UTILSPATH)/skygw_utils.o -lssl -llog_manager -lgcov
 MODULES= libdebugcli.so libreadconnroute.so libtestroute.so libcli.so
 
 

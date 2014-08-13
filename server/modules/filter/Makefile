@@ -44,7 +44,7 @@ TEESRCS=tee.c
 TEEOBJ=$(TEESRCS:.c=.o)
 SRCS=$(TESTSRCS) $(QLASRCS) $(REGEXSRCS) $(TOPNSRCS) $(TEESRCS)
 OBJ=$(SRCS:.c=.o)
-LIBS=$(UTILSPATH)/skygw_utils.o -lssl -llog_manager -lgcov -coverage
+LIBS=$(UTILSPATH)/skygw_utils.o -lssl -llog_manager -lgcov
 MODULES= libtestfilter.so libqlafilter.so libregexfilter.so libtopfilter.so libtee.so
 
 

@@ -38,7 +38,7 @@ LDFLAGS=-shared -L$(LOGPATH) -L$(QCLASSPATH) -L$(EMBEDDED_LIB) \
 
 SRCS=readwritesplit.c
 OBJ=$(SRCS:.c=.o)
-LIBS=-lssl -pthread -llog_manager -lquery_classifier -lmysqld -lgcov -coverage
+LIBS=-lssl -pthread -llog_manager -lquery_classifier -lmysqld -lgcov
 MODULES=libreadwritesplit.so
 
 all:	$(MODULES)

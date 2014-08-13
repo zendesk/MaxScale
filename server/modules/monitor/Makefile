@@ -28,7 +28,7 @@ CFLAGS=-c -fPIC -I. -I/usr/include -I../include -I../../include -I$(LOGPATH) \
 
 LDFLAGS=-shared  -L$(LOGPATH) -Wl,-rpath,$(DEST)/lib \
 	-Wl,-rpath,$(LOGPATH) -Wl,-rpath,$(UTILSPATH) \
-	-Wl,-rpath,$(EMBEDDED_LIB)
+	-Wl,-rpath,$(EMBEDDED_LIB) -fprofile-arcs -ftest-coverage
 
 
 
@@ -39,7 +39,7 @@ GALERAOBJ=$(GALERASRCS:.c=.o)
 SRCS=$(MYSQLSRCS)
 OBJ=$(SRCS:.c=.o)
 LIBS=$(UTILSPATH)/skygw_utils.o -llog_manager \
-	-L$(EMBEDDED_LIB) -lmysqld
+	-L$(EMBEDDED_LIB) -lmysqld -lgcov -coverage
 MODULES=libmysqlmon.so libgaleramon.so
 
 

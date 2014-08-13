@@ -31,7 +31,7 @@ UTILSPATH := $(ROOT_PATH)/utils
 
 CC=cc
 CFLAGS=-c -fPIC -I/usr/include -I../include -I../../include -I$(LOGPATH) \
-	-I$(UTILSPATH) -Wall -g
+	-I$(UTILSPATH) -Wall -g -fprofile-arcs -ftest-coverage
 
 include ../../../makefile.inc
 
@@ -51,7 +51,7 @@ MAXSCALEDOBJ=$(MAXSCALEDSRCS:.c=.o)
 SRCS=$(MYSQLCLIENTSRCS) $(MYSQLBACKENDSRCS) $(TELNETDSRCS) $(HTTPDSRCS) \
 	$(MAXSCALEDSRCS)
 OBJ=$(SRCS:.c=.o)
-LIBS=$(UTILSPATH)/skygw_utils.o 
+LIBS=$(UTILSPATH)/skygw_utils.o -lgcov -coverage
 MODULES=libMySQLClient.so libMySQLBackend.so libtelnetd.so libHTTPD.so \
 	libmaxscaled.so
 

@@ -25,7 +25,7 @@ UTILSPATH := $(ROOT_PATH)/utils
 
 CC=cc
 CFLAGS=-c -fPIC -I/usr/include -I../include -I../../include -I$(LOGPATH) \
-	-I$(UTILSPATH) -Wall -g
+	-I$(UTILSPATH) -Wall -g -fprofile-arcs -ftest-coverage
 
 include ../../../makefile.inc
 
@@ -44,7 +44,7 @@ TEESRCS=tee.c
 TEEOBJ=$(TEESRCS:.c=.o)
 SRCS=$(TESTSRCS) $(QLASRCS) $(REGEXSRCS) $(TOPNSRCS) $(TEESRCS)
 OBJ=$(SRCS:.c=.o)
-LIBS=$(UTILSPATH)/skygw_utils.o -lssl -llog_manager
+LIBS=$(UTILSPATH)/skygw_utils.o -lssl -llog_manager -lgcov -coverage
 MODULES= libtestfilter.so libqlafilter.so libregexfilter.so libtopfilter.so libtee.so
 
 

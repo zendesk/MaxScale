@@ -32,6 +32,10 @@ CFLAGS=-c -fPIC -I/usr/include -I../../include -I../../../include \
 	-I/usr/include/php/main \
 	-I/usr/include/php/Zend \
 	-I/usr/include/php/TSRM \
+	-I/usr/local/include/php/ \
+	-I/usr/local/include/php/main \
+	-I/usr/local/include/php/Zend \
+	-I/usr/local/include/php/TSRM \
 	-I$(LOGPATH) -I$(UTILSPATH) -I$(QCLASSPATH) \
 	$(MYSQL_HEADERS) -Wall -g
 

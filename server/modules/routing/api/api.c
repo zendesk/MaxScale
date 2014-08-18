@@ -29,20 +29,43 @@
 #include <poll.h>
 #include <skygw_utils.h>
 #include <log_manager.h>
+
+typedef struct {
+	SERVICE		*service;
+} WEB_INSTANCE;
+
+typedef struct {
+	SESSION		*session;
+} WEB_SESSION;
+
+#include <inttypes.h>
 #include <sapi/embed/php_embed.h>
 
 #ifdef ZTS
     void ***tsrm_ls;
 #endif
 
-    PHP_FUNCTION(sample_hello_world) {
-        php_printf("Hello World!\n");
-        ZVAL_LONG(return_value, 42);
-        return;
+    PHP_FUNCTION(send_api_results) {
+        char *php_session;
+        char *php_response;
+        int php_session_len, php_response_len;
+        long sessionint;
+        WEB_SESSION *websession;
+        DCB *dcb;
+        if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "ss", &php_session,  &php_session_len, &php_response, &php_response_len) == FAILURE) {
+            RETURN_NULL();
+        }
+        sscanf(php_session, "%ld", &sessionint);
+        websession = (WEB_SESSION *) sessionint;
+        dcb = websession->session->client;
+        dcb_printf(dcb, "In api.c before response");
+        dcb_printf(dcb, php_response);
+        dcb_printf(dcb, "In api.c after response");
+        dcb_close(dcb);
     }
     
-    static function_entry maxapi_functions[] = {
-        PHP_FE(sample_hello_world, NULL)
+    static zend_function_entry maxapi_functions[] = {
+        PHP_FE(send_api_results, NULL)
         {   NULL, NULL, NULL    }
     };
     
@@ -136,10 +159,15 @@ GetModuleObject()
 static	ROUTER	*
 createInstance(SERVICE *service, char **options)
 {
-	static int i = 0;
-	ROUTER *inst = &i;
-	/* Once off processing at the beginning */
-	return (ROUTER *)inst;
+    /* Once off processing at the beginning */
+    
+    WEB_INSTANCE	*inst;
+
+    if ((inst = (WEB_INSTANCE *)malloc(sizeof(WEB_INSTANCE))) == NULL)
+        return NULL;
+
+    inst->service = service;
+    return (ROUTER *)inst;
 }
 
 /**
@@ -152,17 +180,26 @@ createInstance(SERVICE *service, char **options)
 static	void	*
 newSession(ROUTER *instance, SESSION *session)
 {
-static int i=0, *inst = &i;
-	/* Every time a user connects to the service */
-	int argc = 2;
-	char *argv[] = {"maxapi.php", "hello"};
+    /* Every time a user connects to the service */
+    WEB_SESSION	*wsession;
+
+    if ((wsession = (WEB_SESSION *)malloc(sizeof(WEB_SESSION))) == NULL)
+        return NULL;
+
+    wsession->session = session;
+    
+    int argc = 2;
+    char *argv[] = {"maxapi.php", "hello"};
 	
-        php_embed_init(argc, argv PTSRMLS_CC);
-        zend_startup_module(&php_mymod_module_entry);
-	session->state = SESSION_STATE_READY;
-	dcb_printf(session->client, "Welcome the SkySQL MaxScale API Interface (%s).\n",
-		version_str);
-	return (void *)inst;
+    php_embed_init(argc, argv PTSRMLS_CC);
+    zend_startup_module(&php_mymod_module_entry);
+
+    /* session->state = SESSION_STATE_READY; */
+    /*
+    dcb_printf(session->client, "Welcome to the SkySQL MaxScale API Interface (%s).\n",
+        version_str);
+    * */
+    return wsession;
 }
 
 /**
@@ -184,37 +221,51 @@ static void freeSession(
 {
 	/* Called after all components of the session have been closed */
         php_embed_shutdown(TSRMLS_C);
+        
+        free(router_client_session);
         return;
 }
 
 static	int	
 routeQuery(ROUTER *instance, void *session, GWBUF *queue)
 {
-	/* This happens for every request */
-	/* GWBUF passes data around - a buffer with start and end point - is a string */
+        WEB_SESSION	*wsession = (WEB_SESSION *)session;
+        long int        wsessionint = (uintptr_t) wsession;
+        DCB	*dcb = wsession->session->client;
 
-	char cmdbuf[80];
-	char *filename;
-	
-	/* Extract the characters */
-	while (queue)
-	{
-		strncat(cmdbuf, GWBUF_DATA(queue), GWBUF_LENGTH(queue));
-		queue = gwbuf_consume(queue, GWBUF_LENGTH(queue));
-	}
-
-	/* filename = strcat(strcat(getenv("MAXSCALE_HOME"), "/api/"), argv[0]); */
-	/* filename = strcat(strcat(getenv("MAXSCALE_HOME"), "/api/"), "maxapi.php"); */
- 
         zend_first_try {
+                zval *embedbuffer;
+                ALLOC_INIT_ZVAL(embedbuffer);
+                char *buffer = (char *)GWBUF_DATA(queue);
+                ZVAL_STRING(embedbuffer, buffer, 1);
+                ZEND_SET_SYMBOL(&EG(symbol_table), "embedbuffer", embedbuffer);
+                
+                zval *phpsession;
+                char *sessionstring;
+                spprintf(&sessionstring, 0, "%ld", (uintptr_t) wsession);
+                ALLOC_INIT_ZVAL(phpsession);
+                ZVAL_STRING(phpsession, sessionstring, 1);
+                ZEND_SET_SYMBOL(&EG(symbol_table), "phpsession", phpsession);
+                
+                zval *phpdcb;
+                char *dcbstring;
+                spprintf(&dcbstring, 0, "%ld", (uintptr_t) dcb);
+                ALLOC_INIT_ZVAL(phpdcb);
+                ZVAL_STRING(phpdcb, dcbstring, 1);
+                ZEND_SET_SYMBOL(&EG(symbol_table), "phpdcb", phpdcb);
+                
 		char *include_script;
-		spprintf(&include_script, 0, "$argv[1] = '%s'; include '%s';", cmdbuf, "/home/mbrampton/MaxScaleHome/api/maxapi.php");
-		zend_eval_string(include_script, NULL, "/home/mbrampton/MaxScaleHome/api/maxapi.php" TSRMLS_CC);
+		spprintf(&include_script, 0, "include '%s';", "/home/mbrampton/MaxScaleHome/api/apiMaxScale.php");
+		zend_eval_string(include_script, NULL, "/home/mbrampton/MaxScaleHome/api/apiMaxScale.php" TSRMLS_CC);
 		efree(include_script);
+                efree(sessionstring);
+                efree(dcbstring);
         } zend_catch {
             int exit_status = EG(exit_status);
             return exit_status;
         } zend_end_try();
+
+        gwbuf_free(queue);
 	return 0;
 }
 

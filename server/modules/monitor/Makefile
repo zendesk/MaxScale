@@ -38,11 +38,13 @@ MYSQLSRCS=mysql_mon.c
 MYSQLOBJ=$(MYSQLSRCS:.c=.o)
 GALERASRCS=galera_mon.c
 GALERAOBJ=$(GALERASRCS:.c=.o)
-SRCS=$(MYSQLSRCS)
+MMSRCS=mm_mon.c
+MMOBJ=$(MMSRCS:.c=.o)
+SRCS=$(MYSQLSRCS) $(GALERASRCS) $(MMSRCS)
 OBJ=$(SRCS:.c=.o)
 LIBS=$(UTILSPATH)/skygw_utils.o -llog_manager \
 	-L$(EMBEDDED_LIB) -lmysqld
-MODULES=libmysqlmon.so libgaleramon.so
+MODULES=libmysqlmon.so libgaleramon.so libmmmon.so
 
 
 all:	$(MODULES)
@@ -52,6 +54,9 @@ libmysqlmon.so: $(MYSQLOBJ)
 
 libgaleramon.so: $(GALERAOBJ)
 	$(CC) $(LDFLAGS) $(GALERAOBJ) $(LIBS) -o $@
+
+libmmmon.so: $(MMOBJ)
+	$(CC) $(LDFLAGS) $(MMOBJ) $(LIBS) -o $@
 
 .c.o:
 	$(CC) $(CFLAGS) $< -o $@

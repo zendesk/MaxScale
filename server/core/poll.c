@@ -333,8 +333,12 @@ bool               no_op = false;
 static bool        process_zombies_only = false; /*< flag for all threads */
 DCB                *zombies = NULL;
 
-	/* Add this thread to the bitmask of running polling threads */
+	/** Add this thread to the bitmask of running polling threads */
 	bitmask_set(&poll_mask, thread_id);
+
+	/** Init mysql thread context for use with a mysql handle and a parser */
+	mysql_thread_init();
+
 	if (thread_data)
 	{
 		thread_data[thread_id].state = THREAD_IDLE;
@@ -659,6 +663,8 @@ DCB                *zombies = NULL;
 			thread_data[thread_id].state = THREAD_IDLE;
 		}
 	} /*< while(1) */
+	/** Release mysql thread context */
+	mysql_thread_end();
 }
 
 /**

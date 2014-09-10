@@ -53,6 +53,7 @@ endif
 ERRMSG := $(HOME)/usr/share/mysql
 
 #
+<<<<<<< HEAD
 # Build a binary that produces profile data
 #
 PROFILE := N
@@ -61,3 +62,9 @@ PROFILE := N
 # Build a binary that produces code coverage data
 #
 GCOV := N
+=======
+# Build optional RabbitMQ filter
+# Requires librabbitmq-devel
+# 
+BUILD_RABBITMQ :=
+>>>>>>> Z3

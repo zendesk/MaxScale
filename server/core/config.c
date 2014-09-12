@@ -41,6 +41,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <ctype.h>
 #include <ini.h>
 #include <config.h>
 #include <service.h>
@@ -103,7 +104,7 @@ handler(void *userdata, const char *section, const char *name, const char *value
 {
 CONFIG_CONTEXT		*cntxt = (CONFIG_CONTEXT *)userdata;
 CONFIG_CONTEXT		*ptr = cntxt;
-CONFIG_PARAMETER	*param;
+CONFIG_PARAMETER	*param, *p1;
 
 	if (strcmp(section, "gateway") == 0 || strcasecmp(section, "MaxScale") == 0)
 	{
@@ -126,6 +127,23 @@ CONFIG_PARAMETER	*param;
 		ptr->element = NULL;
 		cntxt->next = ptr;
 	}
+	/* Check to see if the paramter already exists for the section */
+	p1 = ptr->parameters;
+	while (p1)
+	{
+		if (!strcmp(p1->name, name))
+		{
+			LOGIF(LE, (skygw_log_write_flush(
+                                LOGFILE_ERROR,
+                                "Error : Configuration object '%s' has multiple "
+				"parameters names '%s'.",
+                                ptr->object, name)));
+			return 0;
+		}
+		p1 = p1->next;
+	}
+
+
 	if ((param = (CONFIG_PARAMETER *)malloc(sizeof(CONFIG_PARAMETER))) == NULL)
 		return 0;
 	param->name = strdup(name);
@@ -247,18 +265,28 @@ int			error_count = 0;
                         {
                                 char* max_slave_conn_str;
                                 char* max_slave_rlag_str;
+				char *user;
+				char *auth;
+				char *enable_root_user;
+				char *weightby;
+				char *version_string;
+				bool  is_rwsplit = false;
                                 
 				obj->element = service_alloc(obj->object, router);
-				char *user =
-                                        config_get_value(obj->parameters, "user");
-				char *auth =
-                                        config_get_value(obj->parameters, "passwd");
-				char *enable_root_user =
-					config_get_value(obj->parameters, "enable_root_user");
-				char *weightby =
-					config_get_value(obj->parameters, "weightby");
+				user = config_get_value(obj->parameters, "user");
+				auth = config_get_value(obj->parameters, "passwd");
+				enable_root_user = config_get_value(
+							obj->parameters, 
+							"enable_root_user");
+				weightby = config_get_value(obj->parameters, "weightby");
 			
-				char *version_string = config_get_value(obj->parameters, "version_string");
+				version_string = config_get_value(obj->parameters, 
+								  "version_string");
+				/** flag for rwsplit-specific parameters */
+				if (strncmp(router, "readwritesplit", strlen("readwritesplit")+1) == 0)
+				{
+					is_rwsplit = true;
+				}
 
                                 if (obj->element == NULL) /*< if module load failed */
                                 {
@@ -322,13 +350,20 @@ int			error_count = 0;
                                         param = config_get_param(obj->parameters, 
                                                                  "max_slave_connections");
                                         
-                                        succp = service_set_param_value(
-                                                        obj->element,
-                                                        param,
-                                                        max_slave_conn_str, 
-                                                        COUNT_ATMOST,
-                                                        (COUNT_TYPE|PERCENT_TYPE));
-                                        
+					if (param == NULL)
+					{
+						succp = false;
+					}
+					else
+					{
+						succp = service_set_param_value(
+								obj->element,
+								param,
+								max_slave_conn_str, 
+								COUNT_ATMOST,
+								(COUNT_TYPE|PERCENT_TYPE));
+					}
+					
                                         if (!succp)
                                         {
                                                 LOGIF(LM, (skygw_log_write(
@@ -354,13 +389,20 @@ int			error_count = 0;
                                                 obj->parameters, 
                                                 "max_slave_replication_lag");
                                         
-                                        succp = service_set_param_value(
-                                                obj->element,
-                                                param,
-                                                max_slave_rlag_str,
-                                                COUNT_ATMOST,
-                                                COUNT_TYPE);
-                                        
+					if (param == NULL)
+					{
+						succp = false;
+					}
+					else
+					{
+						succp = service_set_param_value(
+							obj->element,
+							param,
+							max_slave_rlag_str,
+							COUNT_ATMOST,
+							COUNT_TYPE);
+					}
+					
                                         if (!succp)
                                         {
                                                 LOGIF(LM, (skygw_log_write(
@@ -374,7 +416,51 @@ int			error_count = 0;
                                                         param->value)));
                                         }
                                 }
-			}
+                                /** Parameters for rwsplit router only */
+                                if (is_rwsplit)
+				{
+					CONFIG_PARAMETER* param;
+					char*             use_sql_variables_in;
+					bool              succp;
+					
+					use_sql_variables_in = 
+						config_get_value(obj->parameters,
+								 "use_sql_variables_in");
+					
+					if (use_sql_variables_in != NULL)
+					{
+						param = config_get_param(
+								obj->parameters,
+								"use_sql_variables_in");
+						
+						if (param == NULL)
+						{
+							succp = false;
+						}
+						else
+						{
+							succp = service_set_param_value(obj->element,
+											param,
+											use_sql_variables_in,
+											COUNT_NONE,
+											SQLVAR_TARGET_TYPE);
+						}
+						
+						if (!succp)
+						{
+							LOGIF(LM, (skygw_log_write(
+								LOGFILE_MESSAGE,
+								"* Warning : invalid value type "
+								"for parameter \'%s.%s = %s\'\n\tExpected "
+								"type is [master|all] for "
+								"use sql variables in.",
+								((SERVICE*)obj->element)->name,
+								param->name,
+								param->value)));
+						}
+					}
+				} /*< if (rw_split) */
+			} /*< if (router) */
 			else
 			{
 				obj->element = NULL;
@@ -813,12 +899,15 @@ config_param_type_t config_get_paramtype(
         return param->qfd_param_type;
 }
 
-int config_get_valint(
+bool config_get_valint(
+	int*                val,
         CONFIG_PARAMETER*   param,
         const char*         name, /*< if NULL examine current param only */
         config_param_type_t ptype)
-{
-        int val = -1; /*< -1 indicates failure */
+{       
+	bool succp = false;;
+	
+	ss_dassert((ptype == COUNT_TYPE || ptype == PERCENT_TYPE) && param != NULL);
         
         while (param)
         {
@@ -826,31 +915,94 @@ int config_get_valint(
                 {
                         switch (ptype) {
                                 case COUNT_TYPE:
-                                        val = param->qfd.valcount;
-                                        goto return_val;
+                                        *val = param->qfd.valcount;
+					succp = true;
+                                        goto return_succp;
                                         
                                 case PERCENT_TYPE:
-                                        val = param->qfd.valpercent;
-                                        goto return_val;
-                                        
-                                case BOOL_TYPE:
-                                        val = param->qfd.valbool;
-                                        goto return_val;
-                                
-                                default:
-                                        goto return_val;
+                                        *val = param->qfd.valpercent;
+					succp  =true;
+                                        goto return_succp;
+
+				default:
+                                        goto return_succp;
                         }
                 } 
-                else if (name == NULL)
-                {
-                        goto return_val;
-                }
                 param = param->next;
         }
-return_val:
-        return val;
+return_succp:
+        return succp;
 }
 
+
+bool config_get_valbool(
+	bool*               val,
+	CONFIG_PARAMETER*   param,
+	const char*         name,
+	config_param_type_t ptype)
+{
+	bool succp;
+	
+	ss_dassert(ptype == BOOL_TYPE);
+	ss_dassert(param != NULL);
+	
+	if (ptype != BOOL_TYPE || param == NULL)
+	{
+		succp = false;
+		goto return_succp;
+	}
+	
+	while (param)
+	{
+		if (name == NULL || !strncmp(param->name, name, MAX_PARAM_LEN))
+		{
+			*val = param->qfd.valbool;
+			succp = true;
+			goto return_succp;
+		} 
+		param = param->next;
+	}
+	succp = false;
+	
+return_succp:
+	return succp;
+		
+}
+
+
+bool config_get_valtarget(
+	target_t*           val,
+	CONFIG_PARAMETER*   param,
+	const char*         name,
+	config_param_type_t ptype)
+{
+	bool succp;
+	
+	ss_dassert(ptype == SQLVAR_TARGET_TYPE);
+	ss_dassert(param != NULL);
+	
+	if (ptype != SQLVAR_TARGET_TYPE || param == NULL)
+	{
+		succp = false;
+		goto return_succp;
+	}
+	
+	while (param)
+	{
+		if (name == NULL || !strncmp(param->name, name, MAX_PARAM_LEN))
+		{
+			*val = param->qfd.valtarget;
+			succp = true;
+			goto return_succp;
+		} 
+		param = param->next;
+	}
+	succp = false;
+	
+return_succp:
+	return succp;
+	
+}
 
 CONFIG_PARAMETER* config_clone_param(
         CONFIG_PARAMETER* param)
@@ -916,6 +1068,15 @@ config_threadcount()
 	return gateway.n_threads;
 }
 
+static struct {
+	char		*logname;
+	logfile_id_t	logfile;
+} lognames[] = {
+	{ "log_messages", LOGFILE_MESSAGE },
+	{ "log_trace", LOGFILE_TRACE },
+	{ "log_debug", LOGFILE_DEBUG },
+	{ NULL, 0 }
+};
 /**
  * Configuration handler for items in the global [MaxScale] section
  *
@@ -926,10 +1087,20 @@ config_threadcount()
 static	int
 handle_global_item(const char *name, const char *value)
 {
+int i;
 	if (strcmp(name, "threads") == 0) {
 		gateway.n_threads = atoi(value);
         } else {
-                return 0;
+		for (i = 0; lognames[i].logname; i++)
+		{
+			if (strcasecmp(name, lognames[i].logname) == 0)
+			{
+				if (atoi(value))
+					skygw_log_enable(lognames[i].logfile);
+				else
+					skygw_log_disable(lognames[i].logfile);
+			}
+		}
         }
 	return 1;
 }
@@ -1029,13 +1200,20 @@ SERVER			*server;
                                                         param = config_get_param(obj->parameters, 
                                                                         "max_slave_connections");
                                                         
-                                                        succp = service_set_param_value(
-                                                                        service,
-                                                                        param,
-                                                                        max_slave_conn_str, 
-                                                                        COUNT_ATMOST,
-                                                                        (PERCENT_TYPE|COUNT_TYPE));
-                                                        
+							if (param == NULL)
+							{
+								succp = false;
+							}
+							else 
+							{
+								succp = service_set_param_value(
+										service,
+										param,
+										max_slave_conn_str, 
+										COUNT_ATMOST,
+										(PERCENT_TYPE|COUNT_TYPE));
+							}
+							
                                                         if (!succp)
                                                         {
                                                                 LOGIF(LM, (skygw_log_write(
@@ -1065,13 +1243,20 @@ SERVER			*server;
                                                                         obj->parameters, 
                                                                         "max_slave_replication_lag");
                                                         
-                                                        succp = service_set_param_value(
-                                                                        service,
-                                                                        param,
-                                                                        max_slave_rlag_str,
-                                                                        COUNT_ATMOST,
-                                                                        COUNT_TYPE);
-                                                        
+							if (param == NULL)
+							{
+								succp = false;
+							}
+							else 
+							{
+								succp = service_set_param_value(
+										service,
+										param,
+										max_slave_rlag_str,
+										COUNT_ATMOST,
+										COUNT_TYPE);
+							}
+							
                                                         if (!succp)
                                                         {
                                                                 LOGIF(LM, (skygw_log_write(
@@ -1320,6 +1505,7 @@ static char *service_params[] =
 		"enable_root_user",
                 "max_slave_connections",
                 "max_slave_replication_lag",
+		"use_sql_variables_in",		/*< rwsplit only */
 		"version_string",
 		"filters",
                 NULL
@@ -1443,7 +1629,11 @@ bool config_set_qualified_param(
                         param->qfd.valbool = *(bool *)val;
                         succp = true;
                         break;
- 
+
+		case SQLVAR_TARGET_TYPE:
+			param->qfd.valtarget = *(target_t *)val;
+			succp = true;
+			break;
                 default:
                         succp = false;
                         break;

@@ -1,5 +1,5 @@
 /*
- * This file is distributed as part of the SkySQL Gateway.  It is free
+ * This file is distributed as part of the MariaDB Corporation MaxScale.  It is free
  * software: you can redistribute it and/or modify it under the terms of the
  * GNU General Public License as published by the Free Software Foundation,
  * version 2.
@@ -13,7 +13,7 @@
  * this program; if not, write to the Free Software Foundation, Inc., 51
  * Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  *
- * Copyright SkySQL Ab 2013
+ * Copyright MariaDB Corporation Ab 2013-2014
  */
 
 /**
@@ -32,6 +32,7 @@
  * 23/05/14	Mark Riddoch		Addition of service validation call
  * 29/05/14	Mark Riddoch		Filter API implementation
  * 09/09/14	Massimiliano Pinto	Added service option for localhost authentication
+ * 13/10/14	Massimiliano Pinto	Added hashtable for resources (i.e database names for MySQL services)
  *
  * @endverbatim
  */
@@ -91,10 +92,10 @@ static void service_add_qualified_param(
  * @param servname	The service name
  * @param router	Name of the router module this service uses
  *
- * @return		The newly created service or NULL if an error occured
+ * @return		The newly created service or NULL if an error occurred
  */
 SERVICE *
-service_alloc(char *servname, char *router)
+service_alloc(const char *servname, const char *router)
 {
 SERVICE 	*service;
 
@@ -137,6 +138,7 @@ SERVICE 	*service;
 	service->filters = NULL;
 	service->n_filters = 0;
 	service->weightby = 0;
+	service->resources = NULL;
 	spinlock_init(&service->spin);
 	spinlock_init(&service->users_table_spin);
 	memset(&service->rate_limit, 0, sizeof(SERVICE_REFRESH_RATE));
@@ -152,7 +154,7 @@ SERVICE 	*service;
 /**
  * Check to see if a service pointer is valid
  *
- * @param service	The poitner to check
+ * @param service	The pointer to check
  * @return 1 if the service is in the list of all services
  */
 int
@@ -198,9 +200,14 @@ GWPROTOCOL	*funcs;
 	}
 	if (strcmp(port->protocol, "MySQLClient") == 0) {
 		int loaded;
-		/* Allocate specific data for MySQL users */
+
+		/*
+		 * Allocate specific data for MySQL users
+		 * including hosts and db names
+		 */
 		service->users = mysql_users_alloc();
 		loaded = load_mysql_users(service);
+
 		/* At service start last update is set to USERS_REFRESH_TIME seconds earlier.
  		 * This way MaxScale could try reloading users' just after startup
  		 */
@@ -209,9 +216,9 @@ GWPROTOCOL	*funcs;
 		service->rate_limit.nloads=1;
 
 		LOGIF(LM, (skygw_log_write(
-                        LOGFILE_MESSAGE,
-                        "Loaded %d MySQL Users.",
-                        loaded)));
+			LOGFILE_MESSAGE,
+			"Loaded %d MySQL Users for service [%s].",
+			loaded, service->name)));
 	} else {
 		/* Generic users table */
 		service->users = users_alloc();

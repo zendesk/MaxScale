@@ -12,7 +12,7 @@
 # this program; if not, write to the Free Software Foundation, Inc., 51
 # Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 #
-# Copyright SkySQL Ab 2014
+# Copyright MariaDB Corporation Ab 2014
 #
 # Revision History
 # Date		Who			Description
@@ -33,7 +33,7 @@ endif
 
 CC=cc
 
-CFLAGS=-c -Wall -g $(HISTFLAG)
+CFLAGS=-c -Wall -g $(HISTFLAG) -I ../server/include
 
 SRCS= maxadmin.c
 

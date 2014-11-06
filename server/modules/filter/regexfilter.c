@@ -1,5 +1,5 @@
 /*
- * This file is distributed as part of MaxScale by SkySQL.  It is free
+ * This file is distributed as part of MaxScale by MariaDB Corporation.  It is free
  * software: you can redistribute it and/or modify it under the terms of the
  * GNU General Public License as published by the Free Software Foundation,
  * version 2.
@@ -13,7 +13,7 @@
  * this program; if not, write to the Free Software Foundation, Inc., 51
  * Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  *
- * Copyright SkySQL Ab 2014
+ * Copyright MariaDB Corporation Ab 2014
  */
 #include <stdio.h>
 #include <filter.h>
@@ -192,6 +192,7 @@ int		i, cflags = REG_ICASE;
 
 		if (my_instance->match == NULL || my_instance->replace == NULL)
 		{
+			free(my_instance);
 			return NULL;
 		}
 
@@ -305,12 +306,17 @@ int		length;
 
 	if (modutil_is_SQL(queue))
 	{
+		if (queue->next != NULL)
+		{
+			queue = gwbuf_make_contiguous(queue);
+		}
 		modutil_extract_SQL(queue, &sql, &length);
 		newsql = regex_replace(sql, length, &my_instance->re,
 					my_instance->replace);
 		if (newsql)
 		{
 			queue = modutil_replace_SQL(queue, newsql);
+			queue = gwbuf_make_contiguous(queue);
 			free(newsql);
 			my_session->replacements++;
 		}
@@ -381,6 +387,8 @@ regmatch_t	match[10];
 		free(orig);
 		return NULL;
 	}
+	free(orig);
+	
 	res_size = 2 * length;
 	result = (char *)malloc(res_size);
 	res_length = 0;

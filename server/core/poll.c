@@ -1,5 +1,5 @@
 /*
- * This file is distributed as part of the SkySQL Gateway.  It is free
+ * This file is distributed as part of the MariaDB Corporation MaxScale.  It is free
  * software: you can redistribute it and/or modify it under the terms of the
  * GNU General Public License as published by the Free Software Foundation,
  * version 2.
@@ -13,8 +13,9 @@
  * this program; if not, write to the Free Software Foundation, Inc., 51
  * Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  *
- * Copyright SkySQL Ab 2013
+ * Copyright MariaDB Corporation Ab 2013-2014
  */
+#include <my_config.h>
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
@@ -30,6 +31,13 @@
 #include <gw.h>
 #include <config.h>
 #include <housekeeper.h>
+#include <mysql.h>
+
+#define		PROFILE_POLL	1
+
+#if PROFILE_POLL
+#include <rdtsc.h>
+#endif
 
 extern int lm_enabled_logfiles_bitmask;
 
@@ -45,15 +53,37 @@ extern int lm_enabled_logfiles_bitmask;
  * 				zombie management
  * 29/08/14	Mark Riddoch	Addition of thread status data, load average
  *				etc.
+ * 23/09/14	Mark Riddoch	Make use of RDHUP conditional to allow CentOS 5
+ *				builds.
+ * 24/09/14	Mark Riddoch	Introduction of the event queue for processing the
+ *				incoming events rather than processing them immediately
+ *				in the loop after the epoll_wait. This allows for better
+ *				thread utilisaiton and fairer scheduling of the event
+ *				processing.
  *
  * @endverbatim
  */
 
+/**
+ * Control the use of mutexes for the epoll_wait call. Setting to 1 will
+ * cause the epoll_wait calls to be moved under a mutex. This may be useful
+ * for debuggign purposes but should be avoided in general use.
+ */
+#define	MUTEX_EPOLL	0
+
 static	int		epoll_fd = -1;	  /*< The epoll file descriptor */
 static	int		do_shutdown = 0;  /*< Flag the shutdown of the poll subsystem */
 static	GWBITMASK	poll_mask;
+#if MUTEX_EPOLL
 static  simple_mutex_t  epoll_wait_mutex; /*< serializes calls to epoll_wait */
+#endif
 static	int		n_waiting = 0;	  /*< No. of threads in epoll_wait */
+static	int		process_pollq(int thread_id);
+static	void		poll_add_event_to_dcb(DCB* dcb, GWBUF* buf, __uint32_t ev);
+
+
+DCB		*eventq = NULL;
+SPINLOCK	pollqlock = SPINLOCK_INIT;
 
 /**
  * Thread load average, this is the average number of descriptors in each
@@ -114,6 +144,8 @@ static struct {
 	int	n_nothreads;	/*< Number of times no threads are polling */
 	int	n_fds[MAXNFDS];	/*< Number of wakeups with particular
 				    n_fds value */
+	int	evq_length;	/*< Event queue length */
+	int	evq_max;	/*< Maximum event queue length */
 } pollStats;
 
 /**
@@ -154,7 +186,9 @@ int	i;
 			thread_data[i].state = THREAD_STOPPED;
 		}
 	}
+#if MUTEX_EPOLL
         simple_mutex_init(&epoll_wait_mutex, "epoll_wait_mutex");        
+#endif
 
 	hktask_add("Load Average", poll_loadav, NULL, POLL_LOAD_FREQ);
 	n_avg_samples = 15 * 60 / POLL_LOAD_FREQ;
@@ -180,8 +214,12 @@ poll_add_dcb(DCB *dcb)
         struct	epoll_event	ev;
 
         CHK_DCB(dcb);
-        
+
+#ifdef EPOLLRDHUP
 	ev.events = EPOLLIN | EPOLLOUT | EPOLLRDHUP | EPOLLHUP | EPOLLET;
+#else
+	ev.events = EPOLLIN | EPOLLOUT | EPOLLHUP | EPOLLET;
+#endif
 	ev.data.ptr = dcb;
 
         /*<
@@ -221,7 +259,7 @@ poll_add_dcb(DCB *dcb)
                                 dcb,
                                 STRDCBSTATE(dcb->state))));
                 }
-                ss_dassert(rc == 0); /*< trap in debug */
+                ss_info_dassert(rc == 0, "Unable to add poll"); /*< trap in debug */
         } else {
                 LOGIF(LE, (skygw_log_write_flush(
                         LOGFILE_ERROR,
@@ -254,7 +292,8 @@ poll_remove_dcb(DCB *dcb)
         CHK_DCB(dcb);
 
         /*< It is possible that dcb has already been removed from the set */
-        if (dcb->state != DCB_STATE_POLLING) {
+        if (dcb->state != DCB_STATE_POLLING) 
+	{
                 if (dcb->state == DCB_STATE_NOPOLLING ||
                     dcb->state == DCB_STATE_ZOMBIE)
                 {
@@ -262,7 +301,6 @@ poll_remove_dcb(DCB *dcb)
                 }
                 goto return_rc;
         }
-        
         /*<
          * Set state to NOPOLLING and remove dcb from poll set.
          */
@@ -321,6 +359,17 @@ return_rc:
  * deschedule a process if a timeout is included, but will not do this if a 0 timeout
  * value is given. this improves performance when the gateway is under heavy load.
  *
+ * In order to provide a fairer means of sharign the threads between the different
+ * DCB's the poll mechanism has been decoupled from the processing of the events.
+ * The events are now recieved via the epoll_wait call, a queue of DCB's that have
+ * events pending is maintained and as new events arrive the DCB is added to the end
+ * of this queue. If an eent arrives for a DCB alreayd in the queue, then the event
+ * bits are added to the DCB but the DCB mantains the same point in the queue unless
+ * the original events are already being processed. If they are being processed then
+ * the DCB is moved to the back of the queue, this means that a DCB that is receiving
+ * events at a high rate will not block the execution of events for other DCB's and
+ * should result in a fairer polling strategy.
+ *
  * @param arg	The thread ID passed as a void * to satisfy the threading package
  */
 void
@@ -329,8 +378,6 @@ poll_waitevents(void *arg)
 struct epoll_event events[MAX_EVENTS];
 int		   i, nfds;
 int		   thread_id = (int)arg;
-bool               no_op = false;
-static bool        process_zombies_only = false; /*< flag for all threads */
 DCB                *zombies = NULL;
 
 	/** Add this thread to the bitmask of running polling threads */
@@ -345,21 +392,20 @@ DCB                *zombies = NULL;
 	
 	while (1)
 	{
+		/* Process of the queue of waiting requests */
+		while (do_shutdown == 0 && process_pollq(thread_id))
+		{
+			if (thread_data)
+				thread_data[thread_id].state = THREAD_ZPROCESSING;
+			zombies = dcb_process_zombies(thread_id);
+		}
+
 		atomic_add(&n_waiting, 1);
 #if BLOCKINGPOLL
 		nfds = epoll_wait(epoll_fd, events, MAX_EVENTS, -1);
 		atomic_add(&n_waiting, -1);
 #else /* BLOCKINGPOLL */
-                if (!no_op) {
-                        LOGIF(LD, (skygw_log_write(
-                                           LOGFILE_DEBUG,
-                                           "%lu [poll_waitevents] MaxScale thread "
-                                           "%d > epoll_wait <",
-                                           pthread_self(),
-                                           thread_id)));                        
-                        no_op = TRUE;
-                }
-#if 0
+#if MUTEX_EPOLL
                 simple_mutex_lock(&epoll_wait_mutex, TRUE);
 #endif
 		if (thread_data)
@@ -379,32 +425,19 @@ DCB                *zombies = NULL;
                                 pthread_self(),
                                 nfds,
                                 eno)));
-                        no_op = FALSE;
 		}
-		else if (nfds == 0)
+		/*
+		 * If there are no new descriptors from the non-blocking call
+		 * and nothing to proces on the event queue then for do a
+		 * blocking call to epoll_wait.
+		 */
+		else if (nfds == 0 && process_pollq(thread_id) == 0)
 		{
-			atomic_add(&n_waiting, -1);
-                        if (process_zombies_only) {
-#if 0
-                                simple_mutex_unlock(&epoll_wait_mutex);
-#endif
-                                goto process_zombies;
-                        } else {
-                                nfds = epoll_wait(epoll_fd,
+			atomic_add(&n_waiting, 1);
+			nfds = epoll_wait(epoll_fd,
                                                   events,
                                                   MAX_EVENTS,
                                                   EPOLL_TIMEOUT);
-                                /*<
-                                 * When there are zombies to be cleaned up but
-                                 * no client requests, allow all threads to call
-                                 * dcb_process_zombies without having to wait
-                                 * for the timeout.
-                                 */
-                                if (nfds == 0 && dcb_get_zombies() != NULL)
-                                {
-                                        process_zombies_only = true;
-                                }
-                        }
 		}
 		else
 		{
@@ -413,7 +446,7 @@ DCB                *zombies = NULL;
 
 		if (n_waiting == 0)
 			atomic_add(&pollStats.n_nothreads, 1);
-#if 0
+#if MUTEX_EPOLL
                 simple_mutex_unlock(&epoll_wait_mutex);
 #endif
 #endif /* BLOCKINGPOLL */
@@ -440,210 +473,64 @@ DCB                *zombies = NULL;
 			atomic_add(&load_samples, 1);
 			atomic_add(&load_nfds, nfds);
 
+			/*
+			 * Process every DCB that has a new event and add
+			 * it to the poll queue.
+			 * If the DCB is currently beign processed then we
+			 * or in the new eent bits to the pending event bits
+			 * and leave it in the queue.
+			 * If the DCB was not already in the queue then it was
+			 * idle and is added to the queue to process after
+			 * setting the event bits.
+			 */
 			for (i = 0; i < nfds; i++)
 			{
-				DCB 		*dcb = (DCB *)events[i].data.ptr;
+				DCB 	*dcb = (DCB *)events[i].data.ptr;
 				__uint32_t	ev = events[i].events;
 
-                                CHK_DCB(dcb);
-				if (thread_data)
+				spinlock_acquire(&pollqlock);
+				if (DCB_POLL_BUSY(dcb))
 				{
-					thread_data[thread_id].cur_dcb = dcb;
-					thread_data[thread_id].event = ev;
+					dcb->evq.pending_events |= ev;
 				}
-
-#if defined(SS_DEBUG)
-                                if (dcb_fake_write_ev[dcb->fd] != 0) {
-                                        LOGIF(LD, (skygw_log_write(
-                                                LOGFILE_DEBUG,
-                                                "%lu [poll_waitevents] "
-                                                "Added fake events %d to ev %d.",
-                                                pthread_self(),
-                                                dcb_fake_write_ev[dcb->fd],
-                                                ev)));
-                                        ev |= dcb_fake_write_ev[dcb->fd];
-                                        dcb_fake_write_ev[dcb->fd] = 0;
-                                }
-#endif
-                                ss_debug(spinlock_acquire(&dcb->dcb_initlock);)
-                                ss_dassert(dcb->state != DCB_STATE_ALLOC);
-                                ss_dassert(dcb->state != DCB_STATE_DISCONNECTED);
-                                ss_dassert(dcb->state != DCB_STATE_FREED);
-                                ss_debug(spinlock_release(&dcb->dcb_initlock);)
-
-                                LOGIF(LD, (skygw_log_write(
-                                        LOGFILE_DEBUG,
-                                        "%lu [poll_waitevents] event %d dcb %p "
-                                        "role %s",
-                                        pthread_self(),
-                                        ev,
-                                        dcb,
-                                        STRDCBROLE(dcb->dcb_role))));
-
-				if (ev & EPOLLOUT)
+				else
 				{
-                                        int eno = 0;
-                                        eno = gw_getsockerrno(dcb->fd);
-
-                                        if (eno == 0)  {
-#if MUTEX_BLOCK
-                                                simple_mutex_lock(
-                                                        &dcb->dcb_write_lock,
-                                                        true);
-                                                ss_info_dassert(
-                                                        !dcb->dcb_write_active,
-                                                        "Write already active");
-                                                dcb->dcb_write_active = TRUE;
-                                                atomic_add(
-                                                &pollStats.n_write,
-                                                        1);
-                                                dcb->func.write_ready(dcb);
-                                                dcb->dcb_write_active = FALSE;
-                                                simple_mutex_unlock(
-                                                        &dcb->dcb_write_lock);
-#else
-                                                atomic_add(&pollStats.n_write,
-                                                        		1);
-						dcb_pollout(dcb, thread_id);
-#endif
-                                        } else {
-                                                LOGIF(LD, (skygw_log_write(
-                                                        LOGFILE_DEBUG,
-                                                        "%lu [poll_waitevents] "
-                                                        "EPOLLOUT due %d, %s. "
-                                                        "dcb %p, fd %i",
-                                                        pthread_self(),
-                                                        eno,
-                                                        strerror(eno),
-                                                        dcb,
-                                                        dcb->fd)));
-                                        }
-                                }
-                                if (ev & EPOLLIN)
-                                {
-#if MUTEX_BLOCK
-                                        simple_mutex_lock(&dcb->dcb_read_lock,
-                                                          true);
-                                        ss_info_dassert(!dcb->dcb_read_active,
-                                                        "Read already active");
-                                        dcb->dcb_read_active = TRUE;
-#endif
-                                        
-					if (dcb->state == DCB_STATE_LISTENING)
+					dcb->evq.pending_events = ev;
+					if (eventq)
 					{
-                                                LOGIF(LD, (skygw_log_write(
-                                                        LOGFILE_DEBUG,
-                                                        "%lu [poll_waitevents] "
-                                                        "Accept in fd %d",
-                                                        pthread_self(),
-                                                        dcb->fd)));
-                                                atomic_add(
-                                                        &pollStats.n_accept, 1);
-                                                dcb->func.accept(dcb);
-                                        }
+						dcb->evq.prev = eventq->evq.prev;
+						eventq->evq.prev->evq.next = dcb;
+						eventq->evq.prev = dcb;
+						dcb->evq.next = eventq;
+					}
 					else
 					{
-                                                LOGIF(LD, (skygw_log_write(
-                                                        LOGFILE_DEBUG,
-                                                        "%lu [poll_waitevents] "
-                                                        "Read in dcb %p fd %d",
-                                                        pthread_self(),
-                                                        dcb,
-                                                        dcb->fd)));
-						atomic_add(&pollStats.n_read, 1);
-#if MUTEX_BLOCK
-						dcb->func.read(dcb);
-#else
-						dcb_pollin(dcb, thread_id);
-#endif
+						eventq = dcb;
+						dcb->evq.prev = dcb;
+						dcb->evq.next = dcb;
 					}
-#if MUTEX_BLOCK
-                                        dcb->dcb_read_active = FALSE;
-                                        simple_mutex_unlock(
-                                                &dcb->dcb_read_lock);
-#endif
+					pollStats.evq_length++;
+					if (pollStats.evq_length > pollStats.evq_max)
+					{
+						pollStats.evq_max = pollStats.evq_length;
+					}
 				}
-				if (ev & EPOLLERR)
-				{
-                                        int eno = gw_getsockerrno(dcb->fd);
-#if defined(SS_DEBUG)
-                                        if (eno == 0) {
-                                                eno = dcb_fake_write_errno[dcb->fd];
-                                                LOGIF(LD, (skygw_log_write(
-                                                        LOGFILE_DEBUG,
-                                                        "%lu [poll_waitevents] "
-                                                        "Added fake errno %d. "
-                                                        "%s",
-                                                        pthread_self(),
-                                                        eno,
-                                                        strerror(eno))));
-                                        }
-                                        dcb_fake_write_errno[dcb->fd] = 0;
-#endif
-                                        if (eno != 0) {
-                                                LOGIF(LD, (skygw_log_write(
-                                                        LOGFILE_DEBUG,
-                                                        "%lu [poll_waitevents] "
-                                                        "EPOLLERR due %d, %s.",
-                                                        pthread_self(),
-                                                        eno,
-                                                        strerror(eno))));
-                                        }
-                                        atomic_add(&pollStats.n_error, 1);
-                                        dcb->func.error(dcb);
-                                }
-
-				if (ev & EPOLLHUP)
-				{
-                                        int eno = 0;
-                                        eno = gw_getsockerrno(dcb->fd);
-                                        
-                                        LOGIF(LD, (skygw_log_write(
-                                                LOGFILE_DEBUG,
-                                                "%lu [poll_waitevents] "
-                                                "EPOLLHUP on dcb %p, fd %d. "
-                                                "Errno %d, %s.",
-                                                pthread_self(),
-                                                dcb,
-                                                dcb->fd,
-                                                eno,
-                                                strerror(eno))));
-                                        atomic_add(&pollStats.n_hup, 1);
-					dcb->func.hangup(dcb);
-				}
-
-				if (ev & EPOLLRDHUP)
-				{
-                                        int eno = 0;
-                                        eno = gw_getsockerrno(dcb->fd);
-                                        
-                                        LOGIF(LD, (skygw_log_write(
-                                                LOGFILE_DEBUG,
-                                                "%lu [poll_waitevents] "
-                                                "EPOLLRDHUP on dcb %p, fd %d. "
-                                                "Errno %d, %s.",
-                                                pthread_self(),
-                                                dcb,
-                                                dcb->fd,
-                                                eno,
-                                                strerror(eno))));
-                                        atomic_add(&pollStats.n_hup, 1);
-					dcb->func.hangup(dcb);
-				}
-			} /*< for */
-                        no_op = FALSE;
+				spinlock_release(&pollqlock);
+			}
 		}
-        process_zombies:
-		if (thread_data)
+
+		/*
+		 * If there was nothing to process then process the zombie queue
+		 */
+		if (process_pollq(thread_id) == 0)
 		{
-			thread_data[thread_id].state = THREAD_ZPROCESSING;
+			if (thread_data)
+			{
+				thread_data[thread_id].state = THREAD_ZPROCESSING;
+			}
+			zombies = dcb_process_zombies(thread_id);
 		}
-		zombies = dcb_process_zombies(thread_id);
                 
-                if (zombies == NULL) {
-                        process_zombies_only = false;
-                }
-
 		if (do_shutdown)
 		{
                         /*<
@@ -655,6 +542,8 @@ DCB                *zombies = NULL;
 				thread_data[thread_id].state = THREAD_STOPPED;
 			}
 			bitmask_clear(&poll_mask, thread_id);
+			/** Release mysql thread context */
+			mysql_thread_end();
 			return;
 		}
 		if (thread_data)
@@ -662,8 +551,320 @@ DCB                *zombies = NULL;
 			thread_data[thread_id].state = THREAD_IDLE;
 		}
 	} /*< while(1) */
-	/** Release mysql thread context */
-	mysql_thread_end();
+}
+
+/**
+ * Process of the queue of DCB's that have outstanding events
+ *
+ * The first event on the queue will be chosen to be executed by this thread,
+ * all other events will be left on the queue and may be picked up by other
+ * threads. When the processing is complete the thread will take the DCB off the
+ * queue if there are no pending events that have arrived since the thread started
+ * to process the DCB. If there are pending events the DCB will be moved to the
+ * back of the queue so that other DCB's will have a share of the threads to
+ * execute events for them.
+ *
+ * @param thread_id	The thread ID of the calling thread
+ * @return 		0 if no DCB's have been processed
+ */
+static int
+process_pollq(int thread_id)
+{
+DCB		*dcb;
+int		found = 0;
+uint32_t	ev;
+
+	spinlock_acquire(&pollqlock);
+	if (eventq == NULL)
+	{
+		/* Nothing to process */
+		spinlock_release(&pollqlock);
+		return 0;
+	}
+	dcb = eventq;
+	if (dcb->evq.next == dcb->evq.prev && dcb->evq.processing == 0)
+	{
+		found = 1;
+		dcb->evq.processing = 1;
+	}
+	else if (dcb->evq.next == dcb->evq.prev)
+	{
+		/* Only item in queue is being processed */
+		spinlock_release(&pollqlock);
+		return 0;
+	}
+	else
+	{
+		do {
+			dcb = dcb->evq.next;
+		} while (dcb != eventq && dcb->evq.processing == 1);
+
+		if (dcb->evq.processing == 0)
+		{
+			/* Found DCB to process */
+			dcb->evq.processing = 1;
+			found = 1;
+		}
+	}
+	if (found)
+	{
+		ev = dcb->evq.pending_events;
+		dcb->evq.pending_events = 0;
+	}
+	spinlock_release(&pollqlock);
+
+	if (found == 0)
+		return 0;
+
+
+	CHK_DCB(dcb);
+	if (thread_data)
+	{
+		thread_data[thread_id].state = THREAD_PROCESSING;
+		thread_data[thread_id].cur_dcb = dcb;
+		thread_data[thread_id].event = ev;
+	}
+
+#if defined(SS_DEBUG)
+	if (dcb_fake_write_ev[dcb->fd] != 0) {
+		LOGIF(LD, (skygw_log_write(
+			LOGFILE_DEBUG,
+			"%lu [poll_waitevents] "
+			"Added fake events %d to ev %d.",
+			pthread_self(),
+			dcb_fake_write_ev[dcb->fd],
+			ev)));
+		ev |= dcb_fake_write_ev[dcb->fd];
+		dcb_fake_write_ev[dcb->fd] = 0;
+	}
+#endif
+	ss_debug(spinlock_acquire(&dcb->dcb_initlock);)
+	ss_dassert(dcb->state != DCB_STATE_ALLOC);
+	ss_dassert(dcb->state != DCB_STATE_DISCONNECTED);
+	ss_dassert(dcb->state != DCB_STATE_FREED);
+	ss_debug(spinlock_release(&dcb->dcb_initlock);)
+
+	LOGIF(LD, (skygw_log_write(
+		LOGFILE_DEBUG,
+		"%lu [poll_waitevents] event %d dcb %p "
+		"role %s",
+		pthread_self(),
+		ev,
+		dcb,
+		STRDCBROLE(dcb->dcb_role))));
+
+	if (ev & EPOLLOUT)
+	{
+		int eno = 0;
+		eno = gw_getsockerrno(dcb->fd);
+
+		if (eno == 0)  {
+#if MUTEX_BLOCK
+			simple_mutex_lock(
+				&dcb->dcb_write_lock,
+				true);
+			ss_info_dassert(
+				!dcb->dcb_write_active,
+				"Write already active");
+			dcb->dcb_write_active = TRUE;
+			atomic_add(
+			&pollStats.n_write,
+				1);
+			dcb->func.write_ready(dcb);
+			dcb->dcb_write_active = FALSE;
+			simple_mutex_unlock(
+				&dcb->dcb_write_lock);
+#else
+			atomic_add(&pollStats.n_write,
+						1);
+			dcb->func.write_ready(dcb);
+#endif
+		} else {
+			LOGIF(LD, (skygw_log_write(
+				LOGFILE_DEBUG,
+				"%lu [poll_waitevents] "
+				"EPOLLOUT due %d, %s. "
+				"dcb %p, fd %i",
+				pthread_self(),
+				eno,
+				strerror(eno),
+				dcb,
+				dcb->fd)));
+		}
+	}
+	if (ev & EPOLLIN)
+	{
+#if MUTEX_BLOCK
+		simple_mutex_lock(&dcb->dcb_read_lock,
+				  true);
+		ss_info_dassert(!dcb->dcb_read_active,
+				"Read already active");
+		dcb->dcb_read_active = TRUE;
+#endif
+		
+		if (dcb->state == DCB_STATE_LISTENING)
+		{
+			LOGIF(LD, (skygw_log_write(
+				LOGFILE_DEBUG,
+				"%lu [poll_waitevents] "
+				"Accept in fd %d",
+				pthread_self(),
+				dcb->fd)));
+			atomic_add(
+				&pollStats.n_accept, 1);
+			dcb->func.accept(dcb);
+		}
+		else
+		{
+			LOGIF(LD, (skygw_log_write(
+				LOGFILE_DEBUG,
+				"%lu [poll_waitevents] "
+				"Read in dcb %p fd %d",
+				pthread_self(),
+				dcb,
+				dcb->fd)));
+			atomic_add(&pollStats.n_read, 1);
+			dcb->func.read(dcb);
+		}
+#if MUTEX_BLOCK
+		dcb->dcb_read_active = FALSE;
+		simple_mutex_unlock(
+			&dcb->dcb_read_lock);
+#endif
+	}
+	if (ev & EPOLLERR)
+	{
+		int eno = gw_getsockerrno(dcb->fd);
+#if defined(SS_DEBUG)
+		if (eno == 0) {
+			eno = dcb_fake_write_errno[dcb->fd];
+			LOGIF(LD, (skygw_log_write(
+				LOGFILE_DEBUG,
+				"%lu [poll_waitevents] "
+				"Added fake errno %d. "
+				"%s",
+				pthread_self(),
+				eno,
+				strerror(eno))));
+		}
+		dcb_fake_write_errno[dcb->fd] = 0;
+#endif
+		if (eno != 0) {
+			LOGIF(LD, (skygw_log_write(
+				LOGFILE_DEBUG,
+				"%lu [poll_waitevents] "
+				"EPOLLERR due %d, %s.",
+				pthread_self(),
+				eno,
+				strerror(eno))));
+		}
+		atomic_add(&pollStats.n_error, 1);
+		dcb->func.error(dcb);
+	}
+
+	if (ev & EPOLLHUP)
+	{
+		int eno = 0;
+		eno = gw_getsockerrno(dcb->fd);
+		
+		LOGIF(LD, (skygw_log_write(
+			LOGFILE_DEBUG,
+			"%lu [poll_waitevents] "
+			"EPOLLHUP on dcb %p, fd %d. "
+			"Errno %d, %s.",
+			pthread_self(),
+			dcb,
+			dcb->fd,
+			eno,
+			strerror(eno))));
+		atomic_add(&pollStats.n_hup, 1);
+		spinlock_acquire(&dcb->dcb_initlock);
+		if ((dcb->flags & DCBF_HUNG) == 0)
+		{
+			dcb->flags |= DCBF_HUNG;
+			spinlock_release(&dcb->dcb_initlock);
+			dcb->func.hangup(dcb);
+		}
+		else
+			spinlock_release(&dcb->dcb_initlock);
+	}
+
+#ifdef EPOLLRDHUP
+	if (ev & EPOLLRDHUP)
+	{
+		int eno = 0;
+		eno = gw_getsockerrno(dcb->fd);
+		
+		LOGIF(LD, (skygw_log_write(
+			LOGFILE_DEBUG,
+			"%lu [poll_waitevents] "
+			"EPOLLRDHUP on dcb %p, fd %d. "
+			"Errno %d, %s.",
+			pthread_self(),
+			dcb,
+			dcb->fd,
+			eno,
+			strerror(eno))));
+		atomic_add(&pollStats.n_hup, 1);
+		spinlock_acquire(&dcb->dcb_initlock);
+		if ((dcb->flags & DCBF_HUNG) == 0)
+		{
+			dcb->flags |= DCBF_HUNG;
+			spinlock_release(&dcb->dcb_initlock);
+			dcb->func.hangup(dcb);
+		}
+		else
+			spinlock_release(&dcb->dcb_initlock);
+	}
+#endif
+
+	spinlock_acquire(&pollqlock);
+	if (dcb->evq.pending_events == 0)
+	{
+		/* No pending events so remove from the queue */
+		if (dcb->evq.prev != dcb)
+		{
+			dcb->evq.prev->evq.next = dcb->evq.next;
+			dcb->evq.next->evq.prev = dcb->evq.prev;
+			if (eventq == dcb)
+				eventq = dcb->evq.next;
+		}
+		else
+		{
+			eventq = NULL;
+		}
+		dcb->evq.next = NULL;
+		dcb->evq.prev = NULL;
+		pollStats.evq_length--;
+	}
+	else
+	{
+		/*
+		 * We have a pending event, move to the end of the queue
+		 * if there are any other DCB's in the queue.
+		 *
+		 * If we are the first item on the queue this is easy, we
+		 * just bump the eventq pointer.
+		 */
+		if (dcb->evq.prev != dcb)
+		{
+			if (eventq == dcb)
+				eventq = dcb->evq.next;
+			else
+			{
+				dcb->evq.prev->evq.next = dcb->evq.next;
+				dcb->evq.next->evq.prev = dcb->evq.prev;
+				dcb->evq.prev = eventq->evq.prev;
+				dcb->evq.next = eventq;
+				eventq->evq.prev = dcb;
+				dcb->evq.prev->evq.next = dcb;
+			}
+		}
+	}
+	dcb->evq.processing = 0;
+	spinlock_release(&pollqlock);
+
+	return 1;
 }
 
 /**
@@ -685,6 +886,20 @@ poll_bitmask()
 {
 	return &poll_mask;
 }
+
+/**
+ * Display an entry from the spinlock statistics data
+ *
+ * @param       dcb     The DCB to print to
+ * @param       desc    Description of the statistic
+ * @param       value   The statistic value
+ */
+static void
+spin_reporter(void *dcb, char *desc, int value)
+{
+	dcb_printf((DCB *)dcb, "\t%-40s  %d\n", desc, value);
+}
+
 
 /**
  * Debug routine to print the polling statistics
@@ -710,6 +925,10 @@ int	i;
 							pollStats.n_accept);
 	dcb_printf(dcb, "Number of times no threads polling:	%d\n",
 							pollStats.n_nothreads);
+	dcb_printf(dcb, "Current event queue length:		%d\n",
+							pollStats.evq_length);
+	dcb_printf(dcb, "Maximum event queue length:		%d\n",
+							pollStats.evq_max);
 
 	dcb_printf(dcb, "No of poll completions with descriptors\n");
 	dcb_printf(dcb, "\tNo. of descriptors\tNo. of poll completions.\n");
@@ -719,6 +938,11 @@ int	i;
 	}
 	dcb_printf(dcb, "\t>= %d\t\t\t%d\n", MAXNFDS,
 					pollStats.n_fds[MAXNFDS-1]);
+
+#if SPINLOCK_PROFILE
+	dcb_printf(dcb, "Event queue lock statistics:\n");
+	spinlock_stats(&pollqlock, spin_reporter, dcb);
+#endif
 }
 
 /**
@@ -758,12 +982,14 @@ char	*str;
 			strcat(str, "|");
 		strcat(str, "HUP");
 	}
+#ifdef EPOLLRDHUP
 	if (event & EPOLLRDHUP)
 	{
 		if (*str)
 			strcat(str, "|");
 		strcat(str, "RDHUP");
 	}
+#endif
 
 	return str;
 }
@@ -884,4 +1110,69 @@ int		new_samples, new_nfds;
 	next_sample++;
 	if (next_sample >= n_avg_samples)
 		next_sample = 0;
+}
+
+/**
+ * Add given GWBUF to DCB's readqueue and add a pending EPOLLIN event for DCB.
+ * The event pretends that there is something to read for the DCB. Actually
+ * the incoming data is stored in the DCB's readqueue where it is read.
+ * 
+ * @param dcb	DCB where the event and data are added
+ * @param buf	GWBUF including the data
+ * 
+ */
+void poll_add_epollin_event_to_dcb(
+	DCB*   dcb,
+	GWBUF* buf)
+{
+	__uint32_t ev;
+	
+	ev = EPOLLIN;
+
+	poll_add_event_to_dcb(dcb, buf, ev);
+}
+
+
+
+static void poll_add_event_to_dcb(
+	DCB*       dcb,
+	GWBUF*     buf,
+	__uint32_t ev)
+{	
+	/** Add buf to readqueue */
+	spinlock_acquire(&dcb->authlock);
+	dcb->dcb_readqueue = gwbuf_append(dcb->dcb_readqueue, buf);
+	spinlock_release(&dcb->authlock);
+		
+	spinlock_acquire(&pollqlock);
+	
+	/** Set event to DCB */
+	if (DCB_POLL_BUSY(dcb))
+	{
+		dcb->evq.pending_events |= ev;
+	}
+	else
+	{
+		dcb->evq.pending_events = ev;
+		/** Add DCB to eventqueue if it isn't already there */
+		if (eventq)
+		{
+			dcb->evq.prev = eventq->evq.prev;
+			eventq->evq.prev->evq.next = dcb;
+			eventq->evq.prev = dcb;
+			dcb->evq.next = eventq;
+		}
+		else
+		{
+			eventq = dcb;
+			dcb->evq.prev = dcb;
+			dcb->evq.next = dcb;
+		}
+		pollStats.evq_length++;
+		if (pollStats.evq_length > pollStats.evq_max)
+		{
+			pollStats.evq_max = pollStats.evq_length;
+		}
+	}
+	spinlock_release(&pollqlock);
 }

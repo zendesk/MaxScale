@@ -1,5 +1,5 @@
 /*
- * This file is distributed as part of the SkySQL Gateway.  It is free
+ * This file is distributed as part of the MariaDB Corporation MaxScale.  It is free
  * software: you can redistribute it and/or modify it under the terms of the
  * GNU General Public License as published by the Free Software Foundation,
  * version 2.
@@ -13,7 +13,7 @@
  * this program; if not, write to the Free Software Foundation, Inc., 51
  * Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  *
- * Copyright SkySQL Ab 2013
+ * Copyright MariaDB Corporation Ab 2013-2014
  */
 
 
@@ -119,15 +119,16 @@ static void slist_add_node(
         slist_t*      list,
         slist_node_t* node);
 
+#if defined(NOT_USED)
 static slist_node_t* slist_node_get_next(
         slist_node_t* curr_node);
 
 static slist_node_t* slist_get_first(
         slist_t* list);
-
 static slist_cursor_t* slist_get_cursor(
         slist_t* list);
-
+#endif /*< NOT_USED */
+        
 static bool file_write_header(skygw_file_t* file);
 static void simple_mutex_free_memory(simple_mutex_t* sm);
 static void mlist_free_memory(mlist_t* ml, char* name);
@@ -223,17 +224,27 @@ int skygw_rwlock_init(
         int             err;
         
         rwl = (skygw_rwlock_t *)calloc(1, sizeof(skygw_rwlock_t));
-        rwl->srw_chk_top = CHK_NUM_RWLOCK;
-        rwl->srw_chk_tail = CHK_NUM_RWLOCK;
-        err = pthread_rwlock_init(rwl->srw_rwlock, NULL);
-        ss_dassert(err == 0);
-
-        if (err != 0) {
+	
+	if (rwl == NULL)
+	{
+		err = 1;
+		goto return_err;
+	}
+	rwl->srw_chk_top = CHK_NUM_RWLOCK;
+	rwl->srw_chk_tail = CHK_NUM_RWLOCK;
+	err = pthread_rwlock_init(rwl->srw_rwlock, NULL);
+	ss_dassert(err == 0);
+        
+        if (err != 0) 
+	{
+		free(rwl);
                 ss_dfprintf(stderr,
                             "* Creating pthread_rwlock failed : %s\n",
                             strerror(err));
                 goto return_err;
         }
+        *rwlock = rwl;
+	
 return_err:
         return err;
 }
@@ -319,6 +330,7 @@ mlist_t* mlist_init(
         list->mlist_nodecount_max = maxnodes;
         /** Set data deletion callback fun */
         list->mlist_datadel = datadel;
+	
         if (name != NULL) {
                 list->mlist_name = name;
         }
@@ -344,6 +356,7 @@ mlist_t* mlist_init(
                 CHK_MLIST_CURSOR(c);
                 *cursor = c;
         }
+        list->mlist_versno = 2; /*< vresno != 0 means that list is initialized */
         CHK_MLIST(list);
         
 return_list:
@@ -740,7 +753,7 @@ static void slist_add_node(
 }
 
 
-
+#if defined(NOT_USED)
 static slist_node_t* slist_node_get_next(
         slist_node_t* curr_node)
 {
@@ -766,7 +779,6 @@ static slist_node_t* slist_get_first(
         return NULL;
 }
 
-
 static slist_cursor_t* slist_get_cursor(
         slist_t* list)
 {
@@ -777,7 +789,7 @@ static slist_cursor_t* slist_get_cursor(
         c = slist_cursor_init(list);
         return c;
 }
-
+#endif /*< NOT_USED */
 
 static slist_cursor_t* slist_cursor_init(
         slist_t* list)
@@ -1011,6 +1023,7 @@ skygw_thread_t* skygw_thread_init(
 
         if (th->sth_mutex == NULL) {
                 thread_free_memory(th, th->sth_name);
+		th = NULL;
                 goto return_th;
         }
         th->sth_thrfun = sth_thrfun;
@@ -1394,6 +1407,12 @@ skygw_message_t* skygw_message_init(void)
         skygw_message_t* mes;
 
         mes = (skygw_message_t*)calloc(1, sizeof(skygw_message_t));
+	
+	if (mes == NULL)
+	{
+		err = 1;
+		goto return_mes;
+	}
         mes->mes_chk_top = CHK_NUM_MESSAGE;
         mes->mes_chk_tail = CHK_NUM_MESSAGE;
         err = pthread_mutex_init(&(mes->mes_mutex), NULL);
@@ -1404,6 +1423,7 @@ skygw_message_t* skygw_message_init(void)
                         "%d, %s\n",
                         err,
                         strerror(errno));
+		free(mes);
                 mes = NULL;
                 goto return_mes;
         }
@@ -1415,6 +1435,8 @@ skygw_message_t* skygw_message_init(void)
                         "due error %d, %s\n",
                         err,
                         strerror(errno));
+		pthread_mutex_destroy(&mes->mes_mutex);
+		free(mes);
                 mes = NULL;
                 goto return_mes;
         }
@@ -1600,7 +1622,7 @@ static bool file_write_header(
         *tm = *localtime(t);
         
         CHK_FILE(file);
-        header_buf1 = "\n\nSkySQL MaxScale\t";            
+        header_buf1 = "\n\nMariaDB Corporation MaxScale\t";
         header_buf2 = (char *)calloc(1, strlen(file->sf_fname)+2);
         snprintf(header_buf2, strlen(file->sf_fname)+2, "%s ", file->sf_fname);
         header_buf3 = strdup(asctime(tm));
@@ -1918,7 +1940,7 @@ char* replace_literal(
         }                
         
         rc = regcomp(&re, search_re, REG_EXTENDED|REG_ICASE);
-        ss_dassert(rc == 0);
+        ss_info_dassert(rc == 0, "Regex check");
         
         if (rc != 0)
         {
@@ -1955,7 +1977,19 @@ retblock:
         return newstr;
 }
 
-
+/** 
+ * Calculate the number of decimal numbers from a size_t value.
+ * 
+ * @param	value	value
+ * 
+ * @return	number of decimal numbers of which the value consists of
+ * 		value==123 returns 3, for example.
+ */
+size_t get_decimal_len(
+	size_t value)
+{
+	return value > 0 ? (size_t) log10 ((double) value) + 1 : 1;
+}
 
 
 

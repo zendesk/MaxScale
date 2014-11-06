@@ -13,7 +13,7 @@
  * this program; if not, write to the Free Software Foundation, Inc., 51
  * Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  *
- * Copyright SkySQL Ab 2014
+ * Copyright MariaDB Corporation Ab 2014
  */
 
 /**
@@ -266,6 +266,14 @@ int
 main(int argc, char **argv)
 {
 int	result = 0;
+char	*home, buf[1024];
+
+	/* Unlink any existing password file before running this test */
+	if ((home = getenv("MAXSCALE_HOME")) == NULL)
+		home =  "/usr/local/skysql";
+	sprintf(buf, "%s/etc/passwd", home);
+	if (strcmp(buf, "/etc/passwd") != 0)
+		unlink(buf);
 
 	result += test1();
 	result += test2();

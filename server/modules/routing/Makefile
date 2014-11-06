@@ -1,4 +1,4 @@
-# This file is distributed as part of the SkySQL Gateway.  It is free
+# This file is distributed as part of the MariaDB Corporation MaxScale.  It is free
 # software: you can redistribute it and/or modify it under the terms of the
 # GNU General Public License as published by the Free Software Foundation,
 # version 2.
@@ -12,7 +12,7 @@
 # this program; if not, write to the Free Software Foundation, Inc., 51
 # Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 #
-# Copyright SkySQL Ab 2013
+# Copyright MariaDB Corporation Ab 2013
 #
 # Revision History
 # Date		Who			Description
@@ -29,7 +29,7 @@ UTILSPATH := $(ROOT_PATH)/utils
 
 CC=cc
 CFLAGS=-c -fPIC -I/usr/include -I../include -I../../include -I$(LOGPATH) \
-	-I$(UTILSPATH) -Wall -g
+	-I$(UTILSPATH) -I$(MYSQL_HEADERS) -Wall -g
 
 include ../../../makefile.inc
 
@@ -66,7 +66,7 @@ libcli.so: $(CLIOBJ)
 	$(CC) $(LDFLAGS) $(CLIOBJ) $(LIBS) -o $@
 
 libreadwritesplit.so:
-#	(cd readwritesplit; touch depend.mk ; make; cp $@ ..)
+	(cd readwritesplit; touch depend.mk ; make; cp $@ ..)
 
 .c.o:
 	$(CC) $(CFLAGS) $< -o $@

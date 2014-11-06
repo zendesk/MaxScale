@@ -1,5 +1,5 @@
 /*
- * This file is distributed as part of the SkySQL Gateway.  It is free
+ * This file is distributed as part of the MariaDB Corporation MaxScale.  It is free
  * software: you can redistribute it and/or modify it under the terms of the
  * GNU General Public License as published by the Free Software Foundation,
  * version 2.
@@ -13,7 +13,7 @@
  * this program; if not, write to the Free Software Foundation, Inc., 51
  * Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  *
- * Copyright SkySQL Ab 2013
+ * Copyright MariaDB Corporation Ab 2013-2014
  */
 
 /**
@@ -654,7 +654,7 @@ DCB*              backend_dcb;
  * @param instance		The router instance
  * @param router_session	The router session returned from the newSession call
  * @param queue			The queue of data buffers to route
- * @return The number of bytes sent
+ * @return if succeed 1, otherwise 0
  */
 static	int	
 routeQuery(ROUTER *instance, void *router_session, GWBUF *queue)
@@ -697,22 +697,24 @@ routeQuery(ROUTER *instance, void *router_session, GWBUF *queue)
                         "Error : Failed to route MySQL command %d to backend "
                         "server.",
                         mysql_command)));
+		rc = 0;
                 goto return_rc;
         }
-        
-	switch(mysql_command) {
-        case MYSQL_COM_CHANGE_USER:
-                rc = backend_dcb->func.auth(
-                        backend_dcb,
-                        NULL,
-                        backend_dcb->session,
-                        queue);
-		break;
-        default:
-                rc = backend_dcb->func.write(backend_dcb, queue);
-                break;
+
+        switch(mysql_command) {
+		case MYSQL_COM_CHANGE_USER:
+			rc = backend_dcb->func.auth(
+				backend_dcb,
+				NULL,
+				backend_dcb->session,
+				queue);
+			break;
+		
+		default:
+			rc = backend_dcb->func.write(backend_dcb, queue);
+			break;
         }
-        
+
         CHK_PROTOCOL(((MySQLProtocol*)backend_dcb->protocol));
         LOGIF(LD, (skygw_log_write(
                 LOGFILE_DEBUG,
@@ -813,20 +815,33 @@ clientReply(
  * @param       action     	The action: REPLY, REPLY_AND_CLOSE, NEW_CONNECTION
  *
  */
-static  void
-handleError(
-        ROUTER           *instance,
-        void             *router_session,
-        GWBUF            *errbuf,
-        DCB              *backend_dcb,
-        error_action_t   action,
-        bool             *succp)
-{
-	DCB		*client = NULL;
-	SESSION         *session = backend_dcb->session;
-	client = session->client;
+static void handleError(
+	ROUTER           *instance,
+	void             *router_session,
+	GWBUF            *errbuf,
+	DCB              *backend_dcb,
+	error_action_t   action,
+	bool             *succp)
 
-	ss_dassert(client != NULL);
+{
+	DCB             *client_dcb;
+	SESSION         *session = backend_dcb->session;
+	session_state_t sesstate;
+	
+	spinlock_acquire(&session->ses_lock);
+	sesstate = session->state;
+	client_dcb = session->client;
+	spinlock_release(&session->ses_lock);
+	ss_dassert(client_dcb != NULL);
+	
+	if (sesstate == SESSION_STATE_ROUTER_READY)
+	{
+		CHK_DCB(client_dcb);
+		client_dcb->func.write(client_dcb, gwbuf_clone(errbuf));
+	}
+	
+	/** false because connection is not available anymore */
+	*succp = false;
 }
 
 /** to be inline'd */

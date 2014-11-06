@@ -1,5 +1,5 @@
 /*
- * This file is distributed as part of the SkySQL Gateway.  It is free
+ * This file is distributed as part of the MariaDB Corporation MaxScale.  It is free
  * software: you can redistribute it and/or modify it under the terms of the
  * GNU General Public License as published by the Free Software Foundation,
  * version 2.
@@ -13,7 +13,7 @@
  * this program; if not, write to the Free Software Foundation, Inc., 51
  * Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  *
- * Copyright SkySQL Ab 2013
+ * Copyright MariaDB Corporation Ab 2013-2014
  */
 
 /*
@@ -31,6 +31,10 @@
  *					localhost entry should be added for the selected user in the backends.
  *					Setting to 1 allow localhost (127.0.0.1 or socket) to match the any host grant via
  *					user@%
+ * 29/09/2014	Massimiliano Pinto	Added Mysql user@host authentication with wildcard in IPv4 hosts:
+ *					x.y.z.%, x.y.%.%, x.%.%.%
+ * 03/10/2014	Massimiliano Pinto	Added netmask for wildcard in IPv4 hosts.
+ * 24/10/2014	Massimiliano Pinto	Added Mysql user@host @db authentication support
  *
  */
 
@@ -46,6 +50,7 @@ extern int gw_read_backend_event(DCB* dcb);
 extern int gw_write_backend_event(DCB *dcb);
 extern int gw_MySQLWrite_backend(DCB *dcb, GWBUF *queue);
 extern int gw_error_backend_event(DCB *dcb);
+char* get_username_from_auth(char* ptr, uint8_t* data);
 
 static server_command_t* server_command_init(server_command_t* srvcmd,
                                              mysql_server_cmd_t cmd);
@@ -463,6 +468,7 @@ int gw_receive_backend_auth(
                                 bufstr)));
 
                         free(bufstr);
+			free(err);
                         rc = -1;
                 }
                 else
@@ -537,9 +543,9 @@ int gw_receive_backend_auth(
  * @return 0 on success, 1 on failure
  */
 int gw_send_authentication_to_backend(
-        char *dbname,
-        char *user,
-        uint8_t *passwd,
+        char	*dbname,
+        char	*user,
+        uint8_t	*passwd,
         MySQLProtocol *conn)
 {
         int compress = 0;
@@ -549,8 +555,8 @@ int gw_send_authentication_to_backend(
         long bytes;
         uint8_t client_scramble[GW_MYSQL_SCRAMBLE_SIZE];
         uint8_t client_capabilities[4];
-        uint32_t server_capabilities;
-        uint32_t final_capabilities;
+        uint32_t server_capabilities = 0;
+        uint32_t final_capabilities  = 0;
         char dbpass[MYSQL_USER_MAXLEN + 1]="";
 	GWBUF *buffer;
 	DCB *dcb;
@@ -565,17 +571,12 @@ int gw_send_authentication_to_backend(
                 curr_passwd = passwd;
 
 	dcb = conn->owner_dcb;
-
-	// Zero the vars
-	memset(&server_capabilities, '\0', sizeof(server_capabilities));
-	memset(&final_capabilities, '\0', sizeof(final_capabilities));
-
         final_capabilities = gw_mysql_get_byte4((uint8_t *)&server_capabilities);
 
-        final_capabilities |= GW_MYSQL_CAPABILITIES_PROTOCOL_41;
-        final_capabilities |= GW_MYSQL_CAPABILITIES_CLIENT;
+	/** Copy client's flags to backend */
+	final_capabilities |= conn->client_capabilities;;
 
-        if (compress) {
+	if (compress) {
                 final_capabilities |= GW_MYSQL_CAPABILITIES_COMPRESS;
 #ifdef DEBUG_MYSQL_CONN
                 fprintf(stderr, ">>>> Backend Connection with compression\n");
@@ -766,9 +767,9 @@ int gw_do_connect_to_backend(
 	/* prepare for connect */
 	setipaddress(&serv_addr.sin_addr, host);
 	serv_addr.sin_port = htons(port);
-	bufsize = GW_CLIENT_SO_SNDBUF;
+	bufsize = GW_BACKEND_SO_SNDBUF;
 	setsockopt(so, SOL_SOCKET, SO_SNDBUF, &bufsize, sizeof(bufsize));
-	bufsize = GW_CLIENT_SO_RCVBUF;
+	bufsize = GW_BACKEND_SO_RCVBUF;
 	setsockopt(so, SOL_SOCKET, SO_RCVBUF, &bufsize, sizeof(bufsize));
 	/* set socket to as non-blocking here */
 	setnonblocking(so);
@@ -1003,7 +1004,7 @@ GWBUF* mysql_create_custom_error(
  * @param packet_number
  * @param in_affected_rows
  * @param mysql_message
- * @return packet length
+ * @return 1 Non-zero if data was sent
  *
  */
 int mysql_send_custom_error (
@@ -1016,9 +1017,7 @@ int mysql_send_custom_error (
 
         buf = mysql_create_custom_error(packet_number, in_affected_rows, mysql_message);
         
-        dcb->func.write(dcb, buf);
-
-        return GWBUF_LENGTH(buf);
+        return dcb->func.write(dcb, buf);
 }
 
 /**
@@ -1030,19 +1029,24 @@ int mysql_send_custom_error (
  * @param passwd The SHA1(real_password): Note real_password is unknown
  * @return 1 on success, 0 on failure
  */
-int gw_send_change_user_to_backend(char *dbname, char *user, uint8_t *passwd, MySQLProtocol *conn) {
-        int compress = 0;
-        int rv;
-        uint8_t *payload = NULL;
-        uint8_t *payload_start = NULL;
-        long bytes;
-        uint8_t client_scramble[GW_MYSQL_SCRAMBLE_SIZE];
-        uint8_t client_capabilities[4];
-        uint32_t server_capabilities;
-        uint32_t final_capabilities;
-        char dbpass[MYSQL_USER_MAXLEN + 1]="";
-	GWBUF *buffer;
-	DCB *dcb;
+int gw_send_change_user_to_backend(
+	char *dbname, 
+	char *user, 
+	uint8_t *passwd, 
+	MySQLProtocol *conn) 
+{
+        int      compress = 0;
+        int      rv;
+        uint8_t	 *payload = NULL;
+        uint8_t  *payload_start = NULL;
+        long 	 bytes;
+        uint8_t  client_scramble[GW_MYSQL_SCRAMBLE_SIZE];
+        uint8_t  client_capabilities[4];
+        uint32_t server_capabilities = 0;
+        uint32_t final_capabilities  = 0;
+        char 	 dbpass[MYSQL_USER_MAXLEN + 1]="";
+	GWBUF 	 *buffer;
+	DCB 	 *dcb;
 
         char *curr_db = NULL;
         uint8_t *curr_passwd = NULL;
@@ -1055,14 +1059,10 @@ int gw_send_change_user_to_backend(char *dbname, char *user, uint8_t *passwd, My
 
 	dcb = conn->owner_dcb;
 
-	// Zero the vars
-	memset(&server_capabilities, '\0', sizeof(server_capabilities));
-	memset(&final_capabilities, '\0', sizeof(final_capabilities));
+	final_capabilities = gw_mysql_get_byte4((uint8_t *)&server_capabilities);
 
-        final_capabilities = gw_mysql_get_byte4((uint8_t *)&server_capabilities);
-
-        final_capabilities |= GW_MYSQL_CAPABILITIES_PROTOCOL_41;
-        final_capabilities |= GW_MYSQL_CAPABILITIES_CLIENT;
+	/** Copy client's flags to backend */
+	final_capabilities |= conn->client_capabilities;;	
 
         if (compress) {
                 final_capabilities |= GW_MYSQL_CAPABILITIES_COMPRESS;
@@ -1110,22 +1110,22 @@ int gw_send_change_user_to_backend(char *dbname, char *user, uint8_t *passwd, My
 
 	// add the user
         bytes += strlen(user);
-        // the NULL
+        // NULL byte for user string
         bytes++;
 
 	// next will be + 1 (scramble_len) + 20 (fixed_scramble) + (dbname + NULL term) + 2 bytes charset 
 
-        if (curr_passwd != NULL) {
-                bytes += GW_MYSQL_SCRAMBLE_SIZE;
-                bytes++;
-	} else {
-                bytes++;
-	}	
-
-        if (curr_db != NULL) {
-                bytes += strlen(curr_db);
-        	bytes++;
+	if (curr_passwd != NULL) {
+		bytes += GW_MYSQL_SCRAMBLE_SIZE;
 	}
+	// 1 byte for scramble_len
+	bytes++;
+
+	if (curr_db != NULL) {
+		bytes += strlen(curr_db);
+	}
+	// NULL byte for dbname string
+	bytes++;
 
 	// the charset
 	bytes += 2;
@@ -1137,6 +1137,11 @@ int gw_send_change_user_to_backend(char *dbname, char *user, uint8_t *passwd, My
 
 	// allocating the GWBUF
 	buffer = gwbuf_alloc(bytes);
+	/** 
+	 * Set correct type to GWBUF so that it will be handled like session 
+	 * commands should
+	 */
+	buffer->gwbuf_type = GWBUF_TYPE_MYSQL|GWBUF_TYPE_SINGLE_STMT|GWBUF_TYPE_SESCMD;
 	payload = GWBUF_DATA(buffer);
 
 	// clearing data
@@ -1177,7 +1182,10 @@ int gw_send_change_user_to_backend(char *dbname, char *user, uint8_t *passwd, My
                 memcpy(payload, curr_db, strlen(curr_db));
                 payload += strlen(curr_db);
                 payload++;
-        }
+        } else {
+                // skip the NULL
+                payload++;
+	}
 
         // set the charset, 2 bytes!!!!
         *payload = '\x08';
@@ -1213,7 +1221,7 @@ int gw_send_change_user_to_backend(char *dbname, char *user, uint8_t *passwd, My
  * @param scramble_len 	The scrable size in bytes
  * @param username	The current username in the authentication request
  * @param stage1_hash	The SHA1(candidate_password) decoded by this routine
- * @return 0 on succesful check or != 0 on failure
+ * @return 0 on succesful check or 1 on failure
  *
  */
 int gw_check_mysql_scramble_data(DCB *dcb, uint8_t *token, unsigned int token_len, uint8_t *scramble, unsigned int scramble_len, char *username, uint8_t *stage1_hash) {
@@ -1236,6 +1244,12 @@ int gw_check_mysql_scramble_data(DCB *dcb, uint8_t *token, unsigned int token_le
 	ret_val = gw_find_mysql_user_password_sha1(username, password, dcb);
 
 	if (ret_val) {
+		/* if password was sent, fill stage1_hash with at least 1 byte in order
+		 * to create rigth error message: (using password: YES|NO)
+		 */
+		if (token_len)
+			memcpy(stage1_hash, (char *)"_", 1);
+
 		return 1;
 	}
 
@@ -1307,14 +1321,20 @@ int gw_check_mysql_scramble_data(DCB *dcb, uint8_t *token, unsigned int token_le
 #endif
 
 	/* now compare SHA1(SHA1(gateway_password)) and check_hash: return 0 is MYSQL_AUTH_OK */
-	return memcmp(password, check_hash, SHA_DIGEST_LENGTH);
+	ret_val = memcmp(password, check_hash, SHA_DIGEST_LENGTH);
+
+	if (ret_val != 0)
+		return 1;
+	else
+		return 0;
 }
 
 /**
  * gw_find_mysql_user_password_sha1
  *
- * The routine fetches look for an user int he Gateway users' table
+ * The routine fetches an user from the MaxScale users' table
  * The users' table is dcb->service->users or a different one specified with void *repository
+ * The user lookup uses username,host and db name (if passed in connection or change user)
  *
  * If found the HEX password, representing sha1(sha1(password)), is converted in binary data and
  * copied into gateway_password 
@@ -1331,12 +1351,16 @@ int gw_find_mysql_user_password_sha1(char *username, uint8_t *gateway_password, 
 	struct sockaddr_in *client;
         char *user_password = NULL;
 	MYSQL_USER_HOST key;
+	MYSQL_session *client_data = NULL;
 
+	client_data = (MYSQL_session *) dcb->data;	
 	service = (SERVICE *) dcb->service;
 	client = (struct sockaddr_in *) &dcb->ipv4;
 
 	key.user = username;
 	memcpy(&key.ipv4, client, sizeof(struct sockaddr_in));
+	key.netmask = 32;
+	key.resource = client_data->db;
 
 	LOGIF(LD,
 		(skygw_log_write_flush(
@@ -1346,71 +1370,119 @@ int gw_find_mysql_user_password_sha1(char *username, uint8_t *gateway_password, 
 			key.user,
 			dcb->remote)));
 
-	/* look for user@current_host now */
+	/* look for user@current_ipv4 now */
         user_password = mysql_users_fetch(service->users, &key);
 
         if (!user_password) {
-		/* The user is not authenticated @ current host */
+		/* The user is not authenticated @ current IPv4 */
 
-		/* 1) Check for localhost first.
-		 * The check for localhost is 127.0.0.1 (IPv4 only)
- 		 */
-
-		if ((key.ipv4.sin_addr.s_addr == 0x0100007F) && !dcb->service->localhost_match_wildcard_host) {
- 		 	/* Skip the wildcard check and return 1 */
-			LOGIF(LE,
-				(skygw_log_write_flush(
-					LOGFILE_ERROR,
-					"%lu [MySQL Client Auth], user [%s@%s] not found, please try with 'localhost_match_wildcard_host=1' in service definition",
-					pthread_self(),
-					key.user,
-					dcb->remote)));
-
-			return 1;
-		}
-	
-		/* 2) Continue and check for wildcard host, user@%
-		 * Return 1 if no match
-		 */
-
-		memset(&key.ipv4, 0, sizeof(struct sockaddr_in));
-
-		LOGIF(LD,
-			(skygw_log_write_flush(
-				LOGFILE_DEBUG,
-				"%lu [MySQL Client Auth], checking user [%s@%s] with wildcard host [%%]",
-				pthread_self(),
-				key.user,
-				dcb->remote)));
-
-		user_password = mysql_users_fetch(service->users, &key);
-     
-		if (!user_password) {
-			/* the user@% was not found.
- 			 * Return 1
+		while (1) {
+			/*
+			 * (1) Check for localhost first: 127.0.0.1 (IPv4 only)
  			 */
+
+			if ((key.ipv4.sin_addr.s_addr == 0x0100007F) && !dcb->service->localhost_match_wildcard_host) {
+ 			 	/* Skip the wildcard check and return 1 */
+				LOGIF(LE,
+					(skygw_log_write_flush(
+						LOGFILE_ERROR,
+						"Error : user %s@%s not found, try set "
+						"'localhost_match_wildcard_host=1' in "
+						"service definition of the configuration "
+						"file.",
+						key.user,
+						dcb->remote)));
+
+				break;
+			}
+
+			/*
+			 * (2) check for possible IPv4 class C,B,A networks
+			 */
+
+			/* Class C check */
+			key.ipv4.sin_addr.s_addr &= 0x00FFFFFF;
+			key.netmask -= 8;
+
+			user_password = mysql_users_fetch(service->users, &key);
+
+			if (user_password) {
+				break;
+			}
+
+			/* Class B check */
+			key.ipv4.sin_addr.s_addr &= 0x0000FFFF;
+			key.netmask -= 8;
+
+			user_password = mysql_users_fetch(service->users, &key);
+
+			if (user_password) {
+				break;
+			}
+
+			/* Class A check */
+			key.ipv4.sin_addr.s_addr &= 0x000000FF;
+			key.netmask -= 8;
+
+			user_password = mysql_users_fetch(service->users, &key);
+
+			if (user_password) {
+				break;
+			}
+
+			/*
+			 * (3) Continue check for wildcard host, user@%
+			 */
+
+			memset(&key.ipv4, 0, sizeof(struct sockaddr_in));
+			key.netmask = 0;
+
 			LOGIF(LD,
 				(skygw_log_write_flush(
 					LOGFILE_DEBUG,
-					"%lu [MySQL Client Auth], user [%s@%s] not existent",
+					"%lu [MySQL Client Auth], checking user [%s@%s] with wildcard host [%%]",
 					pthread_self(),
 					key.user,
 					dcb->remote)));
-			return 1;
+
+			user_password = mysql_users_fetch(service->users, &key);
+     
+			if (!user_password) {
+				/*
+				 * user@% not found.
+ 				 */
+
+				LOGIF(LD,
+					(skygw_log_write_flush(
+						LOGFILE_DEBUG,
+						"%lu [MySQL Client Auth], user [%s@%s] not existent",
+						pthread_self(),
+						key.user,
+						dcb->remote)));
+				break;
+			}
+
+			break;
 		}
 	}
 
-	/* user@host found: now check the password
- 	 *
-	 * Convert the hex data (40 bytes) to binary (20 bytes).
-         * The gateway_password represents the SHA1(SHA1(real_password)).
-         * Please note: the real_password is unknown and SHA1(real_password) is unknown as well
-	 */
+	/* If user@host has been found we get the the password in binary format*/
+	if (user_password) {
+	 	/*
+		 * Convert the hex data (40 bytes) to binary (20 bytes).
+		 * The gateway_password represents the SHA1(SHA1(real_password)).
+		 * Please note: the real_password is unknown and SHA1(real_password) is unknown as well
+		 */
+		int passwd_len=strlen(user_password);
+		if (passwd_len) {
+			passwd_len = (passwd_len <= (SHA_DIGEST_LENGTH * 2)) ? passwd_len : (SHA_DIGEST_LENGTH * 2);
+			gw_hex2bin(gateway_password, user_password, passwd_len);
+		}
 
-        if (strlen(user_password))
-                gw_hex2bin(gateway_password, user_password, SHA_DIGEST_LENGTH * 2);
-
-        return 0;
+		return 0;
+	} else {
+		return 1;
+	}
 }
 
 /**
@@ -1458,7 +1530,7 @@ mysql_send_auth_error (
         }
         mysql_errno = 1045;
         mysql_error_msg = "Access denied!";
-        mysql_state = "2800";
+        mysql_state = "28000";
 
         field_count = 0xff;
         gw_mysql_set_byte2(mysql_err, mysql_errno);
@@ -1642,6 +1714,8 @@ void protocol_archive_srv_command(
         server_command_t*  h1;
         int                len = 0;
         
+	CHK_PROTOCOL(p);
+	
         spinlock_acquire(&p->protocol_lock);
         
         if (p->protocol_state != MYSQL_PROTOCOL_ACTIVE)
@@ -1692,6 +1766,7 @@ void protocol_archive_srv_command(
         
 retblock:
         spinlock_release(&p->protocol_lock);
+	CHK_PROTOCOL(p);
 }
 
 
@@ -1917,3 +1992,153 @@ void protocol_set_response_status (
         spinlock_release(&p->protocol_lock);
 }
 
+char* create_auth_failed_msg(
+        GWBUF* readbuf,
+        char*  hostaddr,
+        uint8_t*  sha1)
+{
+        char* errstr;
+        char* uname=(char *)GWBUF_DATA(readbuf) + 5;
+        const char* ferrstr = "Access denied for user '%s'@'%s' (using password: %s)";
+
+        /** -4 comes from 2X'%s' minus terminating char */
+        errstr = (char *)malloc(strlen(uname)+strlen(ferrstr)+strlen(hostaddr)+strlen("YES")-6 + 1);
+
+        if (errstr != NULL)
+        {
+                sprintf(errstr, ferrstr, uname, hostaddr, (*sha1 == '\0' ? "NO" : "YES"));
+        }
+
+        return errstr;
+}
+
+/**
+ * Read username from MySQL authentication packet.
+ *
+ * Only for client to server packet, COM_CHANGE_USER packet has different format.
+ *
+ * @param       ptr     address where to write the result or NULL if memory
+ *                      is allocated here.
+ * @param       data    Address of MySQL packet.
+ *
+ * @return      Pointer to a copy of the username. NULL if memory allocation
+ *              failed or if username was empty.
+ */
+char* get_username_from_auth(
+        char*    ptr,
+        uint8_t* data)
+{
+        char*    first_letter;
+        char*    rval;
+
+	first_letter = (char *)(data + 4 + 4 + 4 + 1 + 23);
+
+        if (first_letter == '\0')
+        {
+                rval = NULL;
+                goto retblock;
+        }
+
+        if (ptr == NULL)
+        {
+                if ((rval = (char *)malloc(MYSQL_USER_MAXLEN+1)) == NULL)
+                {
+                        goto retblock;
+                }
+        }
+        else
+        {
+                rval = ptr;
+        }
+        snprintf(rval, MYSQL_USER_MAXLEN+1, "%s", first_letter);
+
+retblock:
+
+        return rval;
+}
+
+int check_db_name_after_auth(DCB *dcb, char *database, int auth_ret) {
+        int db_exists = -1;
+
+        /* check for dabase name and possible match in resource hashtable */
+        if (database && strlen(database)) {
+                /* if database names are loaded we can check if db name exists */
+                if (dcb->service->resources != NULL) {
+                        if (hashtable_fetch(dcb->service->resources, database)) {
+                                db_exists = 1;
+                        } else {
+                                db_exists = 0;
+                        }
+                } else {
+                        /* if database names are not loaded we don't allow connection with db name*/
+                        db_exists = -1;
+                }
+
+                if (db_exists == 0 && auth_ret == 0) {
+                        auth_ret = 2;
+                }
+
+                if (db_exists < 0 && auth_ret == 0) {
+                        auth_ret = 1;
+                }
+        }
+
+        return auth_ret;
+}
+
+/**
+ * Create a message error string to send via MySQL ERR packet.
+ *
+ * @param	username	the MySQL user
+ * @param	hostaddr	the client IP
+ * @param	sha1		authentication scramble data
+ * @param	db		the MySQL db to connect to
+ *
+ * @return      Pointer to the allocated string or NULL on failure
+ */
+char *create_auth_fail_str(
+	char	*username,
+	char	*hostaddr,
+	char	*sha1,
+	char	*db)
+{
+	char* errstr;
+	const char* ferrstr;
+	int db_len;
+
+	if (db != NULL)
+		db_len = strlen(db);
+	else
+		db_len = 0;
+
+	if (db_len > 0)
+	{
+		ferrstr = "Access denied for user '%s'@'%s' (using password: %s) to database '%s'";
+	}
+	else
+	{
+		ferrstr = "Access denied for user '%s'@'%s' (using password: %s)";
+	}	
+	errstr = (char *)malloc(strlen(username)+strlen(ferrstr)+strlen(hostaddr)+strlen("YES")-6 + db_len + ((db_len > 0) ? (strlen(" to database ") +2) : 0) + 1);
+	
+	if (errstr == NULL)
+	{
+		LOGIF(LE, (skygw_log_write_flush(
+			LOGFILE_ERROR,
+			"Error : Memory allocation failed due to %s.", 
+			strerror(errno)))); 
+		goto retblock;
+	}
+
+	if (db_len > 0)
+	{
+		sprintf(errstr, ferrstr, username, hostaddr, (*sha1 == '\0' ? "NO" : "YES"), db); 
+	}
+	else
+	{
+		sprintf(errstr, ferrstr, username, hostaddr, (*sha1 == '\0' ? "NO" : "YES")); 
+	}
+	
+retblock:
+	return errstr;
+}

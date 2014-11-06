@@ -1,5 +1,5 @@
 /*
- * This file is distributed as part of the SkySQL Gateway.  It is free
+ * This file is distributed as part of the MariaDB Corporation MaxScale.  It is free
  * software: you can redistribute it and/or modify it under the terms of the
  * GNU General Public License as published by the Free Software Foundation,
  * version 2.
@@ -13,9 +13,10 @@
  * this program; if not, write to the Free Software Foundation, Inc., 51
  * Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  *
- * Copyright SkySQL Ab 2013
+ * Copyright MariaDB Corporation Ab 2013-2014
  */
-
+#if !defined(LOG_MANAGER_H)
+# define LOG_MANAGER_H
 
 typedef struct filewriter_st  filewriter_t;
 typedef struct logfile_st     logfile_t;
@@ -72,9 +73,9 @@ void skygw_logmanager_exit(void);
  * free private write buffer list
  */
 void skygw_log_done(void);
-int  skygw_log_write(logfile_id_t id, char* format, ...);
+int  skygw_log_write(logfile_id_t id, const char* format, ...);
 int  skygw_log_flush(logfile_id_t id);
-int  skygw_log_write_flush(logfile_id_t id, char* format, ...);
+int  skygw_log_write_flush(logfile_id_t id, const char* format, ...);
 int  skygw_log_enable(logfile_id_t id);
 int  skygw_log_disable(logfile_id_t id);
 
@@ -90,3 +91,5 @@ const char* get_msg_suffix_default(void);
 const char* get_err_prefix_default(void);
 const char* get_err_suffix_default(void);
 const char* get_logpath_default(void);
+
+#endif /** LOG_MANAGER_H */

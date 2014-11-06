@@ -1,5 +1,5 @@
 /*
- * This file is distributed as part of the SkySQL Gateway.  It is free
+ * This file is distributed as part of the MariaDB Corporation MaxScale.  It is free
  * software: you can redistribute it and/or modify it under the terms of the
  * GNU General Public License as published by the Free Software Foundation,
  * version 2.
@@ -13,7 +13,7 @@
  * this program; if not, write to the Free Software Foundation, Inc., 51
  * Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  *
- * Copyright SkySQL Ab 2013
+ * Copyright MariaDB Corporation Ab 2013-2014
  */
 
 #include <unistd.h>
@@ -78,7 +78,12 @@ int main(int argc, char** argv)
   for(i = 0;i<iterations;i++){
 
     sprintf(message,"message|%ld",msg_index++);
-    memset(message + strlen(message),' ',block_size - strlen(message));
+	int msgsize = block_size - strlen(message);
+	if(msgsize < 0 || msgsize > 8192){
+		fprintf(stderr,"Error: Message too long");
+		break;
+	}
+    memset(message + strlen(message), ' ', msgsize);
     memset(message + block_size - 1,'\0',1);
     if(interval > 0 && i % interval == 0){
       err = skygw_log_write_flush(LOGFILE_ERROR, message);
@@ -90,7 +95,6 @@ int main(int argc, char** argv)
       break;
     }
     usleep(100);
-    //printf("%s\n",message);
   }
 
   skygw_log_flush(LOGFILE_ERROR);

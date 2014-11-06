@@ -1,5 +1,5 @@
 /*
- * This file is distributed as part of the SkySQL Gateway.  It is free
+ * This file is distributed as part of the MariaDB Corporation MaxScale.  It is free
  * software: you can redistribute it and/or modify it under the terms of the
  * GNU General Public License as published by the Free Software Foundation,
  * version 2.
@@ -13,7 +13,7 @@
  * this program; if not, write to the Free Software Foundation, Inc., 51
  * Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  *
- * Copyright SkySQL Ab 2013
+ * Copyright MariaDB Corporation Ab 2013-2014
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -116,10 +116,12 @@ char	fname[1024], *home;
 char	uname[80], passwd[80];
 
 	initialise();
-	if ((home = getenv("MAXSCALE_HOME")) != NULL)
+	if ((home = getenv("MAXSCALE_HOME")) != NULL && strlen(home) < 1024){
 		sprintf(fname, "%s/etc/passwd", home);
-	else
+	}
+	else{
 		sprintf(fname, "/usr/local/skysql/MaxScale/etc/passwd");
+	}
 	if ((fp = fopen(fname, "r")) == NULL)
 		return NULL;
 	if ((rval = users_alloc()) == NULL)
@@ -150,10 +152,12 @@ FILE	*fp;
 char	fname[1024], *home, *cpasswd;
 
 	initialise();
-	if ((home = getenv("MAXSCALE_HOME")) != NULL)
+	if ((home = getenv("MAXSCALE_HOME")) != NULL && strlen(home) < 1024){
 		sprintf(fname, "%s/etc/passwd", home);
-	else
+	}
+	else{
 		sprintf(fname, "/usr/local/skysql/MaxScale/etc/passwd");
+	}
         
 	if (users == NULL)
 	{
@@ -246,7 +250,7 @@ char* admin_remove_user(
         /**
          * Open passwd file and remove user from the file.
          */
-        if ((home = getenv("MAXSCALE_HOME")) != NULL) {
+        if ((home = getenv("MAXSCALE_HOME")) != NULL && strlen(home) < 1024) {
                 sprintf(fname, "%s/etc/passwd", home);
                 sprintf(fname_tmp, "%s/etc/passwd_tmp", home);
         } else {
@@ -310,7 +314,12 @@ char* admin_remove_user(
                  * Unmatching lines are copied to tmp file.
                  */
                 if (strncmp(uname, fusr, strlen(uname)+1) != 0) {
-                        fsetpos(fp, &rpos); /** one step back */ 
+					if(fsetpos(fp, &rpos) != 0){ /** one step back */ 
+                        LOGIF(LE, (skygw_log_write_flush(
+                                LOGFILE_ERROR,
+                                "Error : Unable to set stream position. ")));
+
+					}
                         fgets(line, LINELEN, fp);
                         fputs(line, fp_tmp);
                 }

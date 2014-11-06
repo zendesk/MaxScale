@@ -1,5 +1,5 @@
 /*
- * This file is distributed as part of the SkySQL Gateway.  It is free
+ * This file is distributed as part of the MariaDB Corporation MaxScale.  It is free
  * software: you can redistribute it and/or modify it under the terms of the
  * GNU General Public License as published by the Free Software Foundation,
  * version 2.
@@ -13,7 +13,7 @@
  * this program; if not, write to the Free Software Foundation, Inc., 51
  * Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  *
- * Copyright SkySQL Ab 2013
+ * Copyright MariaDB Corporation Ab 2013-2014
  */
 
 /**
@@ -60,8 +60,9 @@ MONITOR	*mon;
 	{
 		return NULL;
 	}
-
+	mon->state = MONITOR_STATE_ALLOC;
 	mon->name = strdup(name);
+
 	if ((mon->module = load_module(module, MODULE_MONITOR)) == NULL)
 	{
 		LOGIF(LE, (skygw_log_write_flush(
@@ -73,7 +74,8 @@ MONITOR	*mon;
 		return NULL;
 	}
 	mon->handle = (*mon->module->startMonitor)(NULL);
-	mon->state |= MONITOR_STATE_RUNNING;
+	mon->state = MONITOR_STATE_RUNNING;
+	
 	spinlock_acquire(&monLock);
 	mon->next = allMonitors;
 	allMonitors = mon;
@@ -94,7 +96,7 @@ monitor_free(MONITOR *mon)
 MONITOR	*ptr;
 
 	mon->module->stopMonitor(mon->handle);
-	mon->state &= ~MONITOR_STATE_RUNNING;
+	mon->state = MONITOR_STATE_FREED;
 	spinlock_acquire(&monLock);
 	if (allMonitors == mon)
 		allMonitors = mon->next;
@@ -121,7 +123,7 @@ void
 monitorStart(MONITOR *monitor)
 {
 	monitor->handle = (*monitor->module->startMonitor)(monitor->handle);
-	monitor->state |= MONITOR_STATE_RUNNING;
+	monitor->state = MONITOR_STATE_RUNNING;
 }
 
 /**
@@ -132,8 +134,9 @@ monitorStart(MONITOR *monitor)
 void
 monitorStop(MONITOR *monitor)
 {
+	monitor->state = MONITOR_STATE_STOPPING;
 	monitor->module->stopMonitor(monitor->handle);
-	monitor->state &= ~MONITOR_STATE_RUNNING;
+	monitor->state = MONITOR_STATE_STOPPED;
 }
 
 /**
@@ -231,17 +234,17 @@ MONITOR	*ptr;
 
 	spinlock_acquire(&monLock);
 	ptr = allMonitors;
-	dcb_printf(dcb, "+----------------------+---------------------\n");
-	dcb_printf(dcb, "| %-20s | Status\n", "Monitor");
-	dcb_printf(dcb, "+----------------------+---------------------\n");
+	dcb_printf(dcb, "---------------------+---------------------\n");
+	dcb_printf(dcb, "%-20s | Status\n", "Monitor");
+	dcb_printf(dcb, "---------------------+---------------------\n");
 	while (ptr)
 	{
-		dcb_printf(dcb, "| %-20s | %s\n", ptr->name,
+		dcb_printf(dcb, "%-20s | %s\n", ptr->name,
 			ptr->state & MONITOR_STATE_RUNNING
 					? "Running" : "Stopped");
 		ptr = ptr->next;
 	}
-	dcb_printf(dcb, "+----------------------+---------------------\n");
+	dcb_printf(dcb, "---------------------+---------------------\n");
 	spinlock_release(&monLock);
 }
 

@@ -1,5 +1,5 @@
 /*
- * This file is distributed as part of the SkySQL Gateway.  It is free
+ * This file is distributed as part of the MariaDB Corporation MaxScale.  It is free
  * software: you can redistribute it and/or modify it under the terms of the
  * GNU General Public License as published by the Free Software Foundation,
  * version 2.
@@ -13,7 +13,7 @@
  * this program; if not, write to the Free Software Foundation, Inc., 51
  * Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  *
- * Copyright SkySQL Ab 2013
+ * Copyright MariaDB Corporation Ab 2013-2014
  */
 
 /**
@@ -41,6 +41,7 @@
  *
  * @endverbatim
  */
+#include <my_config.h>
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -131,7 +132,7 @@ CONFIG_PARAMETER	*param, *p1;
 		ptr->element = NULL;
 		cntxt->next = ptr;
 	}
-	/* Check to see if the paramter already exists for the section */
+	/* Check to see if the parameter already exists for the section */
 	p1 = ptr->parameters;
 	while (p1)
 	{
@@ -460,6 +461,7 @@ int			error_count = 0;
 						
 						if (!succp)
 						{
+							if(param){
 							LOGIF(LM, (skygw_log_write(
 								LOGFILE_MESSAGE,
 								"* Warning : invalid value type "
@@ -469,6 +471,12 @@ int			error_count = 0;
 								((SERVICE*)obj->element)->name,
 								param->name,
 								param->value)));
+							}else{
+								LOGIF(LE, (skygw_log_write(
+								LOGFILE_ERROR,
+								"Error : parameter was NULL")));
+							
+							}
 						}
 					}
 				} /*< if (rw_split) */
@@ -816,7 +824,7 @@ int			error_count = 0;
 						int		found = 0;
 						while (obj1)
 						{
-							if (strcmp(s, obj1->object) == 0 &&
+							if (strcmp(trim(s), obj1->object) == 0 &&
                                                             obj->element && obj1->element)
                                                         {
 								found = 1;
@@ -1305,6 +1313,7 @@ SERVER			*server;
 							
                                                         if (!succp)
                                                         {
+															if(param){
                                                                 LOGIF(LM, (skygw_log_write(
                                                                         LOGFILE_MESSAGE,
                                                                         "* Warning : invalid value type "
@@ -1314,6 +1323,11 @@ SERVER			*server;
                                                                         ((SERVICE*)obj->element)->name,
                                                                         param->name,
                                                                         param->value)));                                                                
+															}else{
+                                                                LOGIF(LE, (skygw_log_write(
+                                                                        LOGFILE_ERROR,
+                                                                        "Error : parameter was NULL")));                                                                
+															}
                                                         }
                                                 }
 					}
@@ -1345,7 +1359,7 @@ SERVER			*server;
 						serviceSetUser(obj->element,
                                                                user,
                                                                auth);
-						if (enable_root_user)
+						if (enable_root_user && service)
 							serviceEnableRootUser(service, atoi(enable_root_user));
 
 						if (allow_localhost_match_wildcard_host)
@@ -1448,7 +1462,7 @@ SERVER			*server;
 					int		found = 0;
 					while (obj1)
 					{
-						if (strcmp(s, obj1->object) == 0 &&
+						if (strcmp(trim(s), obj1->object) == 0 &&
                                                     obj->element && obj1->element)
                                                 {
 							found = 1;
@@ -1575,6 +1589,7 @@ static char *service_params[] =
 		"use_sql_variables_in",		/*< rwsplit only */
 		"version_string",
 		"filters",
+		"weightby",
                 NULL
         };
 

@@ -1,5 +1,5 @@
 /*
- * This file is distributed as part of the SkySQL Gateway.  It is free
+ * This file is distributed as part of the MariaDB Corporation MaxScale.  It is free
  * software: you can redistribute it and/or modify it under the terms of the
  * GNU General Public License as published by the Free Software Foundation,
  * version 2.
@@ -13,11 +13,11 @@
  * this program; if not, write to the Free Software Foundation, Inc., 51
  * Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  *
- * Copyright SkySQL Ab 2013
+ * Copyright MariaDB Corporation Ab 2014
  */
 
 /**
- * @file buffer.h  - The Gateway buffer management functions
+ * @file buffer.h  - The MaxScale buffer management functions
  *
  * The buffer management is based on the principle of a linked list
  * of variable size buffer, the intention beign to allow longer
@@ -42,6 +42,12 @@
 #include <buffer.h>
 #include <atomic.h>
 #include <skygw_debug.h>
+#include <spinlock.h>
+#include <hint.h>
+#include <log_manager.h>
+#include <errno.h>
+
+extern int lm_enabled_logfiles_bitmask;
 
 static buffer_object_t* gwbuf_remove_buffer_object(
         GWBUF*           buf,
@@ -65,29 +71,32 @@ gwbuf_alloc(unsigned int size)
 GWBUF		*rval;
 SHARED_BUF	*sbuf;
 
-	// Allocate the buffer header
+	/* Allocate the buffer header */
 	if ((rval = (GWBUF *)malloc(sizeof(GWBUF))) == NULL)
 	{
-		return NULL;
+		goto retblock;;
 	}
 
-	// Allocate the shared data buffer
+	/* Allocate the shared data buffer */
 	if ((sbuf = (SHARED_BUF *)malloc(sizeof(SHARED_BUF))) == NULL)
 	{
 		free(rval);
-		return NULL;
+		rval = NULL;
+		goto retblock;
 	}
 
-	// Allocate the space for the actual data
+	/* Allocate the space for the actual data */
 	if ((sbuf->data = (unsigned char *)malloc(size)) == NULL)
 	{
+		ss_dassert(sbuf->data != NULL);
 		free(rval);
 		free(sbuf);
-		return NULL;
+		rval = NULL;
+		goto retblock;
 	}
 	spinlock_init(&rval->gwbuf_lock);
 	rval->start = sbuf->data;
-	rval->end = rval->start + size;
+	rval->end = (void *)((char *)rval->start+size);
 	sbuf->refcount = 1;
 	rval->sbuf = sbuf;
 	rval->next = NULL;
@@ -98,6 +107,14 @@ SHARED_BUF	*sbuf;
         rval->gwbuf_info = GWBUF_INFO_NONE;
         rval->gwbuf_bufobj = NULL;
         CHK_GWBUF(rval);
+retblock:
+	if (rval == NULL)
+	{
+		LOGIF(LE, (skygw_log_write_flush(
+			LOGFILE_ERROR,
+			"Error : Memory allocation failed due to %s.", 
+			strerror(errno))));
+	}
 	return rval;
 }
 
@@ -161,6 +178,11 @@ GWBUF	*rval;
 
 	if ((rval = (GWBUF *)malloc(sizeof(GWBUF))) == NULL)
 	{
+		ss_dassert(rval != NULL);
+		LOGIF(LE, (skygw_log_write_flush(
+			LOGFILE_ERROR,
+			"Error : Memory allocation failed due to %s.", 
+			strerror(errno))));
 		return NULL;
 	}
 
@@ -192,13 +214,18 @@ GWBUF *gwbuf_clone_portion(
         
         if ((clonebuf = (GWBUF *)malloc(sizeof(GWBUF))) == NULL)
         {
+		ss_dassert(clonebuf != NULL);
+		LOGIF(LE, (skygw_log_write_flush(
+			LOGFILE_ERROR,
+			"Error : Memory allocation failed due to %s.", 
+			strerror(errno))));
                 return NULL;
         }
         atomic_add(&buf->sbuf->refcount, 1);
         clonebuf->sbuf = buf->sbuf;
         clonebuf->gwbuf_type = buf->gwbuf_type; /*< clone info bits too */
-        clonebuf->start = (void *)((char*)buf->start)+start_offset;
-        clonebuf->end = (void *)((char *)clonebuf->start)+length;
+        clonebuf->start = (void *)((char*)buf->start+start_offset);
+        clonebuf->end = (void *)((char *)clonebuf->start+length);
         clonebuf->gwbuf_type = buf->gwbuf_type; /*< clone the type for now */ 
 	clonebuf->properties = NULL;
         clonebuf->hint = NULL;
@@ -277,8 +304,6 @@ return_clonebuf:
 GWBUF	*
 gwbuf_append(GWBUF *head, GWBUF *tail)
 {
-GWBUF	*ptr = head;
-        
 	if (!head)
 		return tail;
         CHK_GWBUF(head);
@@ -311,7 +336,7 @@ GWBUF *rval = head;
 
         CHK_GWBUF(head);
 	GWBUF_CONSUME(head, length);
-        CHK_GWBUF(head);
+    CHK_GWBUF(head);
         
 	if (GWBUF_EMPTY(head))
 	{
@@ -370,9 +395,34 @@ gwbuf_trim(GWBUF *buf, unsigned int n_bytes)
 		gwbuf_consume(buf, GWBUF_LENGTH(buf));
 		return NULL;
 	}
-	buf->end -= n_bytes;
+	buf->end = (void *)((char *)buf->end - n_bytes);
 
 	return buf;
+}
+
+/**
+ * Trim bytes from the end of a GWBUF structure that may be the first
+ * in a list. If the buffer has n_bytes or less then it will be freed and
+ * the next buffer in the list will be returned, or if none, NULL.
+ *
+ * @param head		The buffer to trim
+ * @param n_bytes	The number of bytes to trim off
+ * @return 		The buffer chain or NULL if buffer chain now empty
+ */
+GWBUF *
+gwbuf_rtrim(GWBUF *head, unsigned int n_bytes)
+{
+GWBUF *rval = head;
+        CHK_GWBUF(head);
+	GWBUF_RTRIM(head, n_bytes);
+        CHK_GWBUF(head);
+        
+	if (GWBUF_EMPTY(head))
+	{
+		rval = head->next;
+		gwbuf_free(head);
+	}
+	return rval;
 }
 
 /**
@@ -413,6 +463,16 @@ void gwbuf_add_buffer_object(
         
         CHK_GWBUF(buf);
         newb = (buffer_object_t *)malloc(sizeof(buffer_object_t));
+	ss_dassert(newb != NULL);
+	
+	if (newb == NULL)
+	{
+		LOGIF(LE, (skygw_log_write_flush(
+			LOGFILE_ERROR,
+			"Error : Memory allocation failed due to %s.", 
+			strerror(errno))));
+		return;
+	}
         newb->bo_id = id;
         newb->bo_data = data;
         newb->bo_donefun_fp = donefun_fp;
@@ -457,8 +517,10 @@ void* gwbuf_get_buffer_object_data(
         }
         /** Unlock */
         spinlock_release(&buf->gwbuf_lock);
-        
-        return bo->bo_data;
+		if(bo){
+			return bo->bo_data;
+		}
+		return NULL;
 }
 
 /**
@@ -493,8 +555,15 @@ gwbuf_add_property(GWBUF *buf, char *name, char *value)
 BUF_PROPERTY	*prop;
 
 	if ((prop = malloc(sizeof(BUF_PROPERTY))) == NULL)
+	{
+		ss_dassert(prop != NULL);
+		
+		LOGIF(LE, (skygw_log_write_flush(
+			LOGFILE_ERROR,
+			"Error : Memory allocation failed due to %s.", 
+			strerror(errno))));		
 		return 0;
-
+	}
 	prop->name = strdup(name);
 	prop->value = strdup(value);
 	spinlock_acquire(&buf->gwbuf_lock);
@@ -544,7 +613,10 @@ int	len;
 
 	if ((newbuf = gwbuf_alloc(gwbuf_length(orig))) != NULL)
 	{
+		newbuf->gwbuf_type = orig->gwbuf_type;
+		newbuf->hint = hint_dup(orig->hint);
 		ptr = GWBUF_DATA(newbuf);
+		
 		while (orig)
 		{
 			len = GWBUF_LENGTH(orig);

@@ -1,5 +1,5 @@
 /*
- * This file is distributed as part of the SkySQL Gateway. It is free
+ * This file is distributed as part of the MariaDB Corporation MaxScale. It is free
  * software: you can redistribute it and/or modify it under the terms of the
  * GNU General Public License as published by the Free Software Foundation,
  * version 2.
@@ -13,7 +13,7 @@
  * this program; if not, write to the Free Software Foundation, Inc., 51
  * Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  * 
- * Copyright SkySQL Ab 2013
+ * Copyright MariaDB Corporation Ab 2013-2014
  * 
  */
 
@@ -40,10 +40,14 @@
  * @endverbatim
  */
 #define _XOPEN_SOURCE 700
+#include <my_config.h>
 #include <ftw.h>
 #include <string.h>
+#include <strings.h>
 #include <gw.h>
 #include <unistd.h>
+#include <time.h>
+#include <getopt.h>
 #include <service.h>
 #include <server.h>
 #include <dcb.h>
@@ -69,7 +73,9 @@
 #include <execinfo.h>
 
 /** for procname */
-#define _GNU_SOURCE
+#if !defined(_GNU_SOURCE)
+#  define _GNU_SOURCE
+#endif
 
 extern char *program_invocation_name;
 extern char *program_invocation_short_name;
@@ -87,7 +93,7 @@ extern int lm_enabled_logfiles_bitmask;
  * is not fixed here and will be updated elsewhere.
  */
 static char* server_options[] = {
-    "SkySQL Gateway",
+    "MariaDB Corporation MaxScale",
     "--no-defaults",
     "--datadir=",
     "--language=",
@@ -131,6 +137,17 @@ static bool libmysqld_started = FALSE;
  */
 static bool     daemon_mode = true;
 
+const char *progname = NULL;
+static struct option long_options[] = {
+  {"homedir",  required_argument, 0, 'c'},
+  {"config",   required_argument, 0, 'f'},
+  {"nodeamon", required_argument, 0, 'd'},
+  {"log",      required_argument, 0, 'l'},
+  {"version",  no_argument,       0, 'v'},
+  {"help",     no_argument,       0, '?'},
+  {0, 0, 0, 0}
+};
+
 static void log_flush_shutdown(void);
 static void log_flush_cb(void* arg);
 static int write_pid_file(char *); /* write MaxScale pidfile */
@@ -159,6 +176,9 @@ static bool resolve_maxscale_conf_fname(
         char*  cnf_file_arg);
 static bool resolve_maxscale_homedir(
         char** p_home_dir);
+
+static char* check_dir_access(char* dirname);
+
 /**
  * Handler for SIGHUP signal. Reload the configuration for the
  * gateway.
@@ -214,7 +234,6 @@ sigfatal_handler (int i)
 
 	{
 		void *addrs[128];
-		char **strings= NULL;
 		int n, count = backtrace(addrs, 128);
 		char** symbols = backtrace_symbols( addrs, count );
 
@@ -375,7 +394,7 @@ static bool file_write_header(
         *t = time(NULL); 
         *tm = *localtime(t);
         
-        header_buf1 = "\n\nSkySQL MaxScale " MAXSCALE_VERSION "\t";
+        header_buf1 = "\n\nMariaDB Corporation MaxScale " MAXSCALE_VERSION "\t";
         header_buf2 = strdup(asctime(tm));
 
         if (header_buf2 == NULL) {
@@ -460,6 +479,11 @@ static bool resolve_maxscale_conf_fname(
                                  goto return_succp;
                          }                        
                 }
+                else 
+		{
+			/** Allocate memory for use of realpath */
+			*cnf_full_path = (char *)malloc(PATH_MAX+1);
+		}
                 /*<
                  * 3. argument is valid relative pathname
                  * '-f ../myconf.cnf'
@@ -520,8 +544,9 @@ return_succp:
 static bool resolve_maxscale_homedir(
         char** p_home_dir)
 {
-        bool  succp = false;
+        bool  succp;
         char* tmp;
+	char* tmp2;
         char* log_context = NULL;
         
         ss_dassert(*p_home_dir == NULL);
@@ -529,6 +554,7 @@ static bool resolve_maxscale_homedir(
         if (*p_home_dir != NULL)
         {
                 log_context = strdup("Command-line argument");
+		tmp = NULL;
                 goto check_home_dir;
         }
         /*<
@@ -574,71 +600,65 @@ static bool resolve_maxscale_homedir(
          *    isn't specified. Thus, try to access $PWD/MaxScale.cnf .
          */
         tmp = strndup(getenv("PWD"), PATH_MAX);
-        get_expanded_pathname(p_home_dir, tmp, default_cnf_fname);
-
+        tmp2 = get_expanded_pathname(p_home_dir, tmp, default_cnf_fname);
+	free(tmp2); /*< full path isn't needed so simply free it */
+	
         if (*p_home_dir != NULL)
         {
                 log_context = strdup("Current working directory");
-                goto check_home_dir;
         }
 
 check_home_dir:
-        if (*p_home_dir != NULL)
-        {
-                if (!file_is_readable(*p_home_dir))
-                {
-                        char* tailstr = "MaxScale doesn't have read permission "
-                                "to MAXSCALE_HOME.";
-                        char* logstr = (char*)malloc(strlen(log_context)+
-                                                     1+
-                                                     strlen(tailstr)+
-                                                     1);
-                        snprintf(logstr,
-                                 strlen(log_context)+
-                                 1+
-                                 strlen(tailstr)+1,
-                                 "%s:%s",
-                                 log_context,
-                                 tailstr);
-                        print_log_n_stderr(true, true, logstr, logstr, 0);
-                        free(logstr);
-                        goto return_succp;
-                }
-                
-                if (!file_is_writable(*p_home_dir))
-                {
-                        char* tailstr = "MaxScale doesn't have write permission "
-                                "to MAXSCALE_HOME. Exiting.";
-                        char* logstr = (char*)malloc(strlen(log_context)+
-                                                     1+
-                                                     strlen(tailstr)+
-                                                     1);
-                        snprintf(logstr,
-                                 strlen(log_context)+
-                                 1+
-                                 strlen(tailstr)+1,
-                                 "%s:%s",
-                                 log_context,
-                                 tailstr);
-                        print_log_n_stderr(true, true, logstr, logstr, 0);
-                        free(logstr);
-                        goto return_succp;
-                }
-                
-                if (!daemon_mode)
-                {
-                        fprintf(stderr,
-                                "Using %s as MAXSCALE_HOME = %s\n",
-                                log_context,
-                                tmp);
-                }
-                succp = true;
-                goto return_succp;
-        }
-        
-return_succp:
-        free (tmp);
 
+	if (*p_home_dir != NULL)
+	{
+		char* errstr;
+		
+		errstr = check_dir_access(*p_home_dir);
+		
+		if (errstr != NULL)
+		{
+			char* logstr = (char*)malloc(strlen(log_context)+
+					1+
+					strlen(errstr)+
+					1);
+			
+			snprintf(logstr,
+				 strlen(log_context)+
+				 1+
+				 strlen(errstr)+1,
+				 "%s: %s",
+				log_context,
+				errstr);
+						
+			print_log_n_stderr(true, true, logstr, logstr, 0);
+			
+			free(errstr);
+			free(logstr);
+			succp = false;
+		}
+		else 
+		{
+			succp = true;
+			
+			if (!daemon_mode)
+			{
+				fprintf(stderr,
+					"Using %s as MAXSCALE_HOME = %s\n",
+					log_context,
+					(tmp == NULL ? *p_home_dir : tmp));
+			}
+		}
+	}
+	else
+	{
+		succp = false;
+	}
+	if (tmp != NULL)
+	{
+		free(tmp);
+	}
+	
         if (log_context != NULL)
         {
                 free(log_context);
@@ -652,6 +672,42 @@ return_succp:
                 usage();
         }
         return succp;
+}
+
+/**
+ * Check read and write accessibility to a directory.
+ * @param dirname	directory to be checked
+ * 
+ * @return NULL if directory can be read and written, an error message if either 
+ * 	read or write is not permitted. 
+ */
+static char* check_dir_access(
+	char* dirname)
+{
+	char* errstr = NULL;
+	
+	if (dirname == NULL)
+	{
+		errstr = strdup("Directory argument is NULL");
+		goto retblock;
+	}
+	
+	if (!file_is_readable(dirname))
+	{
+		errstr = strdup("MaxScale doesn't have read permission "
+				"to MAXSCALE_HOME.");
+		goto retblock;
+	}
+	
+	if (!file_is_writable(dirname))
+	{
+		errstr = strdup("MaxScale doesn't have write permission "
+				"to MAXSCALE_HOME. Exiting.");
+		goto retblock;
+	}
+
+retblock:
+	return errstr;
 }
 
 
@@ -835,6 +891,13 @@ static char* get_expanded_pathname(
 
                 if (cnf_file_buf == NULL)
                 {
+			ss_dassert(cnf_file_buf != NULL);
+			
+			LOGIF(LE, (skygw_log_write_flush(
+				LOGFILE_ERROR,
+				"Error : Memory allocation failed due to %s.", 
+				strerror(errno))));		
+			
                         free(expanded_path);
                         expanded_path = NULL;
                         goto return_cnf_file_buf;
@@ -878,15 +941,19 @@ return_cnf_file_buf:
         return cnf_file_buf;
 }
 
-
 static void usage(void)
 {
         fprintf(stderr,
-                "*\n* Usage : maxscale [-h] | [-d] [-c <home "
-                "directory>] [-f <config file name>]\n* where:\n* "
-                "-h help\n* -d enable running in terminal process (default:disabled)\n* "
-                "-c relative|absolute MaxScale home directory\n* "
-                "-f relative|absolute pathname of MaxScale configuration file (default:MAXSCALE_HOME/etc/MaxScale.cnf)\n*\n");
+                "\nUsage : %s [-h] | [-d] [-c <home directory>] [-f <config file name>]\n\n"
+		"  -d|--nodaemon     enable running in terminal process (default:disabled)\n"
+                "  -c|--homedir=...  relative|absolute MaxScale home directory\n"
+                "  -f|--config=...   relative|absolute pathname of MaxScale configuration file\n"
+		"                    (default: $MAXSCALE_HOME/etc/MaxScale.cnf)\n"
+		"  -l|--log=...      log to file or shared memory\n"
+		"                    -lfile or -lshm - defaults to shared memory\n"
+		"  -v|--version      print version info and exit\n"
+                "  -?|--help         show this help\n"
+		, progname);
 }
 
 /** 
@@ -943,6 +1010,8 @@ int main(int argc, char **argv)
         char*    cnf_file_path = NULL;        /*< conf file, to be freed */
         char*    cnf_file_arg = NULL;         /*< conf filename from cmd-line arg */
         void*    log_flush_thr = NULL;
+	int      option_index;
+	int	 logtofile = 0;	      	      /* Use shared memory or file */
         ssize_t  log_flush_timeout_ms = 0;
         sigset_t sigset;
         sigset_t sigpipe_mask;
@@ -953,6 +1022,8 @@ int main(int argc, char **argv)
                                        NULL};
         sigemptyset(&sigpipe_mask);
         sigaddset(&sigpipe_mask, SIGPIPE);
+
+	progname = *argv;
 
 #if defined(SS_DEBUG)
         memset(conn_open, 0, sizeof(bool)*10240);
@@ -980,7 +1051,8 @@ int main(int argc, char **argv)
                         goto return_main;
                 }
         }
-        while ((opt = getopt(argc, argv, "dc:f:h")) != -1)
+        while ((opt = getopt_long(argc, argv, "dc:f:l:v?",
+				 long_options, &option_index)) != -1)
         {
                 bool succp = true;
                 
@@ -1061,9 +1133,36 @@ int main(int argc, char **argv)
                                 succp = false;
                         }
                         break;  
+			
+		case 'v':
+		  rc = EXIT_SUCCESS;
+                  goto return_main;		  
+
+		case 'l':
+			if (strncasecmp(optarg, "file", PATH_MAX) == 0)
+				logtofile = 1;
+			else if (strncasecmp(optarg, "shm", PATH_MAX) == 0)
+				logtofile = 0;
+			else
+			{
+                                char* logerr = "Configuration file argument "
+                                        "identifier \'-l\' was specified but "
+                                        "the argument didn't specify\n  a valid "
+                                        "configuration file or the argument "
+                                        "was missing.";
+                                print_log_n_stderr(true, true, logerr, logerr, 0);
+                                usage();
+                                succp = false;
+			}
+			break;
+		  
+		case '?':
+		  usage();
+		  rc = EXIT_SUCCESS;
+                  goto return_main;		  
                         
                 default:
-                        usage();
+		  usage();
                         succp = false;
                         break;
                 }
@@ -1321,13 +1420,51 @@ int main(int argc, char **argv)
         {
                 if (!resolve_maxscale_homedir(&home_dir))
                 {
-                        ss_dassert(home_dir == NULL);
+                        ss_dassert(home_dir != NULL);
                         rc = MAXSCALE_HOMELESS;
                         goto return_main;
                 }
                 sprintf(mysql_home, "%s/mysql", home_dir);
                 setenv("MYSQL_HOME", mysql_home, 1);
         }
+	else
+	{
+		char* log_context = strdup("Home directory command-line argument"); 
+		char* errstr;
+		
+		errstr = check_dir_access(home_dir);
+		
+		if (errstr != NULL)
+		{
+			char* logstr = (char*)malloc(strlen(log_context)+
+			1+
+			strlen(errstr)+
+			1);
+			
+			snprintf(logstr,
+				 strlen(log_context)+
+				 1+
+				 strlen(errstr)+1,
+				 "%s: %s",
+				log_context,
+				errstr);
+			
+			print_log_n_stderr(true, true, logstr, logstr, 0);
+			
+			free(errstr);
+			free(logstr);
+			rc = MAXSCALE_HOMELESS;
+			goto return_main;
+		}
+		else if (!daemon_mode)
+		{
+			fprintf(stderr,
+				"Using %s as MAXSCALE_HOME = %s\n",
+				log_context,
+				home_dir);
+		}
+		free(log_context);
+	}
 
         /*<
          * Init Log Manager for MaxScale.
@@ -1337,20 +1474,38 @@ int main(int argc, char **argv)
          * argv[0]
          */
         {
-                char 	buf[1024];
-                char	*argv[8];
+                char buf[1024];
+                char *argv[8];
+		bool succp;
 
                 sprintf(buf, "%s/log", home_dir);
                 mkdir(buf, 0777);
                 argv[0] = "MaxScale";
                 argv[1] = "-j";
                 argv[2] = buf;
-                argv[3] = "-s"; /*< store to shared memory */
-                argv[4] = "LOGFILE_DEBUG,LOGFILE_TRACE";   /*< ..these logs to shm */
-                argv[5] = "-l"; /*< write to syslog */
-                argv[6] = "LOGFILE_MESSAGE,LOGFILE_ERROR"; /*< ..these logs to syslog */
-                argv[7] = NULL;
-                skygw_logmanager_init(7, argv);
+		if (logtofile)
+		{
+			argv[3] = "-l"; /*< write to syslog */
+			argv[4] = "LOGFILE_MESSAGE,LOGFILE_ERROR"
+				"LOGFILE_DEBUG,LOGFILE_TRACE"; 
+			argv[5] = NULL;
+			succp = skygw_logmanager_init(5, argv);
+		}
+		else
+		{
+			argv[3] = "-s"; /*< store to shared memory */
+			argv[4] = "LOGFILE_DEBUG,LOGFILE_TRACE";   /*< ..these logs to shm */
+			argv[5] = "-l"; /*< write to syslog */
+			argv[6] = "LOGFILE_MESSAGE,LOGFILE_ERROR"; /*< ..these logs to syslog */
+			argv[7] = NULL;
+			succp = skygw_logmanager_init(7, argv);
+		}
+		
+		if (!succp)
+		{
+			rc = MAXSCALE_BADCONFIG;
+			goto return_main;
+		}
         }
 
         /*<
@@ -1371,7 +1526,12 @@ int main(int argc, char **argv)
          * machine.
          */
         sprintf(datadir, "%s/data%d", home_dir, getpid());
-        mkdir(datadir, 0777);
+        if(mkdir(datadir, 0777) != 0){
+			LOGIF(LE,(skygw_log_write_flush(
+										 LOGFILE_ERROR,
+										 "Error : Directory creation failed due to %s.", 
+										 strerror(errno))));		
+		}
 
         if (!daemon_mode)
         {
@@ -1480,7 +1640,7 @@ int main(int argc, char **argv)
         }
         LOGIF(LM, (skygw_log_write(
                 LOGFILE_MESSAGE,
-                "SkySQL MaxScale %s (C) SkySQL Ab 2013,2014",
+                "MariaDB Corporation MaxScale %s (C) MariaDB Corporation Ab 2013-2014",
 		MAXSCALE_VERSION))); 
         LOGIF(LM, (skygw_log_write(
                 LOGFILE_MESSAGE,
@@ -1549,11 +1709,7 @@ int main(int argc, char **argv)
         for (n = 0; n < n_threads - 1; n++)
         {
                 thread_wait(threads[n]);
-        }
-        free(threads);
-        free(home_dir);
-        free(cnf_file_path);
-        
+        }        
         /*<
          * Wait the flush thread.
          */
@@ -1577,6 +1733,10 @@ int main(int argc, char **argv)
 	unlink_pidfile();
 	
 return_main:
+	free(threads);
+	free(home_dir);
+	free(cnf_file_path);
+
         return rc;
 } /*< End of main */
 
@@ -1587,6 +1747,7 @@ void
         shutdown_server()
 {
         poll_shutdown();
+	hkshutdown();
         log_flush_shutdown();
 }
 
@@ -1609,7 +1770,11 @@ static void log_flush_cb(
         void* arg)
 {
         ssize_t timeout_ms = *(ssize_t *)arg;
+	struct timespec ts1;
 
+	ts1.tv_sec = timeout_ms/1000;
+	ts1.tv_nsec = (timeout_ms%1000)*1000000;
+	
         LOGIF(LM, (skygw_log_write(LOGFILE_MESSAGE,
                                    "Started MaxScale log flusher.")));
         while (!do_exit) {
@@ -1617,7 +1782,7 @@ static void log_flush_cb(
             skygw_log_flush(LOGFILE_MESSAGE);
             skygw_log_flush(LOGFILE_TRACE);
             skygw_log_flush(LOGFILE_DEBUG);
-            usleep(timeout_ms*1000);
+	    nanosleep(&ts1, NULL);
         }
         LOGIF(LM, (skygw_log_write(LOGFILE_MESSAGE,
                                    "Finished MaxScale log flusher.")));
@@ -1629,8 +1794,13 @@ static void log_flush_cb(
 static void unlink_pidfile(void)
 {
 	if (strlen(pidfile)) {
-		if (unlink(pidfile)) {
-			fprintf(stderr, "MaxScale failed to remove pidfile %s: error %d, %s\n", pidfile, errno, strerror(errno));
+		if (unlink(pidfile)) 
+		{
+			fprintf(stderr, 
+				"MaxScale failed to remove pidfile %s: error %d, %s\n", 
+				pidfile, 
+				errno, 
+				strerror(errno));
 		}
 	}
 }

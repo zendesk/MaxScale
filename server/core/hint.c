@@ -13,10 +13,11 @@
  * this program; if not, write to the Free Software Foundation, Inc., 51
  * Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  *
- * Copyright SkySQL Ab 2014
+ * Copyright MariaDB Corporation Ab 2014
  */
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <hint.h>
 
 /**
@@ -37,6 +38,8 @@
  *
  * @param hint		The hint list to duplicate
  * @return 	A duplicate of the list
+ * 
+ * Note : Optimize this to use version numbering instead of copying memory
  */
 HINT *
 hint_dup(HINT *hint)
@@ -115,7 +118,7 @@ HINT	*hint;
 		return head;
 	hint->next = head;
 	hint->type = HINT_PARAMETER;
-	hint->data = pname;
+	hint->data = strdup(pname);
 	hint->value = strdup(value);
 	return hint;
 }

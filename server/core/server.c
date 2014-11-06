@@ -1,5 +1,5 @@
 /*
- * This file is distributed as part of the SkySQL Gateway.  It is free
+ * This file is distributed as part of the MariaDB Corporation MaxScale.  It is free
  * software: you can redistribute it and/or modify it under the terms of the
  * GNU General Public License as published by the Free Software Foundation,
  * version 2.
@@ -13,7 +13,7 @@
  * this program; if not, write to the Free Software Foundation, Inc., 51
  * Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  *
- * Copyright SkySQL Ab 2013
+ * Copyright MariaDB Corporation Ab 2013-2014
  */
 
 /**
@@ -136,7 +136,7 @@ SERVER *ptr;
 /**
  * Set a unique name for the server
  *
- * @param	server	The server to ste the name on
+ * @param	server	The server to set the name on
  * @param	name	The unique name for the server
  */
 void
@@ -162,7 +162,7 @@ SERVER 	*server;
 	server = allServers;
 	while (server)
 	{
-		if (strcmp(server->unique_name, name) == 0)
+		if (server->unique_name && strcmp(server->unique_name, name) == 0)
 			break;
 		server = server->next;
 	}

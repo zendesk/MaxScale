@@ -1,5 +1,5 @@
 /*
- * This file is distributed as part of the SkySQL Gateway.  It is free
+ * This file is distributed as part of the MariaDB Corporation MaxScale.  It is free
  * software: you can redistribute it and/or modify it under the terms of the
  * GNU General Public License as published by the Free Software Foundation,
  * version 2.
@@ -13,7 +13,7 @@
  * this program; if not, write to the Free Software Foundation, Inc., 51
  * Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  *
- * Copyright SkySQL Ab 2013
+ * Copyright MariaDB Corporation Ab 2013-2014
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -258,7 +258,9 @@ hashtable_add(HASHTABLE *table, void *key, void *value)
 
 		/* check succesfull key copy */
 		if ( ptr->key  == NULL) {
+			free(ptr);
 			hashtable_write_unlock(table);
+
 			return 0;
 		}
 
@@ -269,9 +271,11 @@ hashtable_add(HASHTABLE *table, void *key, void *value)
 		if  ( ptr->value == NULL) {
 			/* remove the key ! */
 			table->kfreefn(ptr->key);
+			free(ptr);
 
 			/* value not copied, return */
 			hashtable_write_unlock(table);
+
 			return 0;
 		}
 
@@ -279,6 +283,7 @@ hashtable_add(HASHTABLE *table, void *key, void *value)
 		table->entries[hashkey % table->hashsize] = ptr;
 	}
 	hashtable_write_unlock(table);
+
 	return 1;
 }
 

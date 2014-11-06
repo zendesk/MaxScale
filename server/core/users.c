@@ -1,5 +1,5 @@
 /*
- * This file is distributed as part of the SkySQL Gateway.  It is free
+ * This file is distributed as part of the MariaDB Corporation MaxScale.  It is free
  * software: you can redistribute it and/or modify it under the terms of the
  * GNU General Public License as published by the Free Software Foundation,
  * version 2.
@@ -13,7 +13,7 @@
  * this program; if not, write to the Free Software Foundation, Inc., 51
  * Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  *
- * Copyright SkySQL Ab 2013
+ * Copyright MariaDB Corporation Ab 2013-2014
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -106,6 +106,8 @@ int	add;
 /**
  * Delete a user from the user table.
  *
+ * The last user in the table can not be deleted
+ *
  * @param users		The users table
  * @param user		The user name
  * @return	The number of users deleted from the table
@@ -115,12 +117,12 @@ users_delete(USERS *users, char *user)
 {
 int	del;
 
-	atomic_add(&users->stats.n_deletes, 1);
         if (users->stats.n_entries == 1) {
             return 0;
         }
+	atomic_add(&users->stats.n_deletes, 1);
 	del = hashtable_delete(users->data, user);
-	atomic_add(&users->stats.n_entries, del * -1);
+	atomic_add(&users->stats.n_entries, -del);
 	return del;
 }
 

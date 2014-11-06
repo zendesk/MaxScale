@@ -1,5 +1,5 @@
 /*
- * This file is distributed as part of MaxScale by SkySQL.  It is free
+ * This file is distributed as part of MaxScale by MariaDB Corporation.  It is free
  * software: you can redistribute it and/or modify it under the terms of the
  * GNU General Public License as published by the Free Software Foundation,
  * version 2.
@@ -13,7 +13,7 @@
  * this program; if not, write to the Free Software Foundation, Inc., 51
  * Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  *
- * Copyright SkySQL Ab 2014
+ * Copyright MariaDB Corporation Ab 2014
  */
 
 /**
@@ -58,6 +58,7 @@
  *@endverbatim
  * See the individual struct documentations for logging trigger parameters
  */
+#include <my_config.h>
 #include <stdio.h>
 #include <fcntl.h>
 #include <filter.h>
@@ -1167,7 +1168,11 @@ routeQuery(FILTER *instance, void *session, GWBUF *queue)
 
       }
     
-
+      if (queue->next != NULL)
+      {
+        queue = gwbuf_make_contiguous(queue);
+      }
+      
       if(modutil_extract_SQL(queue, &ptr, &length)){
 
 	my_session->was_query = true;

@@ -1,5 +1,5 @@
 /*
- * This file is distributed as part of the SkySQL Gateway.  It is free
+ * This file is distributed as part of the MariaDB Corporation MaxScale.  It is free
  * software: you can redistribute it and/or modify it under the terms of the
  * GNU General Public License as published by the Free Software Foundation,
  * version 2.
@@ -13,7 +13,7 @@
  * this program; if not, write to the Free Software Foundation, Inc., 51
  * Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  *
- * Copyright SkySQL Ab 2014
+ * Copyright MariaDB Corporation Ab 2013-2014
  */
 
 /**
@@ -46,7 +46,7 @@ extern int lm_enabled_logfiles_bitmask;
 
 static	void	monitorMain(void *);
 
-static char *version_str = "V1.0.0";
+static char *version_str = "V1.0.1";
 
 MODULE_INFO	info = {
 	MODULE_API_MONITOR,
@@ -61,7 +61,7 @@ static	void	registerServer(void *, SERVER *);
 static	void	unregisterServer(void *, SERVER *);
 static	void	defaultUser(void *, char *, char *);
 static	void	diagnostics(DCB *, void *);
-static  void    setInterval(void *, unsigned long);
+static  void    setInterval(void *, size_t);
 static	void	detectStaleMaster(void *, int);
 static  bool    mon_status_changed(MONITOR_SERVERS* mon_srv);
 static  bool    mon_print_fail_status(MONITOR_SERVERS* mon_srv);
@@ -69,7 +69,18 @@ static MONITOR_SERVERS *get_current_master(MYSQL_MONITOR *);
 static void monitor_set_pending_status(MONITOR_SERVERS *, int);
 static void monitor_clear_pending_status(MONITOR_SERVERS *, int);
 
-static MONITOR_OBJECT MyObject = { startMonitor, stopMonitor, registerServer, unregisterServer, defaultUser, diagnostics, setInterval, NULL, NULL, detectStaleMaster };
+static MONITOR_OBJECT MyObject = {
+	startMonitor,
+	stopMonitor,
+	registerServer,
+	unregisterServer,
+	defaultUser,
+	diagnostics,
+	setInterval,
+	NULL,
+	NULL,
+	detectStaleMaster
+};
 
 /**
  * Implementation of the mandatory version entry point
@@ -373,6 +384,11 @@ char 		  *server_string;
 			 * Store server NOT running in server and monitor server pending struct
 			 *
 			 */
+			if (mysql_errno(database->con) == ER_ACCESS_DENIED_ERROR)
+			{
+				server_set_status(database->server, SERVER_AUTH_ERROR);
+				monitor_set_pending_status(database, SERVER_AUTH_ERROR);
+			}
 			server_clear_status(database->server, SERVER_RUNNING);
 			monitor_clear_pending_status(database, SERVER_RUNNING);
 
@@ -387,7 +403,10 @@ char 		  *server_string;
 			monitor_clear_pending_status(database, SERVER_STALE_STATUS);
 
 			return;
-		}
+		}  else {
+                        server_clear_status(database->server, SERVER_AUTH_ERROR);
+                        monitor_clear_pending_status(database, SERVER_AUTH_ERROR);
+                }
 		free(dpwd);
 	}
         /* Store current status in both server and monitor server pending struct */
@@ -400,7 +419,9 @@ char 		  *server_string;
 	/* get server version string */
 	server_string = (char *)mysql_get_server_info(database->con);
 	if (server_string) {
-		database->server->server_string = strdup(server_string);
+		database->server->server_string = realloc(database->server->server_string, strlen(server_string)+1);
+		if (database->server->server_string)
+			strcpy(database->server->server_string, server_string);
 	}
 
         /* get server_id form current node */
@@ -557,6 +578,7 @@ MYSQL_MONITOR	*handle = (MYSQL_MONITOR *)arg;
 MONITOR_SERVERS	*ptr;
 int detect_stale_master = handle->detectStaleMaster;
 MONITOR_SERVERS *root_master;
+size_t nrounds = 0;
 
 	if (mysql_thread_init())
 	{
@@ -577,6 +599,23 @@ MONITOR_SERVERS *root_master;
 			handle->status = MONITOR_STOPPED;
 			return;
 		}
+
+		/** Wait base interval */
+		thread_millisleep(MON_BASE_INTERVAL_MS);
+		/**
+		 * Calculate how far away the monitor interval is from its full
+		 * cycle and if monitor interval time further than the base
+		 * interval, then skip monitoring checks. Excluding the first
+		 * round.
+		 */
+                if (nrounds != 0 &&
+                        ((nrounds*MON_BASE_INTERVAL_MS)%handle->interval) >=
+                        MON_BASE_INTERVAL_MS)
+                {
+                        nrounds += 1;
+                        continue;
+                }
+                nrounds += 1;
 
 		/* start from the first server in the list */
 		ptr = handle->databases;
@@ -640,9 +679,6 @@ MONITOR_SERVERS *root_master;
 			}
 			ptr = ptr->next;
 		}
-
-		/* wait for the configured interval */
-		thread_millisleep(handle->interval);
 	}
 }
                         
@@ -653,7 +689,7 @@ MONITOR_SERVERS *root_master;
  * @param interval      The interval to set in monitor struct, in milliseconds
  */
 static void
-setInterval(void *arg, unsigned long interval)
+setInterval(void *arg, size_t interval)
 {
 MYSQL_MONITOR   *handle = (MYSQL_MONITOR *)arg;
 	memcpy(&handle->interval, &interval, sizeof(unsigned long));
@@ -737,7 +773,7 @@ monitor_clear_pending_status(MONITOR_SERVERS *ptr, int bit)
 /*******
  * This function returns the master server
  * from a set of MySQL Multi Master monitored servers
- * and returns the root server with SERVER_MASTER bit.
+ * and returns the root server (that has SERVER_MASTER bit)
  * The server is returned even for servers in 'maintenance' mode.
  *
  * @param handle        The monitor handle

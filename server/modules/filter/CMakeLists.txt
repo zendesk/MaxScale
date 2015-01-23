@@ -28,6 +28,10 @@ add_library(luafilter SHARED luafilter.cc)
 target_link_libraries(luafilter log_manager utils lua)
 install(TARGETS luafilter DESTINATION modules)
 
+add_library(namedserverfilter SHARED namedserverfilter.c)
+target_link_libraries(namedserverfilter log_manager utils)
+install(TARGETS namedserverfilter DESTINATION modules)
+
 
 add_subdirectory(hint)
 

@@ -1,0 +1,36 @@
+# Object files
+*.o
+*.ko
+*.lo
+
+# Libraries
+*.lib
+*.a
+*.la
+
+# Shared objects (inc. Windows DLLs)
+*.dll
+*.so
+*.so.*
+*.dylib
+
+# Executables
+*.exe
+*.out
+*.app
+
+# log files (from testing etc.)
+*.log
+
+# "make depend" generated stuff
+depend
+depend.mk
+
+# various auto-backup stuff
+*~
+*#
+.#*
+._*
+
+# Vi swap files
+.*.swp

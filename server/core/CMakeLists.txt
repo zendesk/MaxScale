@@ -9,15 +9,15 @@ add_executable(maxscale atomic.c buffer.c spinlock.c gateway.c
 	monitor.c adminusers.c secrets.c filter.c modutil.c hint.c
 	housekeeper.c memlog.c)
 target_link_libraries(maxscale ${EMBEDDED_LIB} log_manager utils ssl aio pthread crypt dl crypto inih z rt m stdc++)
-install(TARGETS maxscale DESTINATION bin)
+install(TARGETS maxscale COMPONENT core DESTINATION bin)
 
 add_executable(maxkeys maxkeys.c secrets.c utils.c)
 target_link_libraries(maxkeys log_manager utils pthread  crypt crypto)
-install(TARGETS maxkeys DESTINATION bin)
+install(TARGETS maxkeys COMPONENT utils DESTINATION bin)
 
 add_executable(maxpasswd maxpasswd.c secrets.c utils.c)
 target_link_libraries(maxpasswd log_manager utils pthread crypt crypto)
-install(TARGETS maxpasswd DESTINATION bin)
+install(TARGETS maxpasswd COMPONENT utils DESTINATION bin)
 
 if(BUILD_TESTS)
   add_subdirectory(test)

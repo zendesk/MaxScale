@@ -3,36 +3,36 @@ if(BUILD_RABBITMQ)
   include_directories(${RABBITMQ_HEADERS})
   add_library(mqfilter SHARED mqfilter.c)
   target_link_libraries(mqfilter query_classifier log_manager utils ${RABBITMQ_LIBRARIES})
-  install(TARGETS mqfilter DESTINATION modules)
+  install(TARGETS mqfilter COMPONENT extra DESTINATION modules)
 endif()
 
 add_library(regexfilter SHARED regexfilter.c)
 target_link_libraries(regexfilter log_manager utils)
-install(TARGETS regexfilter DESTINATION modules)
+install(TARGETS regexfilter COMPONENT core DESTINATION modules)
 
 add_library(testfilter SHARED testfilter.c)
 target_link_libraries(testfilter log_manager utils)
-install(TARGETS testfilter DESTINATION modules)
+install(TARGETS testfilter COMPONENT core DESTINATION modules)
 
 add_library(qlafilter SHARED qlafilter.c)
 target_link_libraries(qlafilter log_manager utils)
-install(TARGETS qlafilter DESTINATION modules)
+install(TARGETS qlafilter COMPONENT core DESTINATION modules)
 
 add_library(tee SHARED tee.c)
 target_link_libraries(tee log_manager utils)
-install(TARGETS tee DESTINATION modules)
+install(TARGETS tee COMPONENT core DESTINATION modules)
 
 add_library(topfilter SHARED topfilter.c)
 target_link_libraries(topfilter log_manager utils)
-install(TARGETS topfilter DESTINATION modules)
+install(TARGETS topfilter COMPONENT core DESTINATION modules)
 
 add_library(fwfilter SHARED fwfilter.c)
 target_link_libraries(fwfilter log_manager utils query_classifier)
-install(TARGETS fwfilter DESTINATION modules)
+install(TARGETS fwfilter COMPONENT extra DESTINATION modules)
 
 add_library(namedserverfilter SHARED namedserverfilter.c)
 target_link_libraries(namedserverfilter log_manager utils)
-install(TARGETS namedserverfilter DESTINATION modules)
+install(TARGETS namedserverfilter COMPONENT extra DESTINATION modules)
 
 
 add_subdirectory(hint)

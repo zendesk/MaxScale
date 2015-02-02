@@ -1,22 +1,22 @@
 add_library(MySQLClient SHARED mysql_client.c mysql_common.c)
 target_link_libraries(MySQLClient log_manager utils)
-install(TARGETS MySQLClient DESTINATION modules)
+install(TARGETS MySQLClient  COMPONENT core DESTINATION modules)
 
 add_library(MySQLBackend SHARED mysql_backend.c mysql_common.c)
 target_link_libraries(MySQLBackend log_manager utils)
-install(TARGETS MySQLBackend DESTINATION modules)
+install(TARGETS MySQLBackend  COMPONENT core DESTINATION modules)
 
 add_library(telnetd SHARED telnetd.c)
 target_link_libraries(telnetd log_manager utils)
-install(TARGETS telnetd DESTINATION modules)
+install(TARGETS telnetd  COMPONENT core DESTINATION modules)
 
 add_library(HTTPD SHARED httpd.c)
 target_link_libraries(HTTPD log_manager utils)
-install(TARGETS HTTPD DESTINATION modules)
+install(TARGETS HTTPD  COMPONENT extra DESTINATION modules)
 
 add_library(maxscaled SHARED maxscaled.c)
 target_link_libraries(maxscaled log_manager utils)
-install(TARGETS maxscaled DESTINATION modules)
+install(TARGETS maxscaled  COMPONENT core DESTINATION modules)
 
 
 

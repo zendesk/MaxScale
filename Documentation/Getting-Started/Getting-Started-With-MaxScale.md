@@ -62,17 +62,12 @@ $ cd build
 
 The next step is to run the cmake command to build the Makefile you need to compile Maxscale. There are a number of options you may give to configure cmake and point it to the various packages it requires. These are documented in the MaxScale README file, in this example we will assume the MariaDB developer packages have been installed in a non-standard location and set all the options required to locate these, along with options to build the unit tests and configure the installation target directory.
 
-$ cmake -DMYSQL_DIR=~/usr/include/mysql \
-
--DEMBEDDED_LIB=~/usr/lib64/libmysqld.a \
-
--DMYSQLCLIENT_LIBRARIES=~/usr/lib64/libmysqlclient.so \
-
--DERRMSG=~/usr/share/mysql/english/errmsg.sys \
-
--DINSTALL_DIR=/usr/local/maxscale -DBUILD_TESTS=Y \
-
--DINSTALL_SYSTEM_FILES=N ../MaxScale
+	$ cmake -DMYSQL_DIR=/usr/mariadb-5.5.41-linux-x86_64/include/mysql \
+	-DEMBEDDED_LIB=/usr/mariadb-5.5.41-linux-x86_64/lib/libmysqld.a \
+	-DMYSQLCLIENT_LIBRARIES=/usr/mariadb-5.5.41-linux-x86_64/lib/libmysqlclient.so \
+	-DERRMSG=/usr/mariadb-5.5.41-linux-x86_64/share/english/errmsg.sys \
+	-DINSTALL_DIR=/home/maxscale/MaxScale -DBUILD_TESTS=Y \
+	-DINSTALL_SYSTEM_FILES=N ../
 
 -- CMake version: 2.8.12.2
 

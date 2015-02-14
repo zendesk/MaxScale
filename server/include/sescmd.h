@@ -18,11 +18,11 @@
  * Copyright MariaDB Corporation Ab 2013-2015
  */
 
+#include <buffer.h>
 typedef enum
 {
   SNUM_ONE,
-  SNUM_ALL,
-  SNUM_GOOD
+  SNUM_ALL
 } sescmd_rspnum;
 
 typedef enum
@@ -34,11 +34,6 @@ typedef enum
   SRES_TIMEOUT
 } sescmd_rsp;
 
-typedef struct sescmd_sem_st
-{
-  sescmd_rsp reply_on;
-  sescmd_rspnum reply_num;
-} SCMDSEM;
 struct sescmd_list_st;
 
 typedef struct mysql_sescmd_st
@@ -64,12 +59,20 @@ typedef struct sescmd_list_st
   SCMD *first; /*< First session command*/
   SCMD *last; /*< Latest session command */
   SCMDCURSOR* cursors; /*< List of cursors for this list */
-  SCMDSEM semantics; /*<  */
+  DCB* client; /*< Client DCB */
+  union semantics
+  { 
+     sescmd_rspnum n_replies; /*< How many must reply */
+     sescmd_rsp reply_on; /*< when to send the reply to the client */
+     int timeout; /*< Time after which non-responsive backends are failed */
+  }semantics;
 } SCMDLIST;
-SCMDLIST* sescmd_allocate(SCMDSEM* semantics);
+
+SCMDLIST* sescmd_allocate();
 void sescmd_append (SCMDLIST* list, GWBUF* buf);
 void sescmd_attach (SCMDLIST* list, DCB* dcb);
 void sescmd_detach (SCMDLIST* list, DCB* dcb);
-void sescmd_execute (SCMDLIST* scur);
+void sescmd_execute (SCMDLIST* list);
+GWBUF* sescmd_handle_response(SCMDLIST* list, GWBUF* response);
 #endif	/* SESCMD_H */
 

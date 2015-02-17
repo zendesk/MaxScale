@@ -18,6 +18,22 @@
  * Copyright MariaDB Corporation Ab 2013-2015
  */
 
+/**
+ * @file sescmd.h Session command handling
+ * 
+ * This file contains structures and functions that handle commands with multiple 
+ * recipients. It allows dynamic addition and removal of DCBs and the complete
+ * command history is automatically played back when a new DCB is added to the set.
+ *
+ * @verbatim
+ * Revision History
+ *
+ * Date		Who			Description
+ * 17/02/15	Markus Makela		Initial implementation
+ *
+ * @endverbatim
+ */
+
 #include <buffer.h>
 #include <log_manager.h>
 #include <dcb.h>
@@ -54,6 +70,15 @@ typedef enum
   SERR_FAIL_CONN
 } sescmd_rsperr;
 
+typedef struct semantics_t
+  { 
+     sescmd_rspnum n_replies; /*< How many must reply */
+     sescmd_rsp reply_on; /*< when to send the reply to the client */
+     sescmd_rsperr on_error; /*< What to do when an error occurse */
+     int timeout; /*< 
+                   * Backends replying later than this are considere as failed.
+                   * Using a non-positive value disables timeouts. */
+  }SEMANTICS;
 
 struct sescmd_list_st;
 
@@ -61,7 +86,7 @@ typedef struct mysql_sescmd_st
 {
   GWBUF* buffer; /*< query buffer */
   unsigned char packet_type; /*< packet type */
-  bool is_replied; /*< is cmd replied to client */
+  bool reply_sent; /*< is cmd replied to client */
   int n_replied; /*< number of replies received */
   SPINLOCK lock;
   struct mysql_sescmd_st* next;
@@ -84,17 +109,7 @@ typedef struct sescmd_list_st
   SCMD *last; /*< Latest session command */
   SCMDCURSOR* cursors; /*< List of cursors for this list */
   int n_cursors; /*< Number of session command cursors */
-  
-  union SEMANTICS
-  { 
-     sescmd_rspnum n_replies; /*< How many must reply */
-     sescmd_rsp reply_on; /*< when to send the reply to the client */
-     sescmd_rsperr on_error; /*< What to do when an error occurse */
-     int timeout; /*< 
-                   * Backends replying later than this are considere as failed.
-                   * Using a non-positive value disables timeouts. */
-  }semantics;
-  
+  SEMANTICS semantics;
   SPINLOCK lock;
 } SCMDLIST;
 
@@ -105,5 +120,6 @@ bool sescmd_remove_dcb (SCMDLIST* list, DCB* dcb);
 void sescmd_detach (SCMDLIST* list, DCB* dcb);
 void sescmd_execute (SCMDLIST* list);
 GWBUF* sescmd_process_replies(SCMDLIST* list, DCB* dcb, GWBUF* response);
+bool sescmd_handle_failure(SCMDLIST* list, DCB* dcb);
 #endif	/* SESCMD_H */
 

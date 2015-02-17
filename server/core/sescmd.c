@@ -18,6 +18,39 @@ SCMDLIST* sescmd_allocate()
     
     return list;
 }
+/**
+ * Free the session command list
+ * @param list Session command list to free
+ */
+void sescmd_free(SCMDLIST*  list)
+{
+    SCMDCURSOR* cursor;
+    SCMD* cmd;
+    
+    spinlock_acquire(&list->lock);
+    cursor = list->cursors;
+    cmd = list->first;
+    list->cursors = NULL;
+    list->first = NULL;
+    list->last = NULL;
+    spinlock_release(&list->lock);
+    
+    while(cmd)
+    {
+        SCMD* tmp = cmd;
+        cmd = cmd->next;
+        free(tmp);
+    }
+    
+    while(cursor)
+    {
+        SCMDCURSOR* tmp = cursor;
+        cursor = cursor->next;
+        free(tmp);
+    }
+    
+    free(list);
+}
 
 /**
  * Add a command to the list of session commands. This allocates a 
@@ -41,7 +74,7 @@ bool sescmd_add_command (SCMDLIST* scmdlist, GWBUF* buf)
    spinlock_init(&cmd->lock);
    cmd->buffer = gwbuf_clone(buf);
    cmd->packet_type = *((unsigned char*)buf->start + 4);
-   cmd->is_replied = false;
+   cmd->reply_sent = false;
    
    if(list->first == NULL)
    {
@@ -155,8 +188,6 @@ bool sescmd_cursor_has_next(SCMDCURSOR* cursor)
     
     /** This cursor has reached the end of the list*/
     
-    cursor->scmd_cur_active = false;
-
     return false;
 }
 
@@ -272,9 +303,7 @@ static bool execute_sescmd_in_backend(
 
 		case MYSQL_COM_INIT_DB:
 		{
-			/**
-			 * Record database name and store to session.
-			 */
+			/** Record database name and store to session. */
 			GWBUF* tmpbuf;
 			MYSQL_session* data;
 			unsigned int qlen;
@@ -316,9 +345,9 @@ return_succp:
 /**
  * All cases where backend message starts at least with one response to session
  * command are handled here.
- * Read session commands from property list. If command is already replied,
- * discard packet. Else send reply to client. In both cases move cursor forward
- * until all session command replies are handled. 
+ * Read session commands from session command list. If command is already replied,
+ * discard packet. Else send reply to client if the semantics of the list match. 
+ * In both cases move cursor forward until all session command replies are handled. 
  * 
  * Cases that are expected to happen and which are handled:
  * s = response not yet replied to client, S = already replied response,
@@ -356,7 +385,7 @@ GWBUF* sescmd_process_replies(
         while (cmd != NULL && replybuf != NULL && return_reply == false)
         {
                 /** Faster backend has already responded to client : discard */
-                if (cmd->is_replied)
+                if (cmd->reply_sent)
                 {
                         bool last_packet = false;
                         
@@ -383,7 +412,7 @@ GWBUF* sescmd_process_replies(
                        (scur->scmd_list->semantics.n_replies == SNUM_ALL && 
                         cmd->n_replied >= scur->scmd_list->n_cursors))
                     {
-                        cmd->is_replied = true;
+                        cmd->reply_sent = true;
                         return_reply = true;                        
                     }
 
@@ -504,4 +533,9 @@ void sescmd_execute (SCMDLIST* list)
         cursor = cursor->next;
         spinlock_release(&cursor->lock);
     }
+}
+
+bool sescmd_handle_failure(SCMDLIST* list, DCB* dcb)
+{
+    return true;
 }

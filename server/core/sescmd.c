@@ -162,6 +162,12 @@ bool sescmd_cursor_has_next(SCMDCURSOR* cursor)
 {
     SCMD* cmd;
     bool replied;
+    
+    if(cursor->scmd_list->first == NULL)
+    {
+	return false;
+    }
+    
     if(cursor->scmd_cur_cmd == NULL)
     {
         /** This is the first time this cursor is activated*/
@@ -169,10 +175,11 @@ bool sescmd_cursor_has_next(SCMDCURSOR* cursor)
         return true;
     }
     
-    spinlock_acquire(&cursor->scmd_cur_cmd->lock);
-    cmd = cursor->scmd_cur_cmd->next;
+    spinlock_acquire(&cursor->lock);
+    
+    cmd = cursor->scmd_cur_cmd ? cursor->scmd_cur_cmd->next : NULL;
     replied = cursor->replied_to;
-    spinlock_release(&cursor->scmd_cur_cmd->lock);
+    spinlock_release(&cursor->lock);
     if(cmd )
     {
         /** There are more commands to execute*/    
@@ -202,7 +209,13 @@ bool sescmd_cursor_next(SCMDCURSOR* cursor)
     bool rval = false;
     
     spinlock_acquire(&cursor->lock);
-      
+    
+      if(cursor->scmd_list->first == NULL)
+      {
+	      rval = false;
+	      goto retblock;
+      }
+    
     if(cursor->scmd_cur_cmd == NULL)
     {
         /** This is the first time this cursor is advanced */
@@ -213,9 +226,10 @@ bool sescmd_cursor_next(SCMDCURSOR* cursor)
         goto retblock;
     }
     
-    if(cursor->scmd_cur_cmd->next)
+    if(cursor->scmd_cur_cmd->next && 
+       cursor->replied_to)
     {
-        /** There are pending commands */    
+        /** There are pending commands and the current one received a response */    
         
         cursor->scmd_cur_cmd = cursor->scmd_cur_cmd->next;
         cursor->replied_to = false;
@@ -237,69 +251,76 @@ bool sescmd_cursor_next(SCMDCURSOR* cursor)
     return rval;
 }
 
-
 /**
  * Execute pending session commands in the backend server.
  * @param cursor Cursor to process
  * @return True if execution was successful. False if there are no commands 
  * left or the write to the backend DCB failed.
  */
-static bool execute_sescmd_in_backend(
-        SCMDCURSOR* cursor)
+static bool
+execute_sescmd_in_backend(
+			  SCMDCURSOR* cursor)
 {
-	DCB*             dcb;
-	bool             succp;
-	int              rc = 0;
+	DCB* dcb;
+	bool succp = true;
+	int rc = 0;
 	SCMDCURSOR* scur = cursor;
 
-        dcb = scur->backend_dcb;
-        
+	dcb = scur->backend_dcb;
+	if(dcb == NULL)
+	    return false;
 	CHK_DCB(dcb);
-	
-        /** Return if there are no active or pending ses commands */
-	if (sescmd_cursor_has_next(scur) == false)
+
+	/** Return if there are no active or pending ses commands */
+	if(sescmd_cursor_has_next(scur) == false)
 	{
 		succp = false;
-                sescmd_cursor_set_active(scur, false);
-                skygw_log_write_flush(
-                        LOGFILE_TRACE,
-                        "Cursor had no pending session commands.");
-                
-                goto return_succp;
+		sescmd_cursor_set_active(scur, false);
+		skygw_log_write_flush(
+				      LOGFILE_TRACE,
+				      "Cursor had no pending session commands.");
+
+		goto return_succp;
 	}
 
-	if (!sescmd_cursor_is_active(scur))
-        {
-                /** Cursor is left active when function returns. */
-            
-                sescmd_cursor_set_active(scur, true);
-        }
-#if defined(SS_DEBUG)
-    {
-        GWBUF* tmpbuf = gwbuf_clone(scur->scmd_cur_cmd->buffer);
-        uint8_t* ptr = GWBUF_DATA(tmpbuf);
-        unsigned char cmd = MYSQL_GET_COMMAND(ptr);
+	sescmd_cursor_next(scur);
+	
+	if(!sescmd_cursor_is_active(scur))
+	{
+		/** Cursor is left active when function returns. */
 
-        skygw_log_write(
-                                   LOGFILE_DEBUG,
-                                   "%lu [execute_sescmd_in_backend] Just before write, fd "
-                                   "%d : cmd %s.",
-                                   pthread_self(),
-                                   dcb->fd,
-                                   STRPACKETTYPE(cmd));
-        gwbuf_free(tmpbuf);
-    }
+		sescmd_cursor_set_active(scur, true);
+	}
+	
+	if(scur->scmd_cur_cmd)
+	{
+#if defined(SS_DEBUG)
+		{
+			GWBUF* tmpbuf = gwbuf_clone(scur->scmd_cur_cmd->buffer);
+			uint8_t* ptr = GWBUF_DATA(tmpbuf);
+			unsigned char cmd = MYSQL_GET_COMMAND(ptr);
+
+			skygw_log_write(
+					LOGFILE_DEBUG,
+					"%lu [execute_sescmd_in_backend] Just before write, fd "
+					"%d : cmd %s.",
+					pthread_self(),
+					dcb->fd,
+					STRPACKETTYPE(cmd));
+			gwbuf_free(tmpbuf);
+		}
 #endif /*< SS_DEBUG */
-        switch (scur->scmd_cur_cmd->packet_type) {
-                case MYSQL_COM_CHANGE_USER:
+		switch(scur->scmd_cur_cmd->packet_type)
+		{
+		case MYSQL_COM_CHANGE_USER:
 			/** This makes it possible to handle replies correctly */
 			gwbuf_set_type(scur->scmd_cur_cmd->buffer, GWBUF_TYPE_SESCMD);
 			rc = dcb->func.auth(
-                                dcb, 
-                                NULL, 
-                                dcb->session, 
-                                gwbuf_clone(scur->scmd_cur_cmd->buffer));
-                        break;
+					    dcb,
+					    NULL,
+					    dcb->session,
+					    gwbuf_clone(scur->scmd_cur_cmd->buffer));
+			break;
 
 		case MYSQL_COM_INIT_DB:
 		{
@@ -310,33 +331,34 @@ static bool execute_sescmd_in_backend(
 
 			data = dcb->session->data;
 			tmpbuf = scur->scmd_cur_cmd->buffer;
-			qlen = MYSQL_GET_PACKET_LEN((unsigned char*)tmpbuf->start);
-			memset(data->db,0,MYSQL_DATABASE_MAXLEN+1);
-			if(qlen > 0 && qlen < MYSQL_DATABASE_MAXLEN+1)
-				strncpy(data->db,tmpbuf->start+5,qlen - 1);			
+			qlen = MYSQL_GET_PACKET_LEN((unsigned char*) tmpbuf->start);
+			memset(data->db, 0, MYSQL_DATABASE_MAXLEN + 1);
+			if(qlen > 0 && qlen < MYSQL_DATABASE_MAXLEN + 1)
+				strncpy(data->db, tmpbuf->start + 5, qlen - 1);
 		}
-		/** Fallthrough */
+			/** Fallthrough */
 		case MYSQL_COM_QUERY:
-                default:
-                        /** 
-                         * Mark session command buffer, it triggers writing 
-                         * MySQL command to protocol
-                         */
-                        gwbuf_set_type(scur->scmd_cur_cmd->buffer, GWBUF_TYPE_SESCMD);
-                        rc = dcb->func.write(
-                                dcb, 
-                                gwbuf_clone(scur->scmd_cur_cmd->buffer));
-                        break;
-        }
+		default:
+			/** 
+			 * Mark session command buffer, it triggers writing 
+			 * MySQL command to protocol
+			 */
+			gwbuf_set_type(scur->scmd_cur_cmd->buffer, GWBUF_TYPE_SESCMD);
+			rc = dcb->func.write(
+					     dcb,
+					     gwbuf_clone(scur->scmd_cur_cmd->buffer));
+			break;
+		}
 
-        if (rc == 1)
-        {
-                succp = true;
-        }
-        else
-        {
-                succp = false;
-        }
+		if(rc == 1)
+		{
+			succp = true;
+		}
+		else
+		{
+			succp = false;
+		}
+	}
 return_succp:
 	return succp;
 }
@@ -485,7 +507,10 @@ bool sescmd_remove_dcb (SCMDLIST* scmdlist, DCB* dcb)
     SCMDLIST* list = scmdlist;
     SCMDCURSOR *cursor, *tmp;
     
-    cursor = get_cursor(scmdlist,dcb);
+    if((cursor = get_cursor(scmdlist,dcb)) == NULL)
+    {
+	return false;
+    }
     
     spinlock_acquire(&cursor->lock);
     cursor->scmd_cur_active = false;
@@ -529,9 +554,7 @@ void sescmd_execute (SCMDLIST* list)
     while(cursor)
     {
         execute_sescmd_in_backend(cursor);
-        spinlock_acquire(&cursor->lock);
-        cursor = cursor->next;
-        spinlock_release(&cursor->lock);
+	cursor = cursor->next;
     }
 }
 

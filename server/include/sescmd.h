@@ -114,6 +114,7 @@ typedef struct sescmd_list_st
 } SCMDLIST;
 
 SCMDLIST* sescmd_allocate();
+void sescmd_free(SCMDLIST*);
 bool sescmd_add_command (SCMDLIST* list, GWBUF* buf);
 bool sescmd_add_dcb (SCMDLIST* list, DCB* dcb);
 bool sescmd_remove_dcb (SCMDLIST* list, DCB* dcb);

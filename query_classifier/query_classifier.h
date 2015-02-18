@@ -103,6 +103,7 @@ char*           skygw_query_classifier_get_stmtname(GWBUF* buf);
 char*		skygw_get_created_table_name(GWBUF* querybuf);
 bool		is_drop_table_query(GWBUF* querybuf);
 bool		skygw_is_real_query(GWBUF* querybuf);
+bool		skygw_is_session_command(GWBUF* querybuf);
 char**		skygw_get_table_names(GWBUF* querybuf, int* tblsize, bool fullnames);
 char*           skygw_get_canonical(GWBUF* querybuf);
 bool            parse_query (GWBUF* querybuf);

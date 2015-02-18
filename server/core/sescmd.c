@@ -13,7 +13,7 @@ SCMDLIST* sescmd_allocate()
     
     spinlock_init(&list->lock);
     list->semantics.reply_on = SRES_FIRST;
-    list->semantics.n_replies = SNUM_ONE;
+    list->semantics.must_reply = SNUM_ONE;
     list->semantics.on_error = SERR_DROP;
     
     return list;
@@ -86,6 +86,7 @@ bool sescmd_add_command (SCMDLIST* scmdlist, GWBUF* buf)
        list->last->next = cmd;
        list->last = cmd;
    }
+   
    return true;
 }
 
@@ -152,19 +153,44 @@ sescmd_cursor_set_active(SCMDCURSOR* cursor, bool value)
     spinlock_release(&cursor->lock);
 }
 
+/**
+ * Check if the session command cursor associated with this backend DCB is already
+ * executing session commands. If this is true, the backend server will automatically
+ * repeat all the session commands after which it will go into inactive state.
+ * @param list Session command list
+ * @param dcb Backend server DCB
+ * @return True if the backend server is already executing session commands and
+ * false if it is inactive 
+ */
+bool sescmd_is_active(SCMDLIST* list, DCB* dcb)
+{
+    SCMDCURSOR* cursor = get_cursor(list,dcb);
+    
+    if(cursor == NULL)
+	return false;
+    
+    return sescmd_cursor_is_active(cursor);
+}
 
 /**
  * See if the cursor has pending commands.
  * @param cursor Cursor to inspect
  * @return True if the cursor has pending commands. False if it has reached the end of the list.
  */
-bool sescmd_cursor_has_next(SCMDCURSOR* cursor)
+bool sescmd_has_next(SCMDLIST* list, DCB* dcb)
 {
     SCMD* cmd;
+    SCMDCURSOR* cursor;
     bool replied;
     
-    if(cursor->scmd_list->first == NULL)
+    cursor = get_cursor(list,dcb);
+    
+    if(cursor == NULL)
+	return false;
+    
+    if(list->first == NULL)
     {
+	/** No commands to execute */
 	return false;
     }
     
@@ -180,14 +206,14 @@ bool sescmd_cursor_has_next(SCMDCURSOR* cursor)
     cmd = cursor->scmd_cur_cmd ? cursor->scmd_cur_cmd->next : NULL;
     replied = cursor->replied_to;
     spinlock_release(&cursor->lock);
-    if(cmd )
+    if(cmd != NULL)
     {
         /** There are more commands to execute*/    
         
         return true;
     }
     
-    if(!replied)
+    if(replied == false)
     {
         /** The current command hasn't been replied to */
         return true;
@@ -201,18 +227,25 @@ bool sescmd_cursor_has_next(SCMDCURSOR* cursor)
 
 /**
  * Move the cursor forward if it has not yet reached the end of the list.
- * @param cursor Cursor to advance
- * @return True if the cursor is still active. False if it has reached the end of the list.
+ * @param list Session command list
+ * @param dcb Backend DCB
+ * @return Pointer to the next GWBUF containing the next command in the list or 
+ * NULL if there are no commands to execute.
  */
-bool sescmd_cursor_next(SCMDCURSOR* cursor)
+GWBUF* sescmd_get_next(SCMDLIST* list, DCB* dcb)
 {
-    bool rval = false;
+    GWBUF* rval = NULL;
+    SCMDCURSOR* cursor = get_cursor(list,dcb);
+    
+    if(cursor == NULL)
+	return NULL;
     
     spinlock_acquire(&cursor->lock);
     
       if(cursor->scmd_list->first == NULL)
       {
-	      rval = false;
+	  /** No commands to execute */
+	      rval = NULL;
 	      goto retblock;
       }
     
@@ -222,7 +255,7 @@ bool sescmd_cursor_next(SCMDCURSOR* cursor)
         
         cursor->scmd_cur_cmd = cursor->scmd_list->first;
         cursor->replied_to = false;
-        rval = true;
+        rval = sescmd_cursor_get_command(cursor);
         goto retblock;
     }
     
@@ -233,7 +266,7 @@ bool sescmd_cursor_next(SCMDCURSOR* cursor)
         
         cursor->scmd_cur_cmd = cursor->scmd_cur_cmd->next;
         cursor->replied_to = false;
-        rval = true;
+        rval = sescmd_cursor_get_command(cursor);
         goto retblock;
     }
     
@@ -241,7 +274,7 @@ bool sescmd_cursor_next(SCMDCURSOR* cursor)
     {
         /** The current command is still active */
 
-        rval = true;
+        rval = sescmd_cursor_get_command(cursor);
     }
 
     retblock:
@@ -252,51 +285,28 @@ bool sescmd_cursor_next(SCMDCURSOR* cursor)
 }
 
 /**
- * Execute pending session commands in the backend server.
- * @param cursor Cursor to process
- * @return True if execution was successful. False if there are no commands 
- * left or the write to the backend DCB failed.
+ * Execute a pending session command in the backend server.
+ * @param dcb Backend DCB where the command is executed
+ * @param buffer GWBUF containing the session command
+ * @return True if execution was successful or false if the write to the backend DCB failed.
  */
-static bool
-execute_sescmd_in_backend(
-			  SCMDCURSOR* cursor)
+bool
+sescmd_execute_in_backend(DCB* backend_dcb,GWBUF* buffer)
 {
-	DCB* dcb;
+	DCB* dcb = backend_dcb;
 	bool succp = true;
 	int rc = 0;
-	SCMDCURSOR* scur = cursor;
-
-	dcb = scur->backend_dcb;
+	unsigned char packet_type;
 	if(dcb == NULL)
 	    return false;
 	CHK_DCB(dcb);
 
-	/** Return if there are no active or pending ses commands */
-	if(sescmd_cursor_has_next(scur) == false)
-	{
-		succp = false;
-		sescmd_cursor_set_active(scur, false);
-		skygw_log_write_flush(
-				      LOGFILE_TRACE,
-				      "Cursor had no pending session commands.");
-
-		goto return_succp;
-	}
-
-	sescmd_cursor_next(scur);
+	packet_type = MYSQL_GET_COMMAND(((unsigned char*)buffer->start));
 	
-	if(!sescmd_cursor_is_active(scur))
-	{
-		/** Cursor is left active when function returns. */
 
-		sescmd_cursor_set_active(scur, true);
-	}
-	
-	if(scur->scmd_cur_cmd)
-	{
 #if defined(SS_DEBUG)
 		{
-			GWBUF* tmpbuf = gwbuf_clone(scur->scmd_cur_cmd->buffer);
+			GWBUF* tmpbuf = gwbuf_clone(buffer);
 			uint8_t* ptr = GWBUF_DATA(tmpbuf);
 			unsigned char cmd = MYSQL_GET_COMMAND(ptr);
 
@@ -310,16 +320,16 @@ execute_sescmd_in_backend(
 			gwbuf_free(tmpbuf);
 		}
 #endif /*< SS_DEBUG */
-		switch(scur->scmd_cur_cmd->packet_type)
+		switch(packet_type)
 		{
 		case MYSQL_COM_CHANGE_USER:
 			/** This makes it possible to handle replies correctly */
-			gwbuf_set_type(scur->scmd_cur_cmd->buffer, GWBUF_TYPE_SESCMD);
+			gwbuf_set_type(buffer, GWBUF_TYPE_SESCMD);
 			rc = dcb->func.auth(
 					    dcb,
 					    NULL,
 					    dcb->session,
-					    gwbuf_clone(scur->scmd_cur_cmd->buffer));
+					    gwbuf_clone(buffer));
 			break;
 
 		case MYSQL_COM_INIT_DB:
@@ -330,7 +340,7 @@ execute_sescmd_in_backend(
 			unsigned int qlen;
 
 			data = dcb->session->data;
-			tmpbuf = scur->scmd_cur_cmd->buffer;
+			tmpbuf = buffer;
 			qlen = MYSQL_GET_PACKET_LEN((unsigned char*) tmpbuf->start);
 			memset(data->db, 0, MYSQL_DATABASE_MAXLEN + 1);
 			if(qlen > 0 && qlen < MYSQL_DATABASE_MAXLEN + 1)
@@ -343,10 +353,10 @@ execute_sescmd_in_backend(
 			 * Mark session command buffer, it triggers writing 
 			 * MySQL command to protocol
 			 */
-			gwbuf_set_type(scur->scmd_cur_cmd->buffer, GWBUF_TYPE_SESCMD);
+			gwbuf_set_type(buffer, GWBUF_TYPE_SESCMD);
 			rc = dcb->func.write(
 					     dcb,
-					     gwbuf_clone(scur->scmd_cur_cmd->buffer));
+					     gwbuf_clone(buffer));
 			break;
 		}
 
@@ -358,8 +368,7 @@ execute_sescmd_in_backend(
 		{
 			succp = false;
 		}
-	}
-return_succp:
+
 	return succp;
 }
 
@@ -370,19 +379,11 @@ return_succp:
  * Read session commands from session command list. If command is already replied,
  * discard packet. Else send reply to client if the semantics of the list match. 
  * In both cases move cursor forward until all session command replies are handled. 
- * 
- * Cases that are expected to happen and which are handled:
- * s = response not yet replied to client, S = already replied response,
- * q = query
- * 1. q+        for example : select * from mysql.user
- * 2. s+        for example : set autocommit=1
- * 3. S+        
- * 4. sq+
- * 5. Sq+
- * 6. Ss+
- * 7. Ss+q+
- * 8. S+q+
- * 9. s+q+
+ * @param list Session command list
+ * @param dcb Backend DCB
+ * @param replybuf GWBUF containing the reply from the backend server
+ * @return Pointer to a GWBUF that should be routed back to the client or NULL 
+ * if no action needs to be taken.
  */
 GWBUF* sescmd_process_replies(
         SCMDLIST* list,
@@ -430,9 +431,11 @@ GWBUF* sescmd_process_replies(
                     
                     atomic_add(&cmd->n_replied,1);
                     
-                    if(scur->scmd_list->semantics.n_replies == SNUM_ONE ||
-                       (scur->scmd_list->semantics.n_replies == SNUM_ALL && 
-                        cmd->n_replied >= scur->scmd_list->n_cursors))
+                    if(scur->scmd_list->semantics.reply_on == SRES_FIRST ||
+                       (scur->scmd_list->semantics.reply_on == SRES_LAST && 
+                        cmd->n_replied >= scur->scmd_list->n_cursors) || 
+		       (scur->scmd_list->semantics.reply_on == SRES_MIN && 
+                        cmd->n_replied >= scur->scmd_list->semantics.min_nreplies))
                     {
                         cmd->reply_sent = true;
                         return_reply = true;                        
@@ -443,9 +446,11 @@ GWBUF* sescmd_process_replies(
                 /** Set response status received */
                 scur->replied_to = true;                
 
-                if (sescmd_cursor_next(scur))
+                if (sescmd_has_next(list,dcb))
                 {
-                        cmd = scur->scmd_cur_cmd;
+		    /** This moves the cursor forwards */
+		    sescmd_get_next(list,dcb);
+		    cmd = scur->scmd_cur_cmd;
                 }
                 else
                 {
@@ -455,11 +460,6 @@ GWBUF* sescmd_process_replies(
                 }
         }
         
-        if(scur->scmd_cur_active && cmd)
-        {
-            execute_sescmd_in_backend(scur);
-        }
-
         return replybuf;
 }
 
@@ -468,12 +468,18 @@ GWBUF* sescmd_process_replies(
  * cursor for this DCB and starts the execution of pending commands.
  * @param list Session command list
  * @param dcb DCB to add
- * @return True if adding the DCB was successful. False on all errors.
+ * @return True if adding the DCB was successful or the DCB was already in the list. 
+ * False on all errors.
  */
 bool sescmd_add_dcb (SCMDLIST* scmdlist, DCB* dcb)
 {
     SCMDLIST* list = scmdlist;
     SCMDCURSOR* cursor;
+    
+    if(get_cursor(scmdlist,dcb) != NULL)
+    {
+	return true;
+    }
     
     if((cursor = calloc(1,sizeof(SCMDCURSOR))) == NULL)
     {
@@ -489,10 +495,6 @@ bool sescmd_add_dcb (SCMDLIST* scmdlist, DCB* dcb)
     list->cursors = cursor;
     atomic_add(&list->n_cursors,1);
     
-    if(sescmd_cursor_has_next(cursor))
-    {
-        execute_sescmd_in_backend(cursor);
-    }
     return true;
 }
 
@@ -543,21 +545,13 @@ bool sescmd_remove_dcb (SCMDLIST* scmdlist, DCB* dcb)
     
     return true;
 }
-void sescmd_execute (SCMDLIST* list)
-{
-    SCMDCURSOR* cursor;
-    
-    spinlock_acquire(&list->lock);
-    cursor = list->cursors;
-    spinlock_release(&list->lock);
-     
-    while(cursor)
-    {
-        execute_sescmd_in_backend(cursor);
-	cursor = cursor->next;
-    }
-}
 
+/**
+ * To be implemented...
+ * @param list
+ * @param dcb
+ * @return 
+ */
 bool sescmd_handle_failure(SCMDLIST* list, DCB* dcb)
 {
     return true;

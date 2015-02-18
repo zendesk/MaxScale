@@ -1615,3 +1615,81 @@ skygw_query_op_t query_classifier_get_operation(GWBUF* querybuf)
   }
 	return operation;
 }
+
+
+/**
+ * See if a query is a session command that should be routed to all backend servers.
+ * Only commands that should be executed in all the backend servers should be added
+ * to the session command list.
+ * @param buf Buffer to inspect
+ * @return True if the command should be routed to all servers or false if it should be
+ * routed to a single server.
+ */
+bool skygw_is_session_command(GWBUF* buf)
+{
+    unsigned char packet_type;
+    int qtype = QUERY_TYPE_UNKNOWN;
+    bool target = false;
+    
+    packet_type = *((unsigned char*)buf->start + 4);
+    
+    switch(packet_type) {
+		case MYSQL_COM_QUIT:        /*< 1 QUIT will close all sessions */
+		case MYSQL_COM_INIT_DB:     /*< 2 DDL must go to the master */
+		case MYSQL_COM_REFRESH:     /*< 7 - I guess this is session but not sure */
+		case MYSQL_COM_DEBUG:       /*< 0d all servers dump debug info to stdout */
+		case MYSQL_COM_PING:        /*< 0e all servers are pinged */
+		case MYSQL_COM_CHANGE_USER: /*< 11 all servers change it accordingly */
+		case MYSQL_COM_STMT_CLOSE:  /*< free prepared statement */
+		case MYSQL_COM_STMT_SEND_LONG_DATA: /*< send data to column */
+		case MYSQL_COM_STMT_RESET:  /*< resets the data of a prepared statement */
+			qtype = QUERY_TYPE_SESSION_WRITE;
+			break;
+			
+		case MYSQL_COM_CREATE_DB:   /**< 5 DDL must go to the master */
+		case MYSQL_COM_DROP_DB:     /**< 6 DDL must go to the master */
+			qtype = QUERY_TYPE_WRITE;
+			break;
+			
+		case MYSQL_COM_QUERY:
+			qtype = query_classifier_get_type(buf);
+			break;
+			
+		case MYSQL_COM_STMT_PREPARE:
+			qtype = query_classifier_get_type(buf);
+			qtype |= QUERY_TYPE_PREPARE_STMT;
+			break;
+			
+		case MYSQL_COM_STMT_EXECUTE:
+			/** Parsing is not needed for this type of packet */
+			qtype = QUERY_TYPE_EXEC_STMT;
+			break;
+			
+		case MYSQL_COM_SHUTDOWN:       /**< 8 where should shutdown be routed ? */
+		case MYSQL_COM_STATISTICS:     /**< 9 ? */
+		case MYSQL_COM_PROCESS_INFO:   /**< 0a ? */
+		case MYSQL_COM_CONNECT:        /**< 0b ? */
+		case MYSQL_COM_PROCESS_KILL:   /**< 0c ? */
+		case MYSQL_COM_TIME:           /**< 0f should this be run in gateway ? */
+		case MYSQL_COM_DELAYED_INSERT: /**< 10 ? */
+		case MYSQL_COM_DAEMON:         /**< 1d ? */
+		default:
+			break;
+	} /**< switch by packet type */
+    
+    if (QUERY_IS_TYPE(qtype, QUERY_TYPE_SESSION_WRITE) ||
+		QUERY_IS_TYPE(qtype, QUERY_TYPE_PREPARE_STMT) ||
+		QUERY_IS_TYPE(qtype, QUERY_TYPE_PREPARE_NAMED_STMT) ||
+		/** Configured to allow writing variables to all nodes */
+		QUERY_IS_TYPE(qtype, QUERY_TYPE_GSYSVAR_WRITE) ||
+		/** enable or disable autocommit are always routed to all */
+		QUERY_IS_TYPE(qtype, QUERY_TYPE_ENABLE_AUTOCOMMIT) ||
+		QUERY_IS_TYPE(qtype, QUERY_TYPE_DISABLE_AUTOCOMMIT))
+	{
+		
+		target = true;
+	}
+	
+    return target;
+	
+}

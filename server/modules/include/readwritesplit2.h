@@ -32,7 +32,7 @@
 #include <dcb.h>
 #include <hashtable.h>
 #include <sescmd.h>
-
+#include <query_classifier.h>
 typedef enum bref_state {
         BREF_IN_USE           = 0x01,
         BREF_WAITING_RESULT   = 0x02, /*< for session commands only */
@@ -247,6 +247,7 @@ typedef struct router_instance {
         struct router_instance* next;        /*< Next router on the list            */
 	bool			available_slaves;
 					    /*< The router has some slaves avialable */
+        SEMANTICS               semantics; /*< Session command semantics */
 } ROUTER_INSTANCE;
 
 #define BACKEND_TYPE(b) (SERVER_IS_MASTER((b)->backend_server) ? BE_MASTER :    \

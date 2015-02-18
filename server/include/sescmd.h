@@ -39,9 +39,10 @@
 #include <dcb.h>
 #include <server.h>
 #include <mysql_client_server_protocol.h>
-
 /** 
- * Minimum number of backend servers that must respond
+ * Minimum number of backend servers that must respond. If less than this value
+ * of backend servers respond, it is considered a failure and the session should
+ * be closed.
  */
 typedef enum
 {
@@ -50,34 +51,44 @@ typedef enum
 } sescmd_rspnum;
 
 /** 
- * When to send the reply to the client
+ * When to send the reply to the client. If this is set to SRES_FIRST the first
+ * response received will be sent to the client. If it is set to SRES_LAST then 
+ * all backend servers that are in the session command list must reply. SRES_MIN
+ * will check if a minimum number of servers have responded to a session command
+ * and if this is true it will reply to the client.
  */
 typedef enum
 {
   SRES_FIRST,
-  SRES_FIRST_GOOD,
+  SRES_FIRST_GOOD, /*< To be implemented */
   SRES_LAST,
-  SRES_LAST_GOOD,
-  SRES_TIMEOUT
+  SRES_LAST_GOOD, /*< To be implemented */
+  SRES_TIMEOUT, /*< To be implemented */
+  SRES_MIN
 } sescmd_rsp;
 
 /** 
- * What to do when a backend responds with an error
+ * What to do when a backend responds with an error. If this is set to SERR_DROP
+ * the session will continue and the failed servers should be removed from the 
+ * session command list. Instead if it is SERR_FAIL_CONN then a single failure 
+ * will signal that the session has failed. If the session is considered as failed,
+ * the session should be closed.
  */
 typedef enum
 {
-  SERR_DROP,
-  SERR_FAIL_CONN
+  SERR_DROP, /*< To be implemented */
+  SERR_FAIL_CONN /*< To be implemented */
 } sescmd_rsperr;
 
 typedef struct semantics_t
   { 
-     sescmd_rspnum n_replies; /*< How many must reply */
+     sescmd_rspnum must_reply; /*< How many must reply */
      sescmd_rsp reply_on; /*< when to send the reply to the client */
      sescmd_rsperr on_error; /*< What to do when an error occurse */
-     int timeout; /*< 
-                   * Backends replying later than this are considere as failed.
-                   * Using a non-positive value disables timeouts. */
+     int min_nreplies; /*< Minimum number of replies that must be received 
+                        * before the reply is sent to the client*/
+     int timeout; /*<  Backends replying later than this are considere as failed.
+                   * Using a non-positive value disables timeouts */
   }SEMANTICS;
 
 struct sescmd_list_st;
@@ -118,8 +129,10 @@ void sescmd_free(SCMDLIST*);
 bool sescmd_add_command (SCMDLIST* list, GWBUF* buf);
 bool sescmd_add_dcb (SCMDLIST* list, DCB* dcb);
 bool sescmd_remove_dcb (SCMDLIST* list, DCB* dcb);
-void sescmd_detach (SCMDLIST* list, DCB* dcb);
-void sescmd_execute (SCMDLIST* list);
+bool sescmd_execute_in_backend(DCB* backend_dcb,GWBUF* buffer);
+bool sescmd_is_active(SCMDLIST* list, DCB* dcb);
+bool sescmd_has_next(SCMDLIST* list, DCB* dcb);
+GWBUF* sescmd_get_next(SCMDLIST* list, DCB* dcb);
 GWBUF* sescmd_process_replies(SCMDLIST* list, DCB* dcb, GWBUF* response);
 bool sescmd_handle_failure(SCMDLIST* list, DCB* dcb);
 #endif	/* SESCMD_H */

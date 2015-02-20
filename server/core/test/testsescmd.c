@@ -17,9 +17,8 @@ int main(int argc, char** argv)
     const char* query = "set @test1=1";    
     int rval = 0;
     SCMDLIST* list;
-    SCMDCURSOR* cursor;
     DCB* dcb;
-    GWBUF* buffer;
+    GWBUF *buffer, *response, *queue;
     
     cmd_write = 0;
     cmd_read = 0;
@@ -36,6 +35,11 @@ int main(int argc, char** argv)
     *((unsigned char*)buffer->start + 4) = 0x03;
     memcpy(buffer->start + 4,query,strlen(query));   
     
+    response = gwbuf_alloc(11);
+    gw_mysql_set_byte3((unsigned char*)response->start,7);
+    *((unsigned char*)response->start + 3) = 0x01;
+    memset(response->start + 4,0,7);
+    
     printf("Allocating session command list... ");    
     if((list = sescmd_allocate()) == NULL)
     {
@@ -44,13 +48,8 @@ int main(int argc, char** argv)
         goto retblock;
     }
     printf("OK\n");    
+    list->semantics.reply_on = SRES_FIRST;
     printf("Adding session commands to the list... ");
-    if(!sescmd_add_command(list,buffer))
-    {
-        printf("Failed to add a command to the list\n");
-        rval = 1;
-        goto retblock;
-    }
     if(!sescmd_add_command(list,buffer))
     {
         printf("Failed to add a command to the list\n");
@@ -67,6 +66,38 @@ int main(int argc, char** argv)
         goto retblock;
     }
     printf("OK\n");
+    printf("Checking pending commands... ");
+    if(!sescmd_has_next(list,dcb))
+    {
+	printf("Failed to check pending commands from the list\n");
+        rval = 1;
+        goto retblock;
+    }
+    
+    printf("OK\n");
+    printf("Getting command from list... ");
+	    
+    if((queue = sescmd_get_next(list,dcb)) == NULL)
+    {
+	printf("Failed to retrieve command from the list\n");
+        rval = 1;
+        goto retblock;
+    }
+    
+    
+    
+    printf("OK\n");
+    printf("Executing command... ");
+    
+    if(!sescmd_execute_in_backend(dcb,queue))
+    {
+	printf("Failed to execute command\n");
+        rval = 1;
+        goto retblock;
+    }
+
+    
+    printf("OK\n");    
     printf("Waiting for write to fake DCB... ");
     if(cmd_write)
     {
@@ -79,34 +110,17 @@ int main(int argc, char** argv)
         goto retblock;
     }
 
-    gw_mysql_set_byte3((unsigned char*)buffer->start,7);
-    *((unsigned char*)buffer->start + 3) = 0x01;
-    memset(buffer->start + 4,0,7);
-    cursor = get_cursor(list,dcb);
 
-    printf("Writing a fake replies to the session commands... ");
+    printf("Generating a reply to the session command... ");
     
-    sescmd_process_replies(list,dcb,buffer);
-    
-    if(cmd_write != 2)
+    if(sescmd_process_replies(list,dcb,response) == NULL)
     {
-        printf("Failed to process first reply\n");
+        printf("Failed to process reply\n");
         rval = 1;
         goto retblock;
     }
 
-    sescmd_process_replies(list,dcb,buffer);
-
-    if(cursor->scmd_cur_active)
-    {
-        printf("Failed to process last reply\n");
-        rval = 1;
-        goto retblock;
- 
-    }
-    
-    printf("OK\n");
-
+    printf("OK\n");    
 
     printf("Removing DCB... ");
     
@@ -121,7 +135,8 @@ int main(int argc, char** argv)
     
     retblock:
     
-    gwbuf_free(buffer);    
+    gwbuf_free(buffer);
+    gwbuf_free(response);
     dcb_close(dcb);
     return rval;
 }

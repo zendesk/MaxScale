@@ -1,0 +1,694 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configurationDescriptor version="95">
+  <logicalFolder name="root" displayName="root" projectFiles="true" kind="ROOT">
+    <df root="." name="0">
+      <df name="client">
+        <df name="test">
+          <in>maxadmin_stress.sh</in>
+          <in>maxadmin_test.sh</in>
+        </df>
+        <in>maxadmin.c</in>
+      </df>
+      <df name="Documentation">
+        <df name="About">
+          <in>About-MaxScale.md</in>
+        </df>
+      </df>
+      <df name="log_manager">
+        <df name="test">
+          <in>logorder.sh</in>
+          <in>testlog.c</in>
+          <in>testorder.c</in>
+        </df>
+        <in>log_manager.cc</in>
+      </df>
+      <df name="query_classifier">
+        <df name="test">
+          <df name="canonical_tests">
+            <in>canonizer.c</in>
+            <in>canontest.sh</in>
+          </df>
+          <in>classify.c</in>
+          <in>testmain.c</in>
+        </df>
+        <in>query_classifier.cc</in>
+      </df>
+      <df name="rabbitmq_consumer">
+        <df name="inih">
+          <df name="cpp">
+            <in>INIReader.cpp</in>
+            <in>INIReaderTest.cpp</in>
+          </df>
+          <df name="examples">
+            <in>ini_dump.c</in>
+            <in>ini_example.c</in>
+            <in>ini_xmacros.c</in>
+          </df>
+          <df name="tests">
+            <in>unittest.c</in>
+          </df>
+          <in>ini.c</in>
+        </df>
+        <in>consumer.c</in>
+      </df>
+      <df name="replication_listener">
+        <df name="tests">
+          <in>event_dump.cpp</in>
+        </df>
+        <in>access_method_factory.cpp</in>
+        <in>basic_content_handler.cpp</in>
+        <in>binary_log.cpp</in>
+        <in>binlog_driver.cpp</in>
+        <in>binlog_event.cpp</in>
+        <in>gtid.cpp</in>
+        <in>protocol.cpp</in>
+        <in>resultset_iterator.cpp</in>
+        <in>row_of_fields.cpp</in>
+        <in>tcp_driver.cpp</in>
+        <in>value.cpp</in>
+      </df>
+      <df name="script">
+        <in>make-binary-tarball.sh</in>
+        <in>make-source-tarball.sh</in>
+      </df>
+      <df name="server">
+        <df name="core">
+          <df name="test">
+            <in>runtest.sh</in>
+            <in>test_mysql_users.c</in>
+            <in>testadminusers.c</in>
+            <in>testbuffer.c</in>
+            <in>testdcb.c</in>
+            <in>testfilter.c</in>
+            <in>testgwbitmask.c</in>
+            <in>testhash.c</in>
+            <in>testhint.c</in>
+            <in>testmemlog.c</in>
+            <in>testmodutil.c</in>
+            <in>testpoll.c</in>
+            <in>testserver.c</in>
+            <in>testservice.c</in>
+            <in>testsession.c</in>
+            <in>testspinlock.c</in>
+            <in>testusers.c</in>
+          </df>
+          <in>adminusers.c</in>
+          <in>atomic.c</in>
+          <in>buffer.c</in>
+          <in>config.c</in>
+          <in>dbusers.c</in>
+          <in>dcb.c</in>
+          <in>filter.c</in>
+          <in>gateway.c</in>
+          <in>gw_utils.c</in>
+          <in>gwbitmask.c</in>
+          <in>hashtable.c</in>
+          <in>hint.c</in>
+          <in>housekeeper.c</in>
+          <in>load_utils.c</in>
+          <in>maxkeys.c</in>
+          <in>maxpasswd.c</in>
+          <in>memlog.c</in>
+          <in>modutil.c</in>
+          <in>monitor.c</in>
+          <in>poll.c</in>
+          <in>secrets.c</in>
+          <in>server.c</in>
+          <in>service.c</in>
+          <in>session.c</in>
+          <in>spinlock.c</in>
+          <in>thread.c</in>
+          <in>users.c</in>
+          <in>utils.c</in>
+        </df>
+        <df name="inih">
+          <df name="cpp">
+            <in>INIReader.cpp</in>
+            <in>INIReaderTest.cpp</in>
+          </df>
+          <df name="examples">
+            <in>ini_dump.c</in>
+            <in>ini_example.c</in>
+            <in>ini_xmacros.c</in>
+          </df>
+          <df name="tests">
+            <in>unittest.c</in>
+          </df>
+          <in>ini.c</in>
+        </df>
+        <df name="modules">
+          <df name="filter">
+            <df name="hint">
+              <in>hintfilter.c</in>
+              <in>hintparser.c</in>
+            </df>
+            <df name="test">
+              <df name="hintfilter">
+                <in>hint_tests.sh</in>
+              </df>
+              <in>harness_common.c</in>
+              <in>harness_ui.c</in>
+              <in>harness_util.c</in>
+              <in>tee_recursion.sh</in>
+              <in>testdriver.sh</in>
+            </df>
+            <in>fwfilter.c</in>
+            <in>mqfilter.c</in>
+            <in>namedserverfilter.c</in>
+            <in>qlafilter.c</in>
+            <in>regexfilter.c</in>
+            <in>tee.c</in>
+            <in>testfilter.c</in>
+            <in>topfilter.c</in>
+          </df>
+          <df name="monitor">
+            <in>galera_mon.c</in>
+            <in>mm_mon.c</in>
+            <in>mysql_mon.c</in>
+            <in>ndbcluster_mon.c</in>
+          </df>
+          <df name="protocol">
+            <in>httpd.c</in>
+            <in>maxscaled.c</in>
+            <in>mysql_backend.c</in>
+            <in>mysql_client.c</in>
+            <in>mysql_common.c</in>
+            <in>telnetd.c</in>
+          </df>
+          <df name="routing">
+            <df name="binlog">
+              <in>blr.c</in>
+              <in>blr_cache.c</in>
+              <in>blr_file.c</in>
+              <in>blr_master.c</in>
+              <in>blr_slave.c</in>
+            </df>
+            <df name="readwritesplit">
+              <df name="test">
+                <df name="test_hints">
+                  <in>rwsplit_hints.sh</in>
+                  <in>syntax_check.sh</in>
+                </df>
+                <in>rwsplit.sh</in>
+              </df>
+              <in>readwritesplit.c</in>
+            </df>
+            <df name="test">
+              <in>testconnect.c</in>
+            </df>
+            <in>GaleraHACRoute.c</in>
+            <in>cli.c</in>
+            <in>debugcli.c</in>
+            <in>debugcmd.c</in>
+            <in>readconnroute.c</in>
+            <in>testroute.c</in>
+            <in>webserver.c</in>
+          </df>
+        </df>
+      </df>
+      <df name="table_replication_consistency">
+        <df name="test">
+          <in>Example.c</in>
+          <in>test.cpp</in>
+        </df>
+        <in>table_replication_consistency.cpp</in>
+        <in>table_replication_listener.cpp</in>
+        <in>table_replication_metadata.cpp</in>
+        <in>table_replication_parser.cpp</in>
+      </df>
+      <df name="utils">
+        <in>skygw_utils.cc</in>
+      </df>
+      <in>unpack_rpm.sh</in>
+    </df>
+    <logicalFolder name="ExternalFiles"
+                   displayName="Important Files"
+                   projectFiles="false"
+                   kind="IMPORTANT_FILES_FOLDER">
+      <itemPath>CMakeLists.txt</itemPath>
+      <itemPath>Makefile</itemPath>
+    </logicalFolder>
+  </logicalFolder>
+  <sourceFolderFilter>^(nbproject)$</sourceFolderFilter>
+  <sourceRootList>
+    <Elem>.</Elem>
+  </sourceRootList>
+  <projectmakefile>Makefile</projectmakefile>
+  <confs>
+    <conf name="Default" type="0">
+      <toolsSet>
+        <compilerSet>default</compilerSet>
+        <dependencyChecking>false</dependencyChecking>
+        <rebuildPropChanged>false</rebuildPropChanged>
+      </toolsSet>
+      <codeAssistance>
+      </codeAssistance>
+      <makefileType>
+        <makeTool>
+          <buildCommandWorkingDir>.</buildCommandWorkingDir>
+          <buildCommand>${MAKE} -f Makefile</buildCommand>
+          <cleanCommand>${MAKE} -f Makefile clean</cleanCommand>
+          <executablePath></executablePath>
+        </makeTool>
+      </makefileType>
+      <item path="Documentation/About/About-MaxScale.md"
+            ex="false"
+            tool="3"
+            flavor2="0">
+      </item>
+      <item path="client/maxadmin.c" ex="false" tool="0" flavor2="2">
+      </item>
+      <item path="client/test/maxadmin_stress.sh" ex="false" tool="0" flavor2="2">
+      </item>
+      <item path="client/test/maxadmin_test.sh" ex="false" tool="0" flavor2="2">
+      </item>
+      <item path="log_manager/log_manager.cc" ex="false" tool="1" flavor2="4">
+      </item>
+      <item path="log_manager/test/logorder.sh" ex="false" tool="0" flavor2="2">
+      </item>
+      <item path="log_manager/test/testlog.c" ex="false" tool="0" flavor2="2">
+      </item>
+      <item path="log_manager/test/testorder.c" ex="false" tool="0" flavor2="2">
+      </item>
+      <item path="query_classifier/query_classifier.cc"
+            ex="false"
+            tool="1"
+            flavor2="4">
+      </item>
+      <item path="query_classifier/test/canonical_tests/canonizer.c"
+            ex="false"
+            tool="0"
+            flavor2="2">
+      </item>
+      <item path="query_classifier/test/canonical_tests/canontest.sh"
+            ex="false"
+            tool="0"
+            flavor2="2">
+      </item>
+      <item path="query_classifier/test/classify.c" ex="false" tool="0" flavor2="2">
+      </item>
+      <item path="query_classifier/test/testmain.c" ex="false" tool="0" flavor2="2">
+      </item>
+      <item path="rabbitmq_consumer/consumer.c" ex="false" tool="0" flavor2="2">
+      </item>
+      <item path="rabbitmq_consumer/inih/cpp/INIReader.cpp"
+            ex="false"
+            tool="1"
+            flavor2="4">
+      </item>
+      <item path="rabbitmq_consumer/inih/cpp/INIReaderTest.cpp"
+            ex="false"
+            tool="1"
+            flavor2="4">
+      </item>
+      <item path="rabbitmq_consumer/inih/examples/ini_dump.c"
+            ex="false"
+            tool="0"
+            flavor2="2">
+      </item>
+      <item path="rabbitmq_consumer/inih/examples/ini_example.c"
+            ex="false"
+            tool="0"
+            flavor2="2">
+      </item>
+      <item path="rabbitmq_consumer/inih/examples/ini_xmacros.c"
+            ex="false"
+            tool="0"
+            flavor2="2">
+      </item>
+      <item path="rabbitmq_consumer/inih/ini.c" ex="false" tool="0" flavor2="2">
+      </item>
+      <item path="rabbitmq_consumer/inih/tests/unittest.c"
+            ex="false"
+            tool="0"
+            flavor2="2">
+      </item>
+      <item path="replication_listener/access_method_factory.cpp"
+            ex="false"
+            tool="1"
+            flavor2="4">
+      </item>
+      <item path="replication_listener/basic_content_handler.cpp"
+            ex="false"
+            tool="1"
+            flavor2="4">
+      </item>
+      <item path="replication_listener/binary_log.cpp"
+            ex="false"
+            tool="1"
+            flavor2="4">
+      </item>
+      <item path="replication_listener/binlog_driver.cpp"
+            ex="false"
+            tool="1"
+            flavor2="4">
+      </item>
+      <item path="replication_listener/binlog_event.cpp"
+            ex="false"
+            tool="1"
+            flavor2="4">
+      </item>
+      <item path="replication_listener/gtid.cpp" ex="false" tool="1" flavor2="4">
+      </item>
+      <item path="replication_listener/protocol.cpp" ex="false" tool="1" flavor2="4">
+      </item>
+      <item path="replication_listener/resultset_iterator.cpp"
+            ex="false"
+            tool="1"
+            flavor2="4">
+      </item>
+      <item path="replication_listener/row_of_fields.cpp"
+            ex="false"
+            tool="1"
+            flavor2="4">
+      </item>
+      <item path="replication_listener/tcp_driver.cpp"
+            ex="false"
+            tool="1"
+            flavor2="4">
+      </item>
+      <item path="replication_listener/tests/event_dump.cpp"
+            ex="false"
+            tool="1"
+            flavor2="4">
+      </item>
+      <item path="replication_listener/value.cpp" ex="false" tool="1" flavor2="4">
+      </item>
+      <item path="script/make-binary-tarball.sh" ex="false" tool="0" flavor2="2">
+      </item>
+      <item path="script/make-source-tarball.sh" ex="false" tool="0" flavor2="2">
+      </item>
+      <item path="server/core/adminusers.c" ex="false" tool="0" flavor2="2">
+      </item>
+      <item path="server/core/atomic.c" ex="false" tool="0" flavor2="2">
+      </item>
+      <item path="server/core/buffer.c" ex="false" tool="0" flavor2="2">
+      </item>
+      <item path="server/core/config.c" ex="false" tool="0" flavor2="2">
+      </item>
+      <item path="server/core/dbusers.c" ex="false" tool="0" flavor2="2">
+      </item>
+      <item path="server/core/dcb.c" ex="false" tool="0" flavor2="2">
+      </item>
+      <item path="server/core/filter.c" ex="false" tool="0" flavor2="2">
+      </item>
+      <item path="server/core/gateway.c" ex="false" tool="0" flavor2="2">
+      </item>
+      <item path="server/core/gw_utils.c" ex="false" tool="0" flavor2="2">
+      </item>
+      <item path="server/core/gwbitmask.c" ex="false" tool="0" flavor2="2">
+      </item>
+      <item path="server/core/hashtable.c" ex="false" tool="0" flavor2="2">
+      </item>
+      <item path="server/core/hint.c" ex="false" tool="0" flavor2="2">
+      </item>
+      <item path="server/core/housekeeper.c" ex="false" tool="0" flavor2="2">
+      </item>
+      <item path="server/core/load_utils.c" ex="false" tool="0" flavor2="2">
+      </item>
+      <item path="server/core/maxkeys.c" ex="false" tool="0" flavor2="2">
+      </item>
+      <item path="server/core/maxpasswd.c" ex="false" tool="0" flavor2="2">
+      </item>
+      <item path="server/core/memlog.c" ex="false" tool="0" flavor2="2">
+      </item>
+      <item path="server/core/modutil.c" ex="false" tool="0" flavor2="2">
+      </item>
+      <item path="server/core/monitor.c" ex="false" tool="0" flavor2="2">
+      </item>
+      <item path="server/core/poll.c" ex="false" tool="0" flavor2="2">
+      </item>
+      <item path="server/core/secrets.c" ex="false" tool="0" flavor2="2">
+      </item>
+      <item path="server/core/server.c" ex="false" tool="0" flavor2="2">
+      </item>
+      <item path="server/core/service.c" ex="false" tool="0" flavor2="2">
+      </item>
+      <item path="server/core/session.c" ex="false" tool="0" flavor2="2">
+      </item>
+      <item path="server/core/spinlock.c" ex="false" tool="0" flavor2="2">
+      </item>
+      <item path="server/core/test/runtest.sh" ex="false" tool="0" flavor2="2">
+      </item>
+      <item path="server/core/test/test_mysql_users.c"
+            ex="false"
+            tool="0"
+            flavor2="2">
+      </item>
+      <item path="server/core/test/testadminusers.c" ex="false" tool="0" flavor2="2">
+      </item>
+      <item path="server/core/test/testbuffer.c" ex="false" tool="0" flavor2="2">
+      </item>
+      <item path="server/core/test/testdcb.c" ex="false" tool="0" flavor2="2">
+      </item>
+      <item path="server/core/test/testfilter.c" ex="false" tool="0" flavor2="2">
+      </item>
+      <item path="server/core/test/testgwbitmask.c" ex="false" tool="0" flavor2="2">
+      </item>
+      <item path="server/core/test/testhash.c" ex="false" tool="0" flavor2="2">
+      </item>
+      <item path="server/core/test/testhint.c" ex="false" tool="0" flavor2="2">
+      </item>
+      <item path="server/core/test/testmemlog.c" ex="false" tool="0" flavor2="2">
+      </item>
+      <item path="server/core/test/testmodutil.c" ex="false" tool="0" flavor2="2">
+      </item>
+      <item path="server/core/test/testpoll.c" ex="false" tool="0" flavor2="2">
+      </item>
+      <item path="server/core/test/testserver.c" ex="false" tool="0" flavor2="2">
+      </item>
+      <item path="server/core/test/testservice.c" ex="false" tool="0" flavor2="2">
+      </item>
+      <item path="server/core/test/testsession.c" ex="false" tool="0" flavor2="2">
+      </item>
+      <item path="server/core/test/testspinlock.c" ex="false" tool="0" flavor2="2">
+      </item>
+      <item path="server/core/test/testusers.c" ex="false" tool="0" flavor2="2">
+      </item>
+      <item path="server/core/thread.c" ex="false" tool="0" flavor2="2">
+      </item>
+      <item path="server/core/users.c" ex="false" tool="0" flavor2="2">
+      </item>
+      <item path="server/core/utils.c" ex="false" tool="0" flavor2="2">
+      </item>
+      <item path="server/inih/cpp/INIReader.cpp" ex="false" tool="1" flavor2="4">
+      </item>
+      <item path="server/inih/cpp/INIReaderTest.cpp" ex="false" tool="1" flavor2="4">
+      </item>
+      <item path="server/inih/examples/ini_dump.c" ex="false" tool="0" flavor2="2">
+      </item>
+      <item path="server/inih/examples/ini_example.c" ex="false" tool="0" flavor2="2">
+      </item>
+      <item path="server/inih/examples/ini_xmacros.c" ex="false" tool="0" flavor2="2">
+      </item>
+      <item path="server/inih/ini.c" ex="false" tool="0" flavor2="2">
+      </item>
+      <item path="server/inih/tests/unittest.c" ex="false" tool="0" flavor2="2">
+      </item>
+      <item path="server/modules/filter/fwfilter.c" ex="false" tool="0" flavor2="2">
+      </item>
+      <item path="server/modules/filter/hint/hintfilter.c"
+            ex="false"
+            tool="0"
+            flavor2="2">
+      </item>
+      <item path="server/modules/filter/hint/hintparser.c"
+            ex="false"
+            tool="0"
+            flavor2="2">
+      </item>
+      <item path="server/modules/filter/mqfilter.c" ex="false" tool="0" flavor2="2">
+      </item>
+      <item path="server/modules/filter/namedserverfilter.c"
+            ex="false"
+            tool="0"
+            flavor2="2">
+      </item>
+      <item path="server/modules/filter/qlafilter.c" ex="false" tool="0" flavor2="2">
+      </item>
+      <item path="server/modules/filter/regexfilter.c"
+            ex="false"
+            tool="0"
+            flavor2="2">
+      </item>
+      <item path="server/modules/filter/tee.c" ex="false" tool="0" flavor2="2">
+      </item>
+      <item path="server/modules/filter/test/harness_common.c"
+            ex="false"
+            tool="0"
+            flavor2="2">
+      </item>
+      <item path="server/modules/filter/test/harness_ui.c"
+            ex="false"
+            tool="0"
+            flavor2="2">
+      </item>
+      <item path="server/modules/filter/test/harness_util.c"
+            ex="false"
+            tool="0"
+            flavor2="2">
+      </item>
+      <item path="server/modules/filter/test/hintfilter/hint_tests.sh"
+            ex="false"
+            tool="0"
+            flavor2="2">
+      </item>
+      <item path="server/modules/filter/test/tee_recursion.sh"
+            ex="false"
+            tool="0"
+            flavor2="2">
+      </item>
+      <item path="server/modules/filter/test/testdriver.sh"
+            ex="false"
+            tool="0"
+            flavor2="2">
+      </item>
+      <item path="server/modules/filter/testfilter.c" ex="false" tool="0" flavor2="2">
+      </item>
+      <item path="server/modules/filter/topfilter.c" ex="false" tool="0" flavor2="2">
+      </item>
+      <item path="server/modules/monitor/galera_mon.c"
+            ex="false"
+            tool="0"
+            flavor2="2">
+      </item>
+      <item path="server/modules/monitor/mm_mon.c" ex="false" tool="0" flavor2="2">
+      </item>
+      <item path="server/modules/monitor/mysql_mon.c" ex="false" tool="0" flavor2="2">
+      </item>
+      <item path="server/modules/monitor/ndbcluster_mon.c"
+            ex="false"
+            tool="0"
+            flavor2="2">
+      </item>
+      <item path="server/modules/protocol/httpd.c" ex="false" tool="0" flavor2="2">
+      </item>
+      <item path="server/modules/protocol/maxscaled.c"
+            ex="false"
+            tool="0"
+            flavor2="2">
+      </item>
+      <item path="server/modules/protocol/mysql_backend.c"
+            ex="false"
+            tool="0"
+            flavor2="2">
+      </item>
+      <item path="server/modules/protocol/mysql_client.c"
+            ex="false"
+            tool="0"
+            flavor2="2">
+      </item>
+      <item path="server/modules/protocol/mysql_common.c"
+            ex="false"
+            tool="0"
+            flavor2="2">
+      </item>
+      <item path="server/modules/protocol/telnetd.c" ex="false" tool="0" flavor2="2">
+      </item>
+      <item path="server/modules/routing/GaleraHACRoute.c"
+            ex="false"
+            tool="0"
+            flavor2="2">
+      </item>
+      <item path="server/modules/routing/binlog/blr.c"
+            ex="false"
+            tool="0"
+            flavor2="2">
+      </item>
+      <item path="server/modules/routing/binlog/blr_cache.c"
+            ex="false"
+            tool="0"
+            flavor2="2">
+      </item>
+      <item path="server/modules/routing/binlog/blr_file.c"
+            ex="false"
+            tool="0"
+            flavor2="2">
+      </item>
+      <item path="server/modules/routing/binlog/blr_master.c"
+            ex="false"
+            tool="0"
+            flavor2="2">
+      </item>
+      <item path="server/modules/routing/binlog/blr_slave.c"
+            ex="false"
+            tool="0"
+            flavor2="2">
+      </item>
+      <item path="server/modules/routing/cli.c" ex="false" tool="0" flavor2="2">
+      </item>
+      <item path="server/modules/routing/debugcli.c" ex="false" tool="0" flavor2="2">
+      </item>
+      <item path="server/modules/routing/debugcmd.c" ex="false" tool="0" flavor2="2">
+      </item>
+      <item path="server/modules/routing/readconnroute.c"
+            ex="false"
+            tool="0"
+            flavor2="2">
+      </item>
+      <item path="server/modules/routing/readwritesplit/readwritesplit.c"
+            ex="false"
+            tool="0"
+            flavor2="2">
+      </item>
+      <item path="server/modules/routing/readwritesplit/test/rwsplit.sh"
+            ex="false"
+            tool="0"
+            flavor2="2">
+      </item>
+      <item path="server/modules/routing/readwritesplit/test/test_hints/rwsplit_hints.sh"
+            ex="false"
+            tool="0"
+            flavor2="2">
+      </item>
+      <item path="server/modules/routing/readwritesplit/test/test_hints/syntax_check.sh"
+            ex="false"
+            tool="0"
+            flavor2="2">
+      </item>
+      <item path="server/modules/routing/test/testconnect.c"
+            ex="false"
+            tool="0"
+            flavor2="2">
+      </item>
+      <item path="server/modules/routing/testroute.c" ex="false" tool="0" flavor2="2">
+      </item>
+      <item path="server/modules/routing/webserver.c" ex="false" tool="0" flavor2="2">
+      </item>
+      <item path="table_replication_consistency/table_replication_consistency.cpp"
+            ex="false"
+            tool="1"
+            flavor2="4">
+      </item>
+      <item path="table_replication_consistency/table_replication_listener.cpp"
+            ex="false"
+            tool="1"
+            flavor2="4">
+      </item>
+      <item path="table_replication_consistency/table_replication_metadata.cpp"
+            ex="false"
+            tool="1"
+            flavor2="4">
+      </item>
+      <item path="table_replication_consistency/table_replication_parser.cpp"
+            ex="false"
+            tool="1"
+            flavor2="4">
+      </item>
+      <item path="table_replication_consistency/test/Example.c"
+            ex="false"
+            tool="0"
+            flavor2="2">
+      </item>
+      <item path="table_replication_consistency/test/test.cpp"
+            ex="false"
+            tool="1"
+            flavor2="4">
+      </item>
+      <item path="unpack_rpm.sh" ex="false" tool="0" flavor2="2">
+      </item>
+      <item path="utils/skygw_utils.cc" ex="false" tool="1" flavor2="4">
+      </item>
+    </conf>
+  </confs>
+</configurationDescriptor>

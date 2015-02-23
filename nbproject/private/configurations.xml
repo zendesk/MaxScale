@@ -1,0 +1,397 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configurationDescriptor version="95">
+  <logicalFolder name="root" displayName="root" projectFiles="true" kind="ROOT">
+    <df root="." name="0">
+      <df name="client">
+        <df name="test">
+          <in>maxadmin_stress.sh</in>
+          <in>maxadmin_test.sh</in>
+        </df>
+        <in>maxadmin.c</in>
+      </df>
+      <df name="cmake">
+      </df>
+      <df name="Documentation">
+        <df name="About">
+          <in>About-MaxScale.md</in>
+        </df>
+        <df name="Design-Documents">
+          <df name="assets">
+            <df name="css">
+            </df>
+            <df name="icons">
+            </df>
+            <df name="img">
+            </df>
+            <df name="js">
+            </df>
+          </df>
+          <df name="Presentations">
+          </df>
+        </df>
+        <df name="filters">
+        </df>
+        <df name="Getting-Started">
+          <df name="images">
+          </df>
+        </df>
+        <df name="Reference">
+          <df name="images">
+          </df>
+        </df>
+        <df name="Release-Notes">
+        </df>
+        <df name="Tutorials">
+        </df>
+      </df>
+      <df name="etc">
+        <df name="init.d">
+        </df>
+        <df name="ubuntu">
+          <df name="init.d">
+          </df>
+        </df>
+      </df>
+      <df name="log_manager">
+        <df name="test">
+          <in>logorder.sh</in>
+          <in>testlog.c</in>
+          <in>testorder.c</in>
+        </df>
+        <in>log_manager.cc</in>
+        <in>log_manager.h</in>
+      </df>
+      <df name="query_classifier">
+        <df name="test">
+          <df name="canonical_tests">
+            <in>canonizer.c</in>
+            <in>canontest.sh</in>
+          </df>
+          <in>classify.c</in>
+          <in>testmain.c</in>
+        </df>
+        <in>query_classifier.cc</in>
+        <in>query_classifier.h</in>
+      </df>
+      <df name="rabbitmq_consumer">
+        <df name="inih">
+          <df name="cpp">
+            <in>INIReader.cpp</in>
+            <in>INIReader.h</in>
+            <in>INIReaderTest.cpp</in>
+          </df>
+          <df name="examples">
+            <in>config.def</in>
+            <in>ini_dump.c</in>
+            <in>ini_example.c</in>
+            <in>ini_xmacros.c</in>
+          </df>
+          <df name="tests">
+            <in>unittest.c</in>
+          </df>
+          <in>ini.c</in>
+          <in>ini.h</in>
+        </df>
+        <in>consumer.c</in>
+      </df>
+      <df name="replication_listener">
+        <df name="tests">
+          <in>event_dump.cpp</in>
+        </df>
+        <in>access_method_factory.cpp</in>
+        <in>access_method_factory.h</in>
+        <in>basic_content_handler.cpp</in>
+        <in>basic_content_handler.h</in>
+        <in>basic_transaction_parser.h</in>
+        <in>binary_log.cpp</in>
+        <in>binlog_api.h</in>
+        <in>binlog_driver.cpp</in>
+        <in>binlog_driver.h</in>
+        <in>binlog_event.cpp</in>
+        <in>binlog_event.h</in>
+        <in>bounded_buffer.h</in>
+        <in>field_iterator.h</in>
+        <in>gtid.cpp</in>
+        <in>gtid.h</in>
+        <in>listener_exception.h</in>
+        <in>protocol.cpp</in>
+        <in>protocol.h</in>
+        <in>resultset_iterator.cpp</in>
+        <in>resultset_iterator.h</in>
+        <in>row_of_fields.cpp</in>
+        <in>row_of_fields.h</in>
+        <in>rowset.h</in>
+        <in>tcp_driver.cpp</in>
+        <in>tcp_driver.h</in>
+        <in>value.cpp</in>
+        <in>value.h</in>
+      </df>
+      <df name="script">
+        <in>make-binary-tarball.sh</in>
+        <in>make-source-tarball.sh</in>
+      </df>
+      <df name="server">
+        <df name="core">
+          <df name="test">
+            <in>runtest.sh</in>
+            <in>test_mysql_users.c</in>
+            <in>testadminusers.c</in>
+            <in>testbuffer.c</in>
+            <in>testdcb.c</in>
+            <in>testfilter.c</in>
+            <in>testgwbitmask.c</in>
+            <in>testhash.c</in>
+            <in>testhint.c</in>
+            <in>testmemlog.c</in>
+            <in>testmodutil.c</in>
+            <in>testpoll.c</in>
+            <in>testserver.c</in>
+            <in>testservice.c</in>
+            <in>testsession.c</in>
+            <in>testspinlock.c</in>
+            <in>testusers.c</in>
+          </df>
+          <in>adminusers.c</in>
+          <in>atomic.c</in>
+          <in>buffer.c</in>
+          <in>config.c</in>
+          <in>dbusers.c</in>
+          <in>dcb.c</in>
+          <in>filter.c</in>
+          <in>gateway.c</in>
+          <in>gw_utils.c</in>
+          <in>gwbitmask.c</in>
+          <in>hashtable.c</in>
+          <in>hint.c</in>
+          <in>housekeeper.c</in>
+          <in>load_utils.c</in>
+          <in>maxkeys.c</in>
+          <in>maxpasswd.c</in>
+          <in>memlog.c</in>
+          <in>modutil.c</in>
+          <in>monitor.c</in>
+          <in>poll.c</in>
+          <in>secrets.c</in>
+          <in>server.c</in>
+          <in>service.c</in>
+          <in>session.c</in>
+          <in>spinlock.c</in>
+          <in>thread.c</in>
+          <in>users.c</in>
+          <in>utils.c</in>
+        </df>
+        <df name="include">
+          <in>adminusers.h</in>
+          <in>atomic.h</in>
+          <in>buffer.h</in>
+          <in>config.h</in>
+          <in>dbusers.h</in>
+          <in>dcb.h</in>
+          <in>filter.h</in>
+          <in>gw.h</in>
+          <in>gwbitmask.h</in>
+          <in>hashtable.h</in>
+          <in>hint.h</in>
+          <in>housekeeper.h</in>
+          <in>maxscale.h</in>
+          <in>memlog.h</in>
+          <in>modinfo.h</in>
+          <in>modules.h</in>
+          <in>modutil.h</in>
+          <in>monitor.h</in>
+          <in>poll.h</in>
+          <in>rdtsc.h</in>
+          <in>router.h</in>
+          <in>secrets.h</in>
+          <in>server.h</in>
+          <in>service.h</in>
+          <in>session.h</in>
+          <in>spinlock.h</in>
+          <in>thread.h</in>
+          <in>users.h</in>
+        </df>
+        <df name="inih">
+          <df name="cpp">
+            <in>INIReader.cpp</in>
+            <in>INIReader.h</in>
+            <in>INIReaderTest.cpp</in>
+          </df>
+          <df name="examples">
+            <in>config.def</in>
+            <in>ini_dump.c</in>
+            <in>ini_example.c</in>
+            <in>ini_xmacros.c</in>
+          </df>
+          <df name="tests">
+            <in>unittest.c</in>
+          </df>
+          <in>ini.c</in>
+          <in>ini.h</in>
+        </df>
+        <df name="modules">
+          <df name="filter">
+            <df name="hint">
+              <in>hintfilter.c</in>
+              <in>hintparser.c</in>
+            </df>
+            <df name="test">
+              <df name="fwfilter">
+              </df>
+              <df name="hintfilter">
+                <in>hint_tests.sh</in>
+              </df>
+              <df name="regexfilter">
+              </df>
+              <in>harness.h</in>
+              <in>harness_common.c</in>
+              <in>harness_ui.c</in>
+              <in>harness_util.c</in>
+              <in>tee_recursion.sh</in>
+              <in>testdriver.sh</in>
+            </df>
+            <in>fwfilter.c</in>
+            <in>mqfilter.c</in>
+            <in>namedserverfilter.c</in>
+            <in>qlafilter.c</in>
+            <in>regexfilter.c</in>
+            <in>tee.c</in>
+            <in>testfilter.c</in>
+            <in>topfilter.c</in>
+          </df>
+          <df name="include">
+            <in>blr.h</in>
+            <in>debugcli.h</in>
+            <in>httpd.h</in>
+            <in>maxscaled.h</in>
+            <in>mysql_client_server_protocol.h</in>
+            <in>mysqlhint.h</in>
+            <in>readconnection.h</in>
+            <in>readwritesplit.h</in>
+            <in>telnetd.h</in>
+          </df>
+          <df name="monitor">
+            <in>galera_mon.c</in>
+            <in>mm_mon.c</in>
+            <in>mysql_mon.c</in>
+            <in>mysqlmon.h</in>
+            <in>ndbcluster_mon.c</in>
+          </df>
+          <df name="protocol">
+            <in>httpd.c</in>
+            <in>maxscaled.c</in>
+            <in>mysql_backend.c</in>
+            <in>mysql_client.c</in>
+            <in>mysql_common.c</in>
+            <in>telnetd.c</in>
+          </df>
+          <df name="routing">
+            <df name="binlog">
+              <in>blr.c</in>
+              <in>blr_cache.c</in>
+              <in>blr_file.c</in>
+              <in>blr_master.c</in>
+              <in>blr_slave.c</in>
+            </df>
+            <df name="readwritesplit">
+              <df name="test">
+                <df name="test_hints">
+                  <in>rwsplit_hints.sh</in>
+                  <in>syntax_check.sh</in>
+                </df>
+                <in>rwsplit.sh</in>
+              </df>
+              <in>readwritesplit.c</in>
+            </df>
+            <df name="test">
+              <in>testconnect.c</in>
+            </df>
+            <in>GaleraHACRoute.c</in>
+            <in>cli.c</in>
+            <in>debugcli.c</in>
+            <in>debugcmd.c</in>
+            <in>readconnroute.c</in>
+            <in>testroute.c</in>
+            <in>webserver.c</in>
+          </df>
+        </df>
+        <df name="test">
+        </df>
+      </df>
+      <df name="support">
+        <df name="guide">
+        </df>
+        <df name="reference">
+        </df>
+      </df>
+      <df name="table_replication_consistency">
+        <df name="test">
+          <in>Example.c</in>
+          <in>test.cpp</in>
+        </df>
+        <in>table_replication_consistency.cpp</in>
+        <in>table_replication_consistency.h</in>
+        <in>table_replication_listener.cpp</in>
+        <in>table_replication_listener.h</in>
+        <in>table_replication_metadata.cpp</in>
+        <in>table_replication_metadata.h</in>
+        <in>table_replication_parser.cpp</in>
+        <in>table_replication_parser.h</in>
+      </df>
+      <df name="utils">
+        <in>skygw_debug.h</in>
+        <in>skygw_types.h</in>
+        <in>skygw_utils.cc</in>
+        <in>skygw_utils.h</in>
+      </df>
+      <in>unpack_rpm.sh</in>
+    </df>
+  </logicalFolder>
+  <projectmakefile>Makefile</projectmakefile>
+  <confs>
+    <conf name="Default" type="0">
+      <toolsSet>
+        <developmentServer>localhost</developmentServer>
+        <platform>2</platform>
+      </toolsSet>
+      <compile>
+        <compiledirpicklist>
+          <compiledirpicklistitem>.</compiledirpicklistitem>
+          <compiledirpicklistitem>${AUTO_FOLDER}</compiledirpicklistitem>
+        </compiledirpicklist>
+        <compiledir>${AUTO_FOLDER}</compiledir>
+        <compilecommandpicklist>
+          <compilecommandpicklistitem>${MAKE} ${ITEM_NAME}.o</compilecommandpicklistitem>
+          <compilecommandpicklistitem>${AUTO_COMPILE}</compilecommandpicklistitem>
+        </compilecommandpicklist>
+        <compilecommand>${AUTO_COMPILE}</compilecommand>
+      </compile>
+      <dbx_gdbdebugger version="1">
+        <gdb_pathmaps>
+        </gdb_pathmaps>
+        <gdb_interceptlist>
+          <gdbinterceptoptions gdb_all="false" gdb_unhandled="true" gdb_unexpected="true"/>
+        </gdb_interceptlist>
+        <gdb_options>
+          <DebugOptions>
+          </DebugOptions>
+        </gdb_options>
+        <gdb_buildfirst gdb_buildfirst_overriden="false" gdb_buildfirst_old="false"/>
+      </dbx_gdbdebugger>
+      <nativedebugger version="1">
+        <engine>gdb</engine>
+      </nativedebugger>
+      <runprofile version="9">
+        <runcommandpicklist>
+          <runcommandpicklistitem>"${OUTPUT_PATH}"</runcommandpicklistitem>
+        </runcommandpicklist>
+        <runcommand>"${OUTPUT_PATH}"</runcommand>
+        <rundir>.</rundir>
+        <buildfirst>false</buildfirst>
+        <terminal-type>0</terminal-type>
+        <remove-instrumentation>0</remove-instrumentation>
+        <environment>
+        </environment>
+      </runprofile>
+    </conf>
+  </confs>
+</configurationDescriptor>

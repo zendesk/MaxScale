@@ -2534,6 +2534,7 @@ static void clientReply (
         DCB*               client_dcb;
         ROUTER_CLIENT_SES* router_cli_ses;
         backend_ref_t*     bref;
+	GWBUF* buffer = writebuf;
         SCMDCURSOR* cursor;
 	router_cli_ses = (ROUTER_CLIENT_SES *)router_session;
         CHK_CLIENT_RSES(router_cli_ses);
@@ -2544,7 +2545,7 @@ static void clientReply (
          */
         if (!rses_begin_locked_router_action(router_cli_ses))
         {
-                print_error_packet(router_cli_ses, writebuf, backend_dcb);
+                print_error_packet(router_cli_ses, buffer, backend_dcb);
                 goto lock_failed;
 	}
         /** Holding lock ensures that router session remains open */
@@ -2556,9 +2557,9 @@ static void clientReply (
 	
 	if (client_dcb == NULL)
 	{
-                while ((writebuf = gwbuf_consume(
-                        writebuf, 
-                        GWBUF_LENGTH(writebuf))) != NULL);
+                while ((buffer = gwbuf_consume(
+                        buffer,
+                        GWBUF_LENGTH(buffer))) != NULL);
 		/** Log that client was closed before reply */
                 goto lock_failed;
 	}
@@ -2580,17 +2581,22 @@ static void clientReply (
 	
         CHK_BACKEND_REF(bref);
         
-	if (GWBUF_IS_TYPE_SESCMD_RESPONSE(writebuf))
+	if (GWBUF_IS_TYPE_SESCMD_RESPONSE(buffer))
 	{
                 
 	    /** 
-	     * 	 * Discard all those responses that have already been sent to
-	     * 	 * the client. Return with buffer including response that
-	     * 	 * needs to be sent to client or NULL.
-	     * 	 */
+	     * Discard all those responses that have already been sent to
+	     * the client. 
+	     */
 	    GWBUF* ncmd;
-	    writebuf = sescmd_process_replies(router_cli_ses->rses_sescmd_list, backend_dcb, writebuf);
-	    if(sescmd_has_next(router_cli_ses->rses_sescmd_list, backend_dcb))
+	    bool success = sescmd_process_replies(router_cli_ses->rses_sescmd_list, backend_dcb, &buffer);
+
+	    if(!success)
+	    {
+		bref_clear_state(bref,BREF_IN_USE);
+		bref_set_state(bref,BREF_CLOSED);
+	    }
+	    else if(sescmd_has_next(router_cli_ses->rses_sescmd_list, backend_dcb))
 	    {
 		ncmd = sescmd_get_next(router_cli_ses->rses_sescmd_list, backend_dcb);
 		sescmd_execute_in_backend(backend_dcb, ncmd);
@@ -2600,7 +2606,7 @@ static void clientReply (
 	     * This applies to session commands only. Counter decrement
 	     * for other type of queries is done outside this block.
 	     */
-	    if (writebuf != NULL && client_dcb != NULL)
+	    if (buffer != NULL && client_dcb != NULL)
 	    {
 		/** Set response status as replied */
 		bref_clear_state(bref, BREF_WAITING_RESULT);
@@ -2618,10 +2624,10 @@ static void clientReply (
                 bref_clear_state(bref, BREF_WAITING_RESULT);
         }
 
-        if (writebuf != NULL && client_dcb != NULL)
+        if (buffer != NULL && client_dcb != NULL)
         {
                 /** Write reply to client DCB */
-		SESSION_ROUTE_REPLY(backend_dcb->session, writebuf);
+		SESSION_ROUTE_REPLY(backend_dcb->session, buffer);
         }
         /** Unlock router session */
         rses_end_locked_router_action(router_cli_ses);

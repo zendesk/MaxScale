@@ -39,6 +39,10 @@
 #include <dcb.h>
 #include <server.h>
 #include <mysql_client_server_protocol.h>
+#include <openssl/sha.h>
+
+#define PEARSON_DIGEST_LEN 16
+
 /** 
  * Minimum number of backend servers that must respond. If less than this value
  * of backend servers respond, it is considered a failure and the session should
@@ -64,7 +68,8 @@ typedef enum
   SRES_LAST,
   SRES_LAST_GOOD, /*< To be implemented */
   SRES_TIMEOUT, /*< To be implemented */
-  SRES_MIN
+  SRES_MIN,
+  SRES_DCB /*< When a specific DCB replies */
 } sescmd_rsp;
 
 /** 
@@ -84,43 +89,62 @@ typedef struct semantics_t
   { 
      sescmd_rspnum must_reply; /*< How many must reply */
      sescmd_rsp reply_on; /*< when to send the reply to the client */
-     sescmd_rsperr on_error; /*< What to do when an error occurse */
+     sescmd_rsperr on_error; /*< What to do when an error occurs */
      int min_nreplies; /*< Minimum number of replies that must be received 
                         * before the reply is sent to the client*/
      int timeout; /*<  Backends replying later than this are considere as failed.
                    * Using a non-positive value disables timeouts */
+     DCB* master_dcb; /*< The "Master" DCB which is the source with the right
+                       * responses, NULL for disabled  */
   }SEMANTICS;
+
+/** What to do when the maximum length list of the has been exceeded */
+typedef enum
+{
+  DROP_LAST,
+  DROP_FIRST
+} mlen_err_t;
+
+/** List properties */
+typedef union list_prop_st{
+    int max_len; /*< The maximum length of the list, */
+    mlen_err_t on_mlen_err; /*< The action taken when maximum length is exceeded */
+}list_prop_t;
 
 struct sescmd_list_st;
 
 typedef struct mysql_sescmd_st
 {
-  GWBUF* buffer; /*< query buffer */
+  GWBUF* buffer; /*< Stored query */
   unsigned char packet_type; /*< packet type */
-  bool reply_sent; /*< is cmd replied to client */
-  int n_replied; /*< number of replies received */
+  bool reply_sent; /*< If the command been sent to the client */
+  int n_replied; /*< Number of replies received */
   SPINLOCK lock;
-  struct mysql_sescmd_st* next;
+  struct mysql_sescmd_st* next; /*< The session command that was executed
+                                 * after this one */ 
+  unsigned char reply_type; /*< Replied packet type */
+
 } SCMD;
 
 typedef struct sescmd_cursor_st
 {
-  struct sescmd_list_st* scmd_list; /*< pointer to owner property */
-  SCMD* scmd_cur_cmd; /*< pointer to current session command */
-  DCB* backend_dcb;
-  bool replied_to;
-  bool scmd_cur_active; /*< true if command is being executed */
+  struct sescmd_list_st* scmd_list; /*< Pointer to owning list */
+  SCMD* scmd_cur_cmd; /*< Pointer to current session command */
+  DCB* backend_dcb; /*< The backend DCB this cursor is associated with */
+  bool replied_to; /* Has the backend DCB received a response */
+  bool scmd_cur_active; /*< True if command is being executed */
   struct sescmd_cursor_st *next; /*< Next cursor */
-  SPINLOCK lock;
+  SPINLOCK lock; /*< Cursor spinlock */
 } SCMDCURSOR;
 
 typedef struct sescmd_list_st
 {
-  SCMD *first; /*< First session command*/
+  SCMD *first; /*< First session command */
   SCMD *last; /*< Latest session command */
   SCMDCURSOR* cursors; /*< List of cursors for this list */
   int n_cursors; /*< Number of session command cursors */
-  SEMANTICS semantics;
+  SEMANTICS semantics; /*< The way the session command list behaves */
+  list_prop_t properties; /*< Properties of the list */
   SPINLOCK lock;
 } SCMDLIST;
 
@@ -133,7 +157,7 @@ bool sescmd_execute_in_backend(DCB* backend_dcb,GWBUF* buffer);
 bool sescmd_is_active(SCMDLIST* list, DCB* dcb);
 bool sescmd_has_next(SCMDLIST* list, DCB* dcb);
 GWBUF* sescmd_get_next(SCMDLIST* list, DCB* dcb);
-GWBUF* sescmd_process_replies(SCMDLIST* list, DCB* dcb, GWBUF* response);
+bool sescmd_process_replies(SCMDLIST* list, DCB* dcb, GWBUF** response);
 bool sescmd_handle_failure(SCMDLIST* list, DCB* dcb);
 #endif	/* SESCMD_H */
 

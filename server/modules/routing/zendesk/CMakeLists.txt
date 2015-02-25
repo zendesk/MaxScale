@@ -1,0 +1,6 @@
+add_library(zendesk SHARED zendesk.c)
+target_link_libraries(zendesk ssl pthread log_manager utils query_classifier)
+install(TARGETS zendesk DESTINATION modules)
+if(BUILD_TESTS)
+add_subdirectory(test)
+endif()

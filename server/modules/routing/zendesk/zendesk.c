@@ -3879,13 +3879,39 @@ static bool execute_sescmd_in_backend(
 			unsigned int qlen;
 
 			data = dcb->session->data;
-			tmpbuf = scur->scmd_cur_cmd->my_sescmd_buf;
-			strcpy(tmpbuf->start + 5, "mysql");
-			qlen = MYSQL_GET_PACKET_LEN((unsigned char*)tmpbuf->start);
 			memset(data->db,0,MYSQL_DATABASE_MAXLEN+1);
 
-			if(qlen > 0 && qlen < MYSQL_DATABASE_MAXLEN+1)
-				strncpy(data->db,tmpbuf->start+5,qlen - 1);
+			tmpbuf = scur->scmd_cur_cmd->my_sescmd_buf;
+			qlen = MYSQL_GET_PACKET_LEN((unsigned char*)tmpbuf->start);
+
+			if(qlen > 0 && qlen < MYSQL_DATABASE_MAXLEN+1) {
+                                char *database_name = tmpbuf->start + 5;
+
+                                if(strncmp("account_", database_name, 8) == 0) {
+                                        // grab the id of the account
+                                        int newlen = qlen - 8;
+                                        char account_database[newlen];
+                                        strcpy((char *) &account_database, database_name + 8);
+
+                                        // XXX: modutil_replace_SQL checks explicitly for COM_QUERY
+                                        // but just generically replaces the GWBUF data
+                                        ((char *) tmpbuf->start)[4] = MYSQL_COM_QUERY;
+
+                                        tmpbuf = modutil_replace_SQL(tmpbuf, account_database);
+                                        scur->scmd_cur_cmd->my_sescmd_buf = gwbuf_make_contiguous(tmpbuf);
+
+                                        ((char *) scur->scmd_cur_cmd->my_sescmd_buf->start)[4] = MYSQL_COM_INIT_DB;
+
+                                        // If the tmpbuf is already contiguous, gwbuf_make_contiguous
+                                        // returns the original pointer. Otherwise it returns a newly allocated one.
+                                        if(scur->scmd_cur_cmd->my_sescmd_buf != tmpbuf)
+                                                gwbuf_free(tmpbuf);
+
+                                        strncpy(data->db, (char *) &account_database, newlen - 1);
+                                } else { // keep the database, the user requested
+                                        strncpy(data->db, tmpbuf->start+5, qlen - 1);
+                                }
+                        }
 		}
 		/** Fallthrough */
 		case MYSQL_COM_QUERY:

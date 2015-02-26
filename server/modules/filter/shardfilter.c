@@ -48,11 +48,13 @@ static FILTER_OBJECT MyObject = {
 
 typedef struct {
         int sessions;
+        SERVICE **downstreams;
 } ZENDESK_INSTANCE;
 
 typedef struct {
-        DOWNSTREAM shard_server;
+
         SESSION *rses;
+        int shard_id;
 } ZENDESK_SESSION;
 
 int accountMap[][2] = {
@@ -91,17 +93,32 @@ FILTER_OBJECT *GetModuleObject() {
 /**
  * Create an instance of the filter for a particular service
  * within MaxScale.
- * 
+ *
  * @param options	The options for this filter
  * @param params	The array of name/value pair parameters for the filter
  *
  * @return The instance data for this new instance
  */
 static FILTER *createInstance(char **options, FILTER_PARAMETER **params) {
-        ZENDESK_INSTANCE *my_instance;
+  ZENDESK_INSTANCE *my_instance;
 
+  SERVICE *service;
+  char *service_name, *service_param;
+  int i, nservices = 0;
 	if ((my_instance = calloc(1, sizeof(ZENDESK_INSTANCE))) != NULL)
 		my_instance->sessions = 0;
+
+  for(i=0; params[i]; i++) {
+    if ( !strcasecmp(params[i]->name, "shard_services") ) {
+      service_param = strdup(params[i]->value);
+      while ( (service_name = strsep(&service_param, ",")) != NULL ) {
+        service = service_find(service_name);
+        my_instance->downstreams = realloc(my_instance->downstreams, sizeof(SERVICE *) * (nservices + 2));
+        my_instance->downstreams[nservices++] = service;
+      }
+      free(service_param);
+    }
+  }
 
 	return (FILTER *) my_instance;
 }
@@ -121,6 +138,9 @@ static void *newSession(FILTER *instance, SESSION *session) {
                 my_instance->sessions++;
                 my_session->rses = session;
 	}
+
+
+
 
 	return my_session;
 }
@@ -158,6 +178,12 @@ static void setDownstream(FILTER *instance, void *session, DOWNSTREAM *downstrea
 	my_session->shard_server = *downstream;
 }
 
+
+static SERVICE *serviceForShard(int shard_id)
+{
+
+}
+
 /**
  * The routeQuery entry point. This is passed the query buffer
  * to which the filter should be applied. Once applied the
@@ -169,7 +195,11 @@ static void setDownstream(FILTER *instance, void *session, DOWNSTREAM *downstrea
  * @param queue		The query data
  */
 static int routeQuery(FILTER *instance, void *session, GWBUF *queue) {
+        ZENDESK_INSTANCE *zd_instance = (ZENDESK_INSTANCE *)instance;
         ZENDESK_SESSION *my_session = (ZENDESK_SESSION *) session;
+
+
+        void *router_session = zd_instance->downstreams[0]->router->newSession(zd_instance->downstreams[0]->router_instance, my_session->rses);
 
         if(((char *) queue->start)[4] == MYSQL_COM_INIT_DB) {
                 unsigned int qlen = MYSQL_GET_PACKET_LEN((unsigned char *) queue->start);
@@ -189,6 +219,9 @@ static int routeQuery(FILTER *instance, void *session, GWBUF *queue) {
 
                                                 char shard_database_id[255];
                                                 snprintf((char *) &shard_database_id, 255, "shard_%d", shard_id);
+
+                                                // find downstream
+                                                //
 
                                                 // XXX: modutil_replace_SQL checks explicitly for COM_QUERY
                                                 // but just generically replaces the GWBUF data
@@ -211,7 +244,7 @@ static int routeQuery(FILTER *instance, void *session, GWBUF *queue) {
                 }
         }
 
-        return my_session->shard_server.routeQuery(my_session->shard_server.instance, my_session->shard_server.session, queue);
+        return zd_instance->downstreams[0]->router->routeQuery(zd_instance->downstreams[0]->router_instance, router_session, queue);
 }
 
 /**

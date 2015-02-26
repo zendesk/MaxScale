@@ -3890,27 +3890,41 @@ static bool execute_sescmd_in_backend(
                                 if(strncmp("account_", database_name, 8) == 0) {
                                         // grab the id of the account
                                         int newlen = qlen - 8;
-                                        char account_database[newlen];
-                                        strcpy((char *) &account_database, database_name + 8);
+                                        char account_database_id[newlen];
+                                        strcpy((char *) &account_database_id, database_name + 8);
 
-                                        // XXX: modutil_replace_SQL checks explicitly for COM_QUERY
-                                        // but just generically replaces the GWBUF data
-                                        ((char *) tmpbuf->start)[4] = MYSQL_COM_QUERY;
+                                        int account_id = strtol((char *) &account_database_id, NULL, 0);
 
-                                        tmpbuf = modutil_replace_SQL(tmpbuf, account_database);
-                                        scur->scmd_cur_cmd->my_sescmd_buf = gwbuf_make_contiguous(tmpbuf);
+                                        if(account_id) {
+                                                int *map = accountMap[account_id];
 
-                                        ((char *) scur->scmd_cur_cmd->my_sescmd_buf->start)[4] = MYSQL_COM_INIT_DB;
+                                                if(map) {
+                                                        int shard_id = map[0];
 
-                                        // If the tmpbuf is already contiguous, gwbuf_make_contiguous
-                                        // returns the original pointer. Otherwise it returns a newly allocated one.
-                                        if(scur->scmd_cur_cmd->my_sescmd_buf != tmpbuf)
-                                                gwbuf_free(tmpbuf);
+                                                        char shard_database_id[255];
+                                                        snprintf((char *) &shard_database_id, 255, "shard_%d", shard_id);
 
-                                        strncpy(data->db, (char *) &account_database, newlen - 1);
-                                } else { // keep the database, the user requested
-                                        strncpy(data->db, tmpbuf->start+5, qlen - 1);
+                                                        // XXX: modutil_replace_SQL checks explicitly for COM_QUERY
+                                                        // but just generically replaces the GWBUF data
+                                                        ((char *) tmpbuf->start)[4] = MYSQL_COM_QUERY;
+
+                                                        tmpbuf = modutil_replace_SQL(tmpbuf, shard_database_id);
+                                                        scur->scmd_cur_cmd->my_sescmd_buf = gwbuf_make_contiguous(tmpbuf);
+
+                                                        ((char *) scur->scmd_cur_cmd->my_sescmd_buf->start)[4] = MYSQL_COM_INIT_DB;
+
+                                                        // If the tmpbuf is already contiguous, gwbuf_make_contiguous
+                                                        // returns the original pointer. Otherwise it returns a newly allocated one.
+                                                        if(scur->scmd_cur_cmd->my_sescmd_buf != tmpbuf)
+                                                                gwbuf_free(tmpbuf);
+
+                                                        tmpbuf = scur->scmd_cur_cmd->my_sescmd_buf;
+                                                        qlen = newlen;
+                                                }
+                                        }
                                 }
+
+                                strncpy(data->db, tmpbuf->start+5, qlen - 1);
                         }
 		}
 		/** Fallthrough */

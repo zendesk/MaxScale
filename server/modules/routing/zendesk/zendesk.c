@@ -2938,7 +2938,7 @@ static bool select_connect_backend_servers(
         int                router_nservers,
         int                max_nslaves,
         int                max_slave_rlag,
-	int		   target_shard_id,
+//	int		   target_shard_id,
         select_criteria_t  select_criteria,
         SESSION*           session,
         ROUTER_INSTANCE*   router)

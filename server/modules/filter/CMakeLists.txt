@@ -24,6 +24,10 @@ add_library(topfilter SHARED topfilter.c)
 target_link_libraries(topfilter log_manager utils)
 install(TARGETS topfilter DESTINATION modules)
 
+add_library(shardfilter SHARED shardfilter.c)
+target_link_libraries(shardfilter log_manager utils)
+install(TARGETS shardfilter DESTINATION modules)
+
 add_subdirectory(hint)
 
 if(BUILD_TESTS)

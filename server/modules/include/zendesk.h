@@ -64,8 +64,8 @@ typedef enum bref_state {
 #define BREF_IS_CLOSED(s)           ((s)->bref_state & BREF_CLOSED)
 
 typedef enum backend_type_t {
-        BE_UNDEFINED=-1, 
-        BE_MASTER, 
+        BE_UNDEFINED=-1,
+        BE_MASTER,
         BE_JOINED = BE_MASTER,
         BE_SLAVE,
         BE_COUNT
@@ -132,7 +132,7 @@ typedef enum select_criteria {
         LEAST_ROUTER_CONNECTIONS : (                                                            \
         strncmp(s,"LEAST_CURRENT_OPERATIONS", strlen("LEAST_CURRENT_OPERATIONS")) == 0 ?        \
         LEAST_CURRENT_OPERATIONS : UNDEFINED_CRITERIA))))
-        
+
 /**
  * Session variable command
  */
@@ -187,7 +187,7 @@ typedef struct sescmd_cursor_st {
  * Internal structure used to define the set of backend servers we are routing
  * connections to. This provides the storage for routing module specific data
  * that is required for each of the backend servers.
- * 
+ *
  * Owned by router_instance, referenced by each routing session.
  */
 typedef struct backend_st {
@@ -214,7 +214,7 @@ typedef struct backend_st {
 
 /**
  * Reference to BACKEND.
- * 
+ *
  * Owned by router client session.
  */
 typedef struct backend_ref_st {
@@ -238,9 +238,9 @@ typedef struct rwsplit_config_st {
         int               rw_max_slave_conn_count;
         select_criteria_t rw_slave_select_criteria;
         int               rw_max_slave_replication_lag;
-	target_t          rw_use_sql_variables_in;	
+	target_t          rw_use_sql_variables_in;
 } rwsplit_config_t;
-     
+
 
 #if defined(PREP_STMT_CACHING)
 
@@ -269,6 +269,7 @@ struct router_client_session {
         skygw_chk_t      rses_chk_top;
 #endif
         SPINLOCK         rses_lock;      /*< protects rses_deleted                 */
+	SESSION*         rses_prot_session;
         int              rses_versno;    /*< even = no active update, else odd. not used 4/14 */
         bool             rses_closed;    /*< true when closeSession is called      */
 	/** Properties listed by their type */
@@ -285,6 +286,8 @@ struct router_client_session {
 #endif
 	struct router_instance	 *router;	/*< The router instance */
         struct router_client_session* next;
+
+
 #if defined(SS_DEBUG)
         skygw_chk_t      rses_chk_tail;
 #endif
@@ -324,5 +327,5 @@ typedef struct router_instance {
 #define BACKEND_TYPE(b) (SERVER_IS_MASTER((b)->backend_server) ? BE_MASTER :    \
         (SERVER_IS_SLAVE((b)->backend_server) ? BE_SLAVE :  BE_UNDEFINED));
 
-    
+
 #endif /*< _RWSPLITROUTER_H */

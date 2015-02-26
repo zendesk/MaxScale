@@ -171,23 +171,11 @@ static void setDownstream(FILTER *instance, void *session, DOWNSTREAM *downstrea
 static int routeQuery(FILTER *instance, void *session, GWBUF *queue) {
         ZENDESK_SESSION *my_session = (ZENDESK_SESSION *) session;
 
-#if 0
-        if(MYSQL_GET_PACKET_NO(queue->data) == MYSQL_COM_INIT_DB) {
-                /**
-                 * Record database name and store to session.
-                 */
-                GWBUF* tmpbuf;
-                MYSQL_session* data;
-                unsigned int qlen;
+        if(((char *) queue->start)[4] == MYSQL_COM_INIT_DB) {
+                unsigned int qlen = MYSQL_GET_PACKET_LEN((unsigned char *) queue->start);
 
-                data = scur->data;
-                memset(data->db, 0, MYSQL_DATABASE_MAXLEN+1);
-
-                tmpbuf = scur->scmd_cur_cmd->my_sescmd_buf;
-                qlen = MYSQL_GET_PACKET_LEN((unsigned char*)tmpbuf->start);
-
-                if(qlen > 0 && qlen < MYSQL_DATABASE_MAXLEN+1) {
-                        char *database_name = tmpbuf->start + 5;
+                if(qlen > 0 && qlen < MYSQL_DATABASE_MAXLEN + 1) {
+                        char *database_name = queue->start + 5;
 
                         if(strncmp("account_", database_name, 8) == 0) {
                                 // grab the id of the account
@@ -204,28 +192,24 @@ static int routeQuery(FILTER *instance, void *session, GWBUF *queue) {
 
                                                 // XXX: modutil_replace_SQL checks explicitly for COM_QUERY
                                                 // but just generically replaces the GWBUF data
-                                                ((char *) tmpbuf->start)[4] = MYSQL_COM_QUERY;
+                                                ((char *) queue->start)[4] = MYSQL_COM_QUERY;
 
-                                                tmpbuf = modutil_replace_SQL(tmpbuf, shard_database_id);
-                                                scur->scmd_cur_cmd->my_sescmd_buf = gwbuf_make_contiguous(tmpbuf);
-
-                                                ((char *) scur->scmd_cur_cmd->my_sescmd_buf->start)[4] = MYSQL_COM_INIT_DB;
+                                                queue = modutil_replace_SQL(queue, shard_database_id);
+                                                GWBUF *tmpbuf = gwbuf_make_contiguous(queue);
 
                                                 // If the tmpbuf is already contiguous, gwbuf_make_contiguous
                                                 // returns the original pointer. Otherwise it returns a newly allocated one.
-                                                if(scur->scmd_cur_cmd->my_sescmd_buf != tmpbuf)
-                                                        gwbuf_free(tmpbuf);
+                                                if(queue != tmpbuf) {
+                                                        gwbuf_free(queue);
+                                                        queue = tmpbuf;
+                                                }
 
-                                                tmpbuf = scur->scmd_cur_cmd->my_sescmd_buf;
-                                                qlen = strlen(shard_database_id);
+                                                ((char *) queue->start)[4] = MYSQL_COM_INIT_DB;
                                         }
                                 }
                         }
-
-                        strncpy(data->db, tmpbuf->start+5, qlen - 1);
                 }
         }
-#endif
 
         return my_session->shard_server.routeQuery(my_session->shard_server.instance, my_session->shard_server.session, queue);
 }

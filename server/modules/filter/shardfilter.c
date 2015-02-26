@@ -54,6 +54,7 @@ typedef struct {
 typedef struct {
 
         SESSION *rses;
+        DOWNSTREAM shard_server;
         int shard_id;
 } ZENDESK_SESSION;
 
@@ -174,14 +175,14 @@ static void freeSession(FILTER *instance, void *session) {
  * @param downstream	The downstream filter or router
  */
 static void setDownstream(FILTER *instance, void *session, DOWNSTREAM *downstream) {
-        ZENDESK_SESSION *my_session = (ZENDESK_SESSION *) session;
-	my_session->shard_server = *downstream;
+        //ZENDESK_SESSION *my_session = (ZENDESK_SESSION *) session;
+	//my_session->shard_server = *downstream;
 }
 
 
-static SERVICE *serviceForShard(int shard_id)
+static SERVICE *serviceForShard(ZENDESK_INSTANCE *instance, int shard_id)
 {
-
+        return instance->downstreams[0];
 }
 
 /**
@@ -198,8 +199,15 @@ static int routeQuery(FILTER *instance, void *session, GWBUF *queue) {
         ZENDESK_INSTANCE *zd_instance = (ZENDESK_INSTANCE *)instance;
         ZENDESK_SESSION *my_session = (ZENDESK_SESSION *) session;
 
+        SERVICE *service = serviceForShard(zd_instance, 1);
+        ROUTER_OBJECT *router = service->router;
+        void *router_session = router->newSession(service->router_instance, my_session->rses);
 
-        void *router_session = zd_instance->downstreams[0]->router->newSession(zd_instance->downstreams[0]->router_instance, my_session->rses);
+        //todo free?
+
+        my_session->shard_server.instance = (void *) service->router_instance;
+        my_session->shard_server.session = router_session;
+        my_session->shard_server.routeQuery = router->routeQuery;
 
         if(((char *) queue->start)[4] == MYSQL_COM_INIT_DB) {
                 unsigned int qlen = MYSQL_GET_PACKET_LEN((unsigned char *) queue->start);
@@ -244,7 +252,7 @@ static int routeQuery(FILTER *instance, void *session, GWBUF *queue) {
                 }
         }
 
-        return zd_instance->downstreams[0]->router->routeQuery(zd_instance->downstreams[0]->router_instance, router_session, queue);
+        return my_session->shard_server.routeQuery(my_session->shard_server.instance, my_session->shard_server.session, queue);
 }
 
 /**

@@ -3889,13 +3889,9 @@ static bool execute_sescmd_in_backend(
 
                                 if(strncmp("account_", database_name, 8) == 0) {
                                         // grab the id of the account
-                                        int newlen = qlen - 8;
-                                        char account_database_id[newlen];
-                                        strcpy((char *) &account_database_id, database_name + 8);
+                                        int account_id = strtol(database_name + 8, NULL, 0);
 
-                                        int account_id = strtol((char *) &account_database_id, NULL, 0);
-
-                                        if(account_id) {
+                                        if(account_id > 0) {
                                                 int *map = accountMap[account_id];
 
                                                 if(map) {
@@ -3919,7 +3915,7 @@ static bool execute_sescmd_in_backend(
                                                                 gwbuf_free(tmpbuf);
 
                                                         tmpbuf = scur->scmd_cur_cmd->my_sescmd_buf;
-                                                        qlen = newlen;
+                                                        qlen = strlen(shard_database_id);
                                                 }
                                         }
                                 }

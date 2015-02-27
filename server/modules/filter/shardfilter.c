@@ -52,7 +52,6 @@ typedef struct {
 } ZENDESK_INSTANCE;
 
 typedef struct {
-
         SESSION *rses;
         DOWNSTREAM shard_server;
         int shard_id;
@@ -101,11 +100,12 @@ FILTER_OBJECT *GetModuleObject() {
  * @return The instance data for this new instance
  */
 static FILTER *createInstance(char **options, FILTER_PARAMETER **params) {
-  ZENDESK_INSTANCE *my_instance;
+        ZENDESK_INSTANCE *my_instance;
 
-  SERVICE *service;
-  char *service_name, *service_param;
-  int i, nservices = 0;
+        SERVICE *service;
+        char *service_name, *service_param;
+        int i, nservices = 0;
+
 	if ((my_instance = calloc(1, sizeof(ZENDESK_INSTANCE))) != NULL)
 		my_instance->sessions = 0;
 
@@ -120,6 +120,8 @@ static FILTER *createInstance(char **options, FILTER_PARAMETER **params) {
       free(service_param);
     }
   }
+
+        my_instance->downstreams[nservices] = NULL;
 
 	return (FILTER *) my_instance;
 }
@@ -139,9 +141,6 @@ static void *newSession(FILTER *instance, SESSION *session) {
                 my_instance->sessions++;
                 my_session->rses = session;
 	}
-
-
-
 
 	return my_session;
 }
@@ -175,14 +174,24 @@ static void freeSession(FILTER *instance, void *session) {
  * @param downstream	The downstream filter or router
  */
 static void setDownstream(FILTER *instance, void *session, DOWNSTREAM *downstream) {
-        //ZENDESK_SESSION *my_session = (ZENDESK_SESSION *) session;
-	//my_session->shard_server = *downstream;
+        // set a default downstream to auth against
+        ZENDESK_SESSION *my_session = (ZENDESK_SESSION *) session;
+	my_session->shard_server = *downstream;
 }
 
 
 static SERVICE *serviceForShard(ZENDESK_INSTANCE *instance, int shard_id)
 {
-        return instance->downstreams[0];
+        SERVICE *downstream;
+        int i = 0;
+
+        while((downstream = instance->downstreams[i++])) {
+                true;
+                //if(downstream->shards) {
+                //}
+        }
+
+        return NULL;
 }
 
 /**
@@ -198,16 +207,6 @@ static SERVICE *serviceForShard(ZENDESK_INSTANCE *instance, int shard_id)
 static int routeQuery(FILTER *instance, void *session, GWBUF *queue) {
         ZENDESK_INSTANCE *zd_instance = (ZENDESK_INSTANCE *)instance;
         ZENDESK_SESSION *my_session = (ZENDESK_SESSION *) session;
-
-        SERVICE *service = serviceForShard(zd_instance, 1);
-        ROUTER_OBJECT *router = service->router;
-        void *router_session = router->newSession(service->router_instance, my_session->rses);
-
-        //todo free?
-
-        my_session->shard_server.instance = (void *) service->router_instance;
-        my_session->shard_server.session = router_session;
-        my_session->shard_server.routeQuery = router->routeQuery;
 
         if(((char *) queue->start)[4] == MYSQL_COM_INIT_DB) {
                 unsigned int qlen = MYSQL_GET_PACKET_LEN((unsigned char *) queue->start);
@@ -229,7 +228,19 @@ static int routeQuery(FILTER *instance, void *session, GWBUF *queue) {
                                                 snprintf((char *) &shard_database_id, 255, "shard_%d", shard_id);
 
                                                 // find downstream
-                                                //
+                                                SERVICE *service = serviceForShard(zd_instance, shard_id);
+
+                                                if(service == NULL) {
+                                                        return -1;
+                                                }
+
+                                                ROUTER_OBJECT *router = service->router;
+                                                void *router_session = router->newSession(service->router_instance, my_session->rses);
+
+                                                my_session->shard_server.instance = (void *) service->router_instance;
+                                                my_session->shard_server.session = router_session;
+                                                my_session->shard_server.routeQuery = (void *) router->routeQuery;
+                                                my_session->shard_id = shard_id;
 
                                                 // XXX: modutil_replace_SQL checks explicitly for COM_QUERY
                                                 // but just generically replaces the GWBUF data

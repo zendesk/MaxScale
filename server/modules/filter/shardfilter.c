@@ -1,3 +1,5 @@
+/* vim: set ts=8 sw=8 noexpandtab */
+
 #include <stdio.h>
 #include <filter.h>
 #include <mysql.h>

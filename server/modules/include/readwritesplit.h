@@ -238,8 +238,8 @@ typedef struct rwsplit_config_st {
         select_criteria_t rw_slave_select_criteria;
         int               rw_max_slave_replication_lag;
 	target_t          rw_use_sql_variables_in;	
+        int               *rw_shards;
 } rwsplit_config_t;
-     
 
 #if defined(PREP_STMT_CACHING)
 

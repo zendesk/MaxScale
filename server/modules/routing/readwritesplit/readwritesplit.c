@@ -422,9 +422,10 @@ static void refreshInstance(
         while (param != NULL)         
         {
 		/** Catch unused parameter types */
-		ss_dassert(paramtype == COUNT_TYPE || 
+		ss_dassert(paramtype == COUNT_TYPE ||
 			paramtype == PERCENT_TYPE ||
-			paramtype == SQLVAR_TARGET_TYPE);
+			paramtype == SQLVAR_TARGET_TYPE ||
+                        paramtype == UNDEFINED_TYPE);
 		
                 if (paramtype == COUNT_TYPE)
                 {
@@ -490,7 +491,23 @@ static void refreshInstance(
 					router->rwsplit_config.rw_use_sql_variables_in = valtarget;
 				}
 			}
-		}
+		} else if(paramtype == UNDEFINED_TYPE) {
+                        if (strncmp(param->name, "shards", MAX_PARAM_LEN) == 0) {
+                                char *shard_param = strdup(param->value);
+                                char *shard_id_str;
+
+                                int nshards = 0;
+
+                                while ((shard_id_str = strsep(&shard_param, ",")) != NULL) {
+                                        router->rwsplit_config.rw_shards = realloc(router->rwsplit_config.rw_shards, sizeof(int) * (nshards + 2));
+                                        int shard_id = strtol(shard_id_str, NULL, 0);
+                                        router->rwsplit_config.rw_shards[nshards++] = shard_id;
+                                }
+
+                                router->rwsplit_config.rw_shards[nshards] = NULL;
+                                free(shard_param);
+                        }
+                }
 		
                 if (refresh_single)
                 {
@@ -734,6 +751,14 @@ createInstance(SERVICE *service, char **options)
 	/** Set default values */
 	router->rwsplit_config.rw_use_sql_variables_in = CONFIG_SQL_VARIABLES_IN;
 	param = config_get_param(service->svc_config_param, "use_sql_variables_in");
+
+	if (param != NULL)
+	{
+		refreshInstance(router, param);
+	}
+
+        router->rwsplit_config.rw_shards = NULL;
+	param = config_get_param(service->svc_config_param, "shards");
 
 	if (param != NULL)
 	{

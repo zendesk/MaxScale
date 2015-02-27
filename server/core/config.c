@@ -485,6 +485,40 @@ int			error_count = 0;
 							}
 						}
 					}
+
+                                        char *shards = config_get_value(obj->parameters, "shards");
+
+					if(shards != NULL) {
+                                                param = config_get_param(obj->parameters, "shards");
+
+						if(param == NULL) {
+							succp = false;
+						} else {
+                                                        succp = service_set_param_value(obj->element,
+                                                                        param,
+                                                                        shards,
+                                                                        COUNT_NONE,
+                                                                        UNDEFINED_TYPE); // string type is "undefined"
+                                                }
+
+						if(!succp) {
+                                                        if(param) {
+                                                                LOGIF(LM, (skygw_log_write(
+                                                                                                LOGFILE_MESSAGE,
+                                                                                                "* Warning : invalid value type "
+                                                                                                "for parameter \'%s.%s = %s\'\n\tExpected "
+                                                                                                "type is [\\d,?+] for "
+                                                                                                "shards.",
+                                                                                                ((SERVICE*)obj->element)->name,
+                                                                                                param->name,
+                                                                                                param->value)));
+							} else {
+								LOGIF(LE, (skygw_log_write(
+                                                                                                LOGFILE_ERROR,
+                                                                                                "Error : parameter was NULL")));
+                                                        }
+						}
+					}
 				} /*< if (rw_split) */
 			} /*< if (router) */
 			else
@@ -1669,6 +1703,7 @@ static char *service_params[] =
 		"version_string",
 		"filters",
 		"weightby",
+                "shards",
                 NULL
         };
 

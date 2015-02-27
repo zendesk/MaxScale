@@ -6,6 +6,7 @@
 #include <mysql_client_server_protocol.h>
 #include <buffer.h>
 #include <modutil.h>
+#include <readwritesplit.h>
 
 /**
  * @file shardfilter.c - a shard selection filter
@@ -56,7 +57,7 @@ typedef struct {
 typedef struct {
         SESSION *rses;
         DOWNSTREAM shard_server;
-        int shard_id;
+        int shard_id, shard_increment;
 } ZENDESK_SESSION;
 
 int accountMap[][2] = {
@@ -141,6 +142,7 @@ static void *newSession(FILTER *instance, SESSION *session) {
 
 	if ((my_session = calloc(1, sizeof(ZENDESK_SESSION))) != NULL) {
                 my_instance->sessions++;
+                my_session->shard_id = -1;
                 my_session->rses = session;
 	}
 
@@ -185,12 +187,18 @@ static void setDownstream(FILTER *instance, void *session, DOWNSTREAM *downstrea
 static SERVICE *serviceForShard(ZENDESK_INSTANCE *instance, int shard_id)
 {
         SERVICE *downstream;
+        ROUTER_INSTANCE *router_instance;
         int i = 0;
 
-        while((downstream = instance->downstreams[i++])) {
-                true;
-                //if(downstream->shards) {
-                //}
+        while((downstream = instance->downstreams[i++]) != NULL) {
+                router_instance = (ROUTER_INSTANCE *) downstream->router_instance;
+
+                int j = 0, router_shard_id;
+                while((router_shard_id = router_instance->rwsplit_config.rw_shards[j++]) != NULL) {
+                        if(router_shard_id == shard_id) {
+                                return downstream;
+                        }
+                }
         }
 
         return NULL;
@@ -229,19 +237,7 @@ static int routeQuery(FILTER *instance, void *session, GWBUF *queue) {
                                                 char shard_database_id[255];
                                                 snprintf((char *) &shard_database_id, 255, "shard_%d", shard_id);
 
-                                                // find downstream
-                                                SERVICE *service = serviceForShard(zd_instance, shard_id);
-
-                                                if(service == NULL) {
-                                                        return -1;
-                                                }
-
-                                                ROUTER_OBJECT *router = service->router;
-                                                void *router_session = router->newSession(service->router_instance, my_session->rses);
-
-                                                my_session->shard_server.instance = (void *) service->router_instance;
-                                                my_session->shard_server.session = router_session;
-                                                my_session->shard_server.routeQuery = (void *) router->routeQuery;
+                                                // connect on the next query
                                                 my_session->shard_id = shard_id;
 
                                                 // XXX: modutil_replace_SQL checks explicitly for COM_QUERY
@@ -263,6 +259,21 @@ static int routeQuery(FILTER *instance, void *session, GWBUF *queue) {
                                 }
                         }
                 }
+        }
+
+        if(my_session->shard_id != -1) {
+                SERVICE *service = serviceForShard(zd_instance, my_session->shard_id);
+
+                if(service == NULL) {
+                        return 0; // ???
+                }
+
+                ROUTER_OBJECT *router = service->router;
+                void *router_session = router->newSession(service->router_instance, my_session->rses);
+
+                my_session->shard_server.instance = (void *) service->router_instance;
+                my_session->shard_server.routeQuery = (void *) router->routeQuery;
+                my_session->shard_server.session = router_session;
         }
 
         return my_session->shard_server.routeQuery(my_session->shard_server.instance, my_session->shard_server.session, queue);

@@ -34,3 +34,6 @@ depend.mk
 
 # Vi swap files
 .*.swp
+
+.vagrant
+build

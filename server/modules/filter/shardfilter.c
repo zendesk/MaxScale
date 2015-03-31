@@ -111,6 +111,8 @@ static FILTER *createInstance(char **options, FILTER_PARAMETER **params) {
 	if ((my_instance = calloc(1, sizeof(ZENDESK_INSTANCE))) != NULL)
 		my_instance->sessions = 0;
 
+        my_instance->downstreams = calloc(my_instance->downstreams, sizeof(SERVICE *));
+
         for(i=0; params[i]; i++) {
                 if ( !strcasecmp(params[i]->name, "shard_services") ) {
                         service_param = strdup(params[i]->value);

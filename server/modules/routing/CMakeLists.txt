@@ -27,7 +27,6 @@ install(TARGETS cli DESTINATION modules)
 
 add_subdirectory(readwritesplit)
 add_subdirectory(schemarouter/test)
-
 if(BUILD_BINLOG)
   add_subdirectory(binlog)
 endif()

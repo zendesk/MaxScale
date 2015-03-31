@@ -34,6 +34,10 @@ add_library(namedserverfilter SHARED namedserverfilter.c)
 target_link_libraries(namedserverfilter log_manager utils)
 install(TARGETS namedserverfilter DESTINATION modules)
 
+add_library(shardfilter SHARED shardfilter.c)
+target_link_libraries(shardfilter log_manager utils)
+install(TARGETS shardfilter DESTINATION modules)
+
 if(BUILD_SLAVELAG)
   add_library(slavelag SHARED slavelag.c)
   target_link_libraries(slavelag log_manager utils query_classifier)

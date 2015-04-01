@@ -6,6 +6,7 @@
 #include <mysql_client_server_protocol.h>
 #include <buffer.h>
 #include <modutil.h>
+#include <readwritesplit.h>
 
 /**
  * @file shardfilter.c - a shard selection filter
@@ -28,13 +29,14 @@ MODULE_INFO info = {
 
 static char *version_str = "V1.0.0";
 
-static FILTER *createInstance(char **options, FILTER_PARAMETER **params);
-static void *newSession(FILTER *instance, SESSION *session);
-static void closeSession(FILTER *instance, void *session);
-static void freeSession(FILTER *instance, void *session);
-static void setDownstream(FILTER *instance, void *fsession, DOWNSTREAM *downstream);
-static int routeQuery(FILTER *instance, void *fsession, GWBUF *queue);
-static void diagnostic(FILTER *instance, void *fsession, DCB *dcb);
+static FILTER *createInstance(char **, FILTER_PARAMETER **);
+static void *newSession(FILTER *, SESSION *);
+static void closeSession(FILTER *, void *);
+static void freeSession(FILTER *, void *);
+static void setDownstream(FILTER *, void *, DOWNSTREAM *);
+static int routeQuery(FILTER *, void *, GWBUF *);
+static void diagnostic(FILTER *, void *, DCB *);
+int shardfilter_write_ok(ROUTER_CLIENT_SES *);
 
 static FILTER_OBJECT MyObject = {
         createInstance,
@@ -61,7 +63,7 @@ typedef struct {
 
 int accountMap[][2] = {
         {1, 2},
-        {2, 5}
+        {2, 1}
 };
 
 /**
@@ -116,6 +118,8 @@ static FILTER *createInstance(char **options, FILTER_PARAMETER **params) {
         for(i = 0; params[i]; i++) {
                 if (strcasecmp(params[i]->name, "shard_services") == 0) {
                         service_param = strdup(params[i]->value);
+                        skygw_log_write(LOGFILE_TRACE, "shardfilter: services %s", service_param);
+
                         while ((service_name = strsep(&service_param, ",")) != NULL) {
                                 service = service_find(service_name);
                                 my_instance->downstreams = realloc(my_instance->downstreams, sizeof(SERVICE *) * (nservices + 2));
@@ -184,15 +188,16 @@ static void setDownstream(FILTER *instance, void *session, DOWNSTREAM *downstrea
 }
 
 
-static SERVICE *serviceForShard(ZENDESK_INSTANCE *instance, int shard_id)
+static SERVICE *serviceForShard(ZENDESK_INSTANCE *instance, char *name)
 {
         SERVICE *downstream;
         int i = 0;
 
         while((downstream = instance->downstreams[i++])) {
-                true;
-                //if(downstream->shards) {
-                //}
+                if(strcasecmp(downstream->name, name) == 0) {
+                        skygw_log_write(LOGFILE_TRACE, "shardfilter: found %s", name);
+                        return downstream;
+                }
         }
 
         return NULL;
@@ -223,19 +228,30 @@ static int routeQuery(FILTER *instance, void *session, GWBUF *queue) {
                                 int account_id = strtol(database_name + 8, NULL, 0);
 
                                 if(account_id > 0) {
-                                        int *map = accountMap[account_id];
+                                        int shard_id = 0, i;
 
-                                        if(map) {
-                                                int shard_id = map[0];
+                                        for(i = 0; i < sizeof(accountMap) / sizeof(int[2]); i++) {
+                                                skygw_log_write(LOGFILE_TRACE, "accountMap: comparing %d to %d, %d", account_id, accountMap[i][0], accountMap[i][1]);
 
+                                                if(accountMap[i][0] == account_id) {
+                                                        shard_id = accountMap[i][1];
+                                                        break;
+                                                }
+                                        }
+
+                                        if(shard_id > 0) {
                                                 char shard_database_id[255];
                                                 snprintf((char *) &shard_database_id, 255, "shard_%d", shard_id);
 
                                                 // find downstream
-                                                SERVICE *service = serviceForShard(zd_instance, shard_id);
+                                                skygw_log_write(LOGFILE_TRACE, "shardfilter: finding %s", shard_database_id);
+                                                SERVICE *service = serviceForShard(zd_instance, shard_database_id);
 
                                                 if(service == NULL) {
-                                                        return -1;
+                                                        char errmsg[255];
+                                                        snprintf((char *) &errmsg, 255, "Could not find shard %d for account %d", shard_id, account_id);
+                                                        GWBUF *err = modutil_create_mysql_err_msg(1, 0, 1046, "3D000", errmsg);
+                                                        return my_session->rses->client->func.write(my_session->rses->client, err);
                                                 }
 
                                                 ROUTER_OBJECT *router = service->router;
@@ -246,21 +262,12 @@ static int routeQuery(FILTER *instance, void *session, GWBUF *queue) {
                                                 my_session->shard_server.routeQuery = (void *) router->routeQuery;
                                                 my_session->shard_id = shard_id;
 
-                                                // XXX: modutil_replace_SQL checks explicitly for COM_QUERY
-                                                // but just generically replaces the GWBUF data
-                                                ((char *) queue->start)[4] = MYSQL_COM_QUERY;
-
-                                                queue = modutil_replace_SQL(queue, shard_database_id);
-                                                GWBUF *tmpbuf = gwbuf_make_contiguous(queue);
-
-                                                // If the tmpbuf is already contiguous, gwbuf_make_contiguous
-                                                // returns the original pointer. Otherwise it returns a newly allocated one.
-                                                if(queue != tmpbuf) {
-                                                        gwbuf_free(queue);
-                                                        queue = tmpbuf;
-                                                }
-
-                                                ((char *) queue->start)[4] = MYSQL_COM_INIT_DB;
+                                                return shardfilter_write_ok(router_session);
+                                        } else {
+                                                char errmsg[255];
+                                                snprintf((char *) &errmsg, 255, "Could not find shard for account %d", account_id);
+                                                GWBUF *err = modutil_create_mysql_err_msg(1, 0, 1046, "3D000", errmsg);
+                                                return my_session->rses->client->func.write(my_session->rses->client, err);
                                         }
                                 }
                         }
@@ -284,4 +291,26 @@ static int routeQuery(FILTER *instance, void *session, GWBUF *queue) {
 static void diagnostic(FILTER *instance, void *fsession, DCB *dcb) {
         // ZENDESK_INSTANCE *my_instance = (ZENDESK_INSTANCE *) instance;
         // ZENDESK_SESSION *my_session = (ZENDESK_SESSION *) fsession;
+}
+
+int shardfilter_write_ok(ROUTER_CLIENT_SES *router_session) {
+        GWBUF   *pkt;
+        uint8_t *ptr;
+
+        if ((pkt = gwbuf_alloc(11)) == NULL)
+                return 0;
+
+        ptr = GWBUF_DATA(pkt);
+        *ptr++ = 7;     // Payload length
+        *ptr++ = 0;
+        *ptr++ = 0;
+        *ptr++ = 1;     // Seqno
+        *ptr++ = 0;     // ok
+        *ptr++ = 0;
+        *ptr++ = 0;
+        *ptr++ = 2;
+        *ptr++ = 0;
+        *ptr++ = 0;
+        *ptr++ = 0;
+        return ((ROUTER_CLIENT_SES *) router_session)->client_dcb->func.write(((ROUTER_CLIENT_SES *) router_session)->client_dcb, pkt);
 }

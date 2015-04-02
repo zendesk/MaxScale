@@ -273,6 +273,12 @@ static int routeQuery(FILTER *instance, void *session, GWBUF *queue) {
                                 }
 
                                 ROUTER_OBJECT *router = service->router;
+
+                                if(my_session->shard_server.session) {
+                                        router->freeSession(my_session->shard_server.instance, my_session->shard_server.session);
+                                }
+
+
                                 SESSION *session = session_alloc(service, my_session->rses->client);
 
                                 my_session->shard_server.instance = (void *) service->router_instance;
@@ -347,6 +353,7 @@ int shardfilter_find_account(char *bufdata, int qlen) {
         int account_id = 0;
         char database_name[qlen];
         strncpy(database_name, bufdata, qlen - 1);
+        database_name[qlen - 1] = 0;
 
         if(strncmp("account_", database_name, 8) == 0) {
                 account_id = strtol(database_name + 8, NULL, 0);

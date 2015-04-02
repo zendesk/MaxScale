@@ -221,6 +221,7 @@ typedef struct {
 	bool def_op;/*< Default operation mode, defaults to deny */
 	SPINLOCK* lock;/*< Instance spinlock */
 	long idgen; /*< UID generator */
+	int regflags;
 } FW_INSTANCE;
 
 /**
@@ -1025,7 +1026,7 @@ bool parse_rule(char* rule, FW_INSTANCE* instance)
 		    goto retblock;
 		}
 
-		if(*tok != '\'' || *tok != '"')
+		if(*tok != '\'' && *tok != '\"')
 		{
 		    skygw_log_write(LOGFILE_ERROR,"dbfwfilter: Rule parsing failed, regex string not quoted.");
 		    rval = false;
@@ -1084,7 +1085,7 @@ bool parse_rule(char* rule, FW_INSTANCE* instance)
 
                 memcpy(str, start, (tok-start));
 
-                if(regcomp(re, str,REG_NOSUB)){
+                if(regcomp(re, str,REG_NOSUB|instance->regflags)){
                     skygw_log_write(LOGFILE_ERROR, "dbfwfilter: Invalid regular expression '%s'.", str);
 		    rval = false;
                     free(re);
@@ -1210,6 +1211,22 @@ bool parse_rule(char* rule, FW_INSTANCE* instance)
 
 }
 
+bool is_comment(char* str)
+{
+    char *ptr = str;
+
+    while(*ptr != '\0')
+    {
+	if(isspace(*ptr))
+	    ptr++;
+	else if(*ptr == '#')
+	    return true;
+	else
+	    return false;
+    }
+    return true;
+}
+
 /**
  * Create an instance of the filter for a particular service
  * within MaxScale.
@@ -1249,16 +1266,26 @@ createInstance(char **options, FILTER_PARAMETER **params)
 	my_instance->htable = ht;
 	my_instance->def_op = true;
 	my_instance->userstrings = NULL;
+	my_instance->regflags = 0;
+	
 	for(i = 0;params[i];i++){
-		if(strcmp(params[i]->name, "rules") == 0){
-                    
-                        if(filename)
-                            free(filename);
-                    
-			filename = strdup(params[i]->value);
-		}
+	    if(strcmp(params[i]->name, "rules") == 0){
+		if(filename)
+		    free(filename);
+		filename = strdup(params[i]->value);
+	    }
 	}
-        
+
+	if(options)
+	{
+	    for(i = 0;options[i];i++)
+	    {
+		if(strcmp(options[i],"ignorecase") == 0)
+		{
+		    my_instance->regflags |= REG_ICASE;
+		}
+	    }
+	}
         
         if(filename == NULL)
         {
@@ -1277,8 +1304,9 @@ createInstance(char **options, FILTER_PARAMETER **params)
             return NULL;
 	}
 
-	free(filename);
-	
+
+	bool file_empty = true;
+
 	while(!feof(file))
     {
 
@@ -1300,6 +1328,13 @@ createInstance(char **options, FILTER_PARAMETER **params)
             *nl = '\0';
         }
         
+	if(strnlen(buffer,2048) < 1 || is_comment(buffer))
+	{
+	    continue;
+	}
+
+	file_empty = false;
+
         if(!parse_rule(buffer,my_instance))
 	{
 	    fclose(file);
@@ -1308,8 +1343,17 @@ createInstance(char **options, FILTER_PARAMETER **params)
 	}
     }
 
+	if(file_empty)
+	{
+	    skygw_log_write(LOGFILE_ERROR,"dbfwfilter: File is empty: %s");
+	    free(filename);
+	    err = true;
+	    goto retblock;
+	}
+
 	fclose(file);
-	
+	free(filename);
+
 	/**Apply the rules to users*/
 	if(ptr == NULL)
 	{
@@ -1938,7 +1982,16 @@ routeQuery(FILTER *instance, void *session, GWBUF *queue)
 	GWBUF* forward;
 	ipaddr = strdup(dcb->remote);
 	sprintf(uname_addr,"%s@%s",dcb->user,ipaddr);
-	
+
+	if(modutil_is_SQL(queue) && modutil_count_statements(queue) > 1)
+	{
+	    if(my_session->errmsg)
+		free(my_session->errmsg);
+
+	    my_session->errmsg = strdup("This filter does not support multi-statements.");
+	    accept = false;
+	    goto queryresolved;
+	}
 	
 	if((user = (USER*)hashtable_fetch(my_instance->htable, uname_addr)) == NULL){
 		while(user == NULL && next_ip_class(ipaddr)){

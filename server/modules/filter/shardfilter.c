@@ -52,6 +52,7 @@ typedef struct {
         int sessions;
         SERVICE **downstreams;
         char *shard_format;
+        SPINLOCK lock;
 } ZENDESK_INSTANCE;
 
 typedef struct {
@@ -64,11 +65,7 @@ typedef struct {
 SERVICE *shardfilter_service_for_shard(ZENDESK_INSTANCE *, char *);
 int shardfilter_find_shard(int);
 int shardfilter_find_account(char *, int);
-
-int accountMap[][2] = {
-        {1, 2},
-        {2, 1}
-};
+int **accountMap = NULL;
 
 /**
  * Implementation of the mandatory version entry point
@@ -163,6 +160,43 @@ static void *newSession(FILTER *instance, SESSION *session) {
         ZENDESK_INSTANCE *my_instance = (ZENDESK_INSTANCE *) instance;
         my_instance->sessions++;
 
+        spinlock_init(&my_instance->lock);
+        spinlock_acquire(&my_instance->lock);
+
+        // just choose one server
+        SERVER *server = my_session->rses->service->dbref->server;
+        MYSQL *connection = mysql_init(NULL);
+        mysql_real_connect(connection, server->name,
+                my_session->rses->service->credentials.name,
+                my_session->rses->service->credentials.authdata,
+                "zd_account_master_aws", // TODO
+                server->port,
+                NULL,
+                0);
+
+        mysql_query(connection, "SELECT id, shard_id FROM accounts");
+        MYSQL_RES *result = mysql_store_result(connection);
+        MYSQL_ROW row;
+
+        int numAccounts = 0;
+
+        while((row = mysql_fetch_row(result)) != NULL) {
+                accountMap = realloc(accountMap, (numAccounts + 2) * sizeof(int *));
+
+                int *account = malloc(sizeof(int) * 2);
+                account[0] = atoi(row[0]);
+                account[1] = atoi(row[1]);
+
+                accountMap[numAccounts++] = account;
+        }
+
+        accountMap[numAccounts] = NULL;
+
+        mysql_free_result(result);
+        mysql_close(connection);
+
+        spinlock_release(&my_instance->lock);
+
 	return my_session;
 }
 
@@ -210,7 +244,7 @@ static void setDownstream(FILTER *instance, void *session, DOWNSTREAM *downstrea
 /**
  * The routeQuery entry point. This is passed the query buffer
  * to which the filter should be applied. Once applied the
- * query shoudl normally be passed to the downstream component
+ * query should normally be passed to the downstream component
  * (filter or router) in the filter chain.
  *
  * @param instance	The filter instance data
@@ -327,13 +361,13 @@ int shardfilter_find_account(char *bufdata, int qlen) {
 }
 
 int shardfilter_find_shard(int account_id) {
-        int shard_id = 0, i;
+        int i = 0, *account;
 
-        for(i = 0; i < sizeof(accountMap) / sizeof(int[2]); i++) {
-                skygw_log_write(LOGFILE_TRACE, "accountMap: comparing %d to %d, %d", account_id, accountMap[i][0], accountMap[i][1]);
+        while((account = accountMap[i++]) != NULL) {
+                skygw_log_write(LOGFILE_TRACE, "accountMap: comparing %d to %d, %d", account_id, account[0], account[1]);
 
-                if(accountMap[i][0] == account_id) {
-                        return accountMap[i][1];
+                if(account[0] == account_id) {
+                        return account[1];
                 }
         }
 

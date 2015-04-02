@@ -51,6 +51,7 @@ static FILTER_OBJECT MyObject = {
 typedef struct {
         int sessions;
         SERVICE **downstreams;
+        char *shard_format;
 } ZENDESK_INSTANCE;
 
 typedef struct {
@@ -62,6 +63,7 @@ typedef struct {
 
 SERVICE *shardfilter_service_for_shard(ZENDESK_INSTANCE *, char *);
 int shardfilter_find_shard(int);
+int shardfilter_find_account(char *, int);
 
 int accountMap[][2] = {
         {1, 2},
@@ -112,23 +114,34 @@ static FILTER *createInstance(char **options, FILTER_PARAMETER **params) {
         char *service_name, *service_param;
         int i, nservices = 0;
 
-	if((my_instance = calloc(1, sizeof(ZENDESK_INSTANCE))) != NULL)
-                my_instance->sessions = 0;
+	my_instance = calloc(1, sizeof(ZENDESK_INSTANCE));
+        my_instance->sessions = 0;
 
         my_instance->downstreams = calloc(1, sizeof(SERVICE *));
 
         for(i = 0; params[i]; i++) {
-                if (strcasecmp(params[i]->name, "shard_services") == 0) {
+                if(strcasecmp(params[i]->name, "shard_format") == 0) {
+                        my_instance->shard_format = strdup(params[i]->value);
+                }
+
+                if(strcasecmp(params[i]->name, "shard_services") == 0) {
                         service_param = strdup(params[i]->value);
                         skygw_log_write(LOGFILE_TRACE, "shardfilter: services %s", service_param);
 
-                        while ((service_name = strsep(&service_param, ",")) != NULL) {
+                        while((service_name = strsep(&service_param, ",")) != NULL) {
                                 service = service_find(service_name);
                                 my_instance->downstreams = realloc(my_instance->downstreams, sizeof(SERVICE *) * (nservices + 2));
                                 my_instance->downstreams[nservices++] = service;
                         }
+
                         free(service_param);
                 }
+        }
+
+        if(my_instance->shard_format == NULL) {
+                // default format of shard_%d
+                my_instance->shard_format = calloc(9, sizeof(char));
+                strcpy(my_instance->shard_format, "shard_%d");
         }
 
         my_instance->downstreams[nservices] = NULL;
@@ -144,13 +157,11 @@ static FILTER *createInstance(char **options, FILTER_PARAMETER **params) {
  * @return Session specific data for this session
  */
 static void *newSession(FILTER *instance, SESSION *session) {
-        ZENDESK_INSTANCE *my_instance = (ZENDESK_INSTANCE *) instance;
-        ZENDESK_SESSION *my_session;
+        ZENDESK_SESSION *my_session = calloc(1, sizeof(ZENDESK_SESSION));
+        my_session->rses = session;
 
-	if ((my_session = calloc(1, sizeof(ZENDESK_SESSION))) != NULL) {
-                my_instance->sessions++;
-                my_session->rses = session;
-	}
+        ZENDESK_INSTANCE *my_instance = (ZENDESK_INSTANCE *) instance;
+        my_instance->sessions++;
 
 	return my_session;
 }
@@ -163,6 +174,8 @@ static void *newSession(FILTER *instance, SESSION *session) {
  * @param session	The session being closed
  */
 static void closeSession(FILTER *instance, void *session) {
+        ZENDESK_INSTANCE *zd_instance = (ZENDESK_INSTANCE *)instance;
+        ZENDESK_SESSION *my_session = (ZENDESK_SESSION *) session;
 }
 
 /**
@@ -172,8 +185,13 @@ static void closeSession(FILTER *instance, void *session) {
  * @param session	The session being closed
  */
 static void freeSession(FILTER *instance, void *session) {
+        ZENDESK_INSTANCE *my_instance = (ZENDESK_INSTANCE *) my_instance;
+
+        free(my_instance->shard_format);
+        free(my_instance->downstreams);
+        free(my_instance);
+
         free(session);
-        return;
 }
 
 /**
@@ -211,55 +229,49 @@ static int routeQuery(FILTER *instance, void *session, GWBUF *queue) {
         if(MYSQL_GET_COMMAND(bufdata) == MYSQL_COM_INIT_DB) {
                 unsigned int qlen = MYSQL_GET_PACKET_LEN(bufdata);
 
-                if(qlen > 0 && qlen < MYSQL_DATABASE_MAXLEN + 1) {
-                        char *database_name = (char *) bufdata + 5;
+                if(qlen > 8 && qlen < MYSQL_DATABASE_MAXLEN + 1) {
+                        int account_id = shardfilter_find_account((char *) bufdata + 5, qlen);
 
-                        if(strncmp("account_", database_name, 8) == 0) {
-                                // grab the id of the account
-                                // TODO -- not null terminated
-                                int account_id = strtol(database_name + 8, NULL, 0);
+                        if(account_id > 0) {
+                                int shard_id = shardfilter_find_shard(account_id);
 
-                                if(account_id > 0) {
-                                        int shard_id = shardfilter_find_shard(account_id);
-
-                                        if(shard_id > 0) {
-                                                char shard_database_id[255];
-                                                snprintf(shard_database_id, 255, "zd_shard%d_aws", shard_id);
-
-                                                // find downstream
-                                                skygw_log_write(LOGFILE_TRACE, "shardfilter: finding %s", shard_database_id);
-                                                SERVICE *service = shardfilter_service_for_shard(zd_instance, shard_database_id);
-
-                                                if(service == NULL) {
-                                                        char errmsg[255];
-                                                        snprintf((char *) &errmsg, 255, "Could not find shard %d for account %d", shard_id, account_id);
-                                                        GWBUF *err = modutil_create_mysql_err_msg(1, 0, 1046, "3D000", errmsg);
-                                                        return my_session->rses->client->func.write(my_session->rses->client, err);
-                                                }
-
-                                                ROUTER_OBJECT *router = service->router;
-                                                SESSION *session = session_alloc(service, my_session->rses->client);
-
-                                                my_session->shard_server.instance = (void *) service->router_instance;
-                                                my_session->shard_server.session = session->router_session;
-                                                my_session->shard_server.routeQuery = (void *) router->routeQuery;
-                                                my_session->shard_id = shard_id;
-
-                                                // XXX: modutil_replace_SQL checks explicitly for COM_QUERY
-                                                // but just generically replaces the GWBUF data
-                                                bufdata[4] = MYSQL_COM_QUERY;
-
-                                                queue = modutil_replace_SQL(queue, shard_database_id);
-                                                queue = gwbuf_make_contiguous(queue);
-
-                                                ((uint8_t *)queue->start)[4] = MYSQL_COM_INIT_DB;
-                                        } else {
-                                                char errmsg[255];
-                                                snprintf(errmsg, 255, "Could not find shard for account %d", account_id);
-                                                GWBUF *err = modutil_create_mysql_err_msg(1, 0, 1046, "3D000", errmsg);
-                                                return my_session->rses->client->func.write(my_session->rses->client, err);
-                                        }
+                                if(shard_id <= 0) {
+                                        char errmsg[2048];
+                                        snprintf(errmsg, 2048, "Could not find shard for account %d", account_id);
+                                        GWBUF *err = modutil_create_mysql_err_msg(1, 0, 1046, "3D000", errmsg);
+                                        return my_session->rses->client->func.write(my_session->rses->client, err);
                                 }
+
+                                char shard_database_id[MYSQL_DATABASE_MAXLEN + 1];
+                                snprintf(shard_database_id, MYSQL_DATABASE_MAXLEN, zd_instance->shard_format, shard_id);
+
+                                // find downstream
+                                skygw_log_write(LOGFILE_TRACE, "shardfilter: finding %s", shard_database_id);
+                                SERVICE *service = shardfilter_service_for_shard(zd_instance, shard_database_id);
+
+                                if(service == NULL) {
+                                        char errmsg[2048];
+                                        snprintf((char *) &errmsg, 2048, "Could not find shard %d for account %d", shard_id, account_id);
+                                        GWBUF *err = modutil_create_mysql_err_msg(1, 0, 1046, "3D000", errmsg);
+                                        return my_session->rses->client->func.write(my_session->rses->client, err);
+                                }
+
+                                ROUTER_OBJECT *router = service->router;
+                                SESSION *session = session_alloc(service, my_session->rses->client);
+
+                                my_session->shard_server.instance = (void *) service->router_instance;
+                                my_session->shard_server.session = session->router_session;
+                                my_session->shard_server.routeQuery = (void *) router->routeQuery;
+                                my_session->shard_id = shard_id;
+
+                                // XXX: modutil_replace_SQL checks explicitly for COM_QUERY
+                                // but just generically replaces the GWBUF data
+                                bufdata[4] = MYSQL_COM_QUERY;
+
+                                queue = modutil_replace_SQL(queue, shard_database_id);
+                                queue = gwbuf_make_contiguous(queue);
+
+                                ((uint8_t *) queue->start)[4] = MYSQL_COM_INIT_DB;
                         }
                 }
         }
@@ -300,6 +312,18 @@ SERVICE *shardfilter_service_for_shard(ZENDESK_INSTANCE *instance, char *name) {
         }
 
         return NULL;
+}
+
+int shardfilter_find_account(char *bufdata, int qlen) {
+        int account_id = 0;
+        char database_name[qlen];
+        strncpy(database_name, bufdata, qlen - 1);
+
+        if(strncmp("account_", database_name, 8) == 0) {
+                account_id = strtol(database_name + 8, NULL, 0);
+        }
+
+        return account_id;
 }
 
 int shardfilter_find_shard(int account_id) {

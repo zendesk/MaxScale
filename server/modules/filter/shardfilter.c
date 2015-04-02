@@ -51,7 +51,10 @@ static FILTER_OBJECT MyObject = {
 typedef struct {
         int sessions;
         SERVICE **downstreams;
+
         char *shard_format;
+        char *account_database;
+
         SPINLOCK lock;
 } ZENDESK_INSTANCE;
 
@@ -121,6 +124,10 @@ static FILTER *createInstance(char **options, FILTER_PARAMETER **params) {
                         my_instance->shard_format = strdup(params[i]->value);
                 }
 
+                if(strcasecmp(params[i]->name, "account_database") == 0) {
+                        my_instance->account_database = strdup(params[i]->value);
+                }
+
                 if(strcasecmp(params[i]->name, "shard_services") == 0) {
                         service_param = strdup(params[i]->value);
                         skygw_log_write(LOGFILE_TRACE, "shardfilter: services %s", service_param);
@@ -133,6 +140,12 @@ static FILTER *createInstance(char **options, FILTER_PARAMETER **params) {
 
                         free(service_param);
                 }
+        }
+
+        if(my_instance->account_database == NULL) {
+                // default format of zd_account
+                my_instance->account_database = calloc(11, sizeof(char));
+                strcpy(my_instance->account_database, "zd_account");
         }
 
         if(my_instance->shard_format == NULL) {
@@ -169,7 +182,7 @@ static void *newSession(FILTER *instance, SESSION *session) {
         mysql_real_connect(connection, server->name,
                 my_session->rses->service->credentials.name,
                 my_session->rses->service->credentials.authdata,
-                "zd_account_master_aws", // TODO
+                my_instance->account_database,
                 server->port,
                 NULL,
                 0);
@@ -219,13 +232,13 @@ static void closeSession(FILTER *instance, void *session) {
  * @param session	The session being closed
  */
 static void freeSession(FILTER *instance, void *session) {
-        ZENDESK_INSTANCE *my_instance = (ZENDESK_INSTANCE *) my_instance;
+        //ZENDESK_INSTANCE *my_instance = (ZENDESK_INSTANCE *) my_instance;
 
-        free(my_instance->shard_format);
-        free(my_instance->downstreams);
-        free(my_instance);
+        //free(my_instance->shard_format);
+        //free(my_instance->downstreams);
+        //free(my_instance);
 
-        free(session);
+        //free(session);
 }
 
 /**

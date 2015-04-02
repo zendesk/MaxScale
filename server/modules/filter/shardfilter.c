@@ -60,8 +60,6 @@ typedef struct {
         SPINLOCK lock;
 } ZENDESK_SESSION;
 
-int shardfilter_write_ok(ZENDESK_SESSION *);
-
 int accountMap[][2] = {
         {1, 2},
         {2, 1}
@@ -314,26 +312,4 @@ static int routeQuery(FILTER *instance, void *session, GWBUF *queue) {
 static void diagnostic(FILTER *instance, void *fsession, DCB *dcb) {
         // ZENDESK_INSTANCE *my_instance = (ZENDESK_INSTANCE *) instance;
         // ZENDESK_SESSION *my_session = (ZENDESK_SESSION *) fsession;
-}
-
-int shardfilter_write_ok(ZENDESK_SESSION *my_session) {
-        GWBUF   *pkt;
-        uint8_t *ptr;
-
-        if ((pkt = gwbuf_alloc(11)) == NULL)
-                return 0;
-
-        ptr = GWBUF_DATA(pkt);
-        *ptr++ = 7;     // Payload length
-        *ptr++ = 0;
-        *ptr++ = 0;
-        *ptr++ = 1;     // Seqno
-        *ptr++ = 0;     // ok
-        *ptr++ = 0;
-        *ptr++ = 0;
-        *ptr++ = 2;
-        *ptr++ = 0;
-        *ptr++ = 0;
-        *ptr++ = 0;
-        return my_session->rses->client->func.write(my_session->rses->client, pkt);
 }

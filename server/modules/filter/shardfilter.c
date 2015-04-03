@@ -275,7 +275,7 @@ static int routeQuery(FILTER *instance, void *session, GWBUF *queue) {
                                 ROUTER_OBJECT *router = service->router;
 
                                 if(my_session->shard_server.session) {
-                                        router->freeSession(my_session->shard_server.instance, my_session->shard_server.session);
+                                        // router->freeSession(my_session->shard_server.instance, my_session->shard_server.session);
                                 }
 
 

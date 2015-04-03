@@ -124,6 +124,7 @@ static FILTER *createInstance(char **options, FILTER_PARAMETER **params) {
         ZENDESK_INSTANCE *my_instance;
 
         SERVICE *service;
+        SERVICE *top_service = service_find("top service");
 
         char *service_name, *service_param;
         int i, nservices = 0;
@@ -150,6 +151,7 @@ static FILTER *createInstance(char **options, FILTER_PARAMETER **params) {
                                 service = service_find(service_name);
                                 my_instance->downstreams = realloc(my_instance->downstreams, sizeof(SERVICE *) * (nservices + 2));
                                 my_instance->downstreams[nservices++] = service;
+                                hashtable_add(top_service->resources, service, "");
                         }
 
                         free(service_param);
@@ -188,13 +190,6 @@ static void *newSession(FILTER *instance, SESSION *session) {
         my_instance->sessions++;
 
         shardfilter_refresh_accounts(my_instance, my_session);
-
-        SERVICE *top_service = service_find("top service");
-        SERVICE *service;
-        int i = 0;
-
-        while((service = my_instance->downstreams[i++]) != NULL)
-                hashtable_add(top_service->resources, service->name, "");
 
 	return my_session;
 }

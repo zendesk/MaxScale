@@ -1,6 +1,7 @@
 /* vim: set ts=8 sw=8 noexpandtab */
 
 #include "buffer.h"
+#include "hashtable.h"
 #include "filter.h"
 #include "log_manager.h"
 #include "modutil.h"
@@ -123,6 +124,8 @@ static FILTER *createInstance(char **options, FILTER_PARAMETER **params) {
         ZENDESK_INSTANCE *my_instance;
 
         SERVICE *service;
+        SERVICE *top_service = service_find("top service");
+
         char *service_name, *service_param;
         int i, nservices = 0;
 
@@ -148,6 +151,7 @@ static FILTER *createInstance(char **options, FILTER_PARAMETER **params) {
                                 service = service_find(service_name);
                                 my_instance->downstreams = realloc(my_instance->downstreams, sizeof(SERVICE *) * (nservices + 2));
                                 my_instance->downstreams[nservices++] = service;
+                                hashtable_add(top_service->resources, service, "");
                         }
 
                         free(service_param);

@@ -91,17 +91,11 @@ static void *startMonitor(void *arg, void *opt) {
         if(arg) { /* Must be a restart */
                 handle = arg;
         } else {
-                handle = (MYSQL_MONITOR *) malloc(sizeof(MYSQL_MONITOR));
+                handle = (MYSQL_MONITOR *) calloc(1, sizeof(MYSQL_MONITOR));
 
                 if(handle == NULL)
                         return NULL;
 
-                SERVICE *service = service_find("top service");
-
-                if(service == NULL)
-                        return NULL;
-
-                handle->service = service;
                 handle->id = config_get_gateway_id();
                 handle->interval = MONITOR_INTERVAL;
                 handle->connect_timeout = DEFAULT_CONNECT_TIMEOUT;
@@ -117,6 +111,15 @@ static void *startMonitor(void *arg, void *opt) {
         while(params) {
                 if(strcasecmp(params->name, "account_database") == 0) {
                         handle->account_database = strdup(params->value);
+                }
+
+                if(strcasecmp(params->name, "account_service") == 0) {
+                        handle->service = service_find(params->value);
+
+                        if(handle->service == NULL) {
+                                LOGIF(LE, (skygw_log_write_flush(LOGFILE_ERROR, "account monitor: could not find service %s for accounts", params->value)));
+                                // TODO: fully error?
+                        }
                 }
 
                 params = params->next;

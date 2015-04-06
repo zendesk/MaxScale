@@ -130,12 +130,6 @@ static FILTER *createInstance(char **options, FILTER_PARAMETER **params) {
 
         my_instance->downstreams = calloc(1, sizeof(SERVICE *));
 
-        my_instance->account_monitor = monitor_find("account monitor");
-
-        if(my_instance->account_monitor == NULL) {
-                skygw_log_write(LOGFILE_TRACE, "shardfilter: could not find account monitor", service_param);
-        }
-
         for(i = 0; params[i]; i++) {
                 if(strcasecmp(params[i]->name, "shard_format") == 0) {
                         my_instance->shard_format = strdup(params[i]->value);
@@ -153,6 +147,15 @@ static FILTER *createInstance(char **options, FILTER_PARAMETER **params) {
 
                         free(service_param);
                 }
+
+                if(strcasecmp(params[i]->name, "account_monitor") == 0) {
+                        my_instance->account_monitor = monitor_find(params[i]->value);
+
+                        if(my_instance->account_monitor == NULL) {
+                                skygw_log_write(LOGFILE_ERROR, "shardfilter: could not find account monitor", service_param);
+                        }
+                }
+
         }
 
         if(my_instance->shard_format == NULL) {
@@ -356,6 +359,9 @@ int shardfilter_find_account(char *bufdata, int qlen) {
 }
 
 int shardfilter_find_shard(ZENDESK_INSTANCE *instance, int account_id) {
+        if(instance->account_monitor == NULL)
+                return 0;
+
         MYSQL_MONITOR *handle = (MYSQL_MONITOR *) instance->account_monitor->handle;
 
         if(handle == NULL || handle->accounts == NULL)

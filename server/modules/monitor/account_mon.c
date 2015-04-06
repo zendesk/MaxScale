@@ -53,6 +53,8 @@ static MONITOR_OBJECT MyObject = {
 
 int account_monitor_connect(MYSQL_MONITOR *);
 int account_monitor_close(MYSQL_MONITOR *);
+int account_monitor_hash(void *);
+int account_monitor_compare(void *, void *);
 
 /**
  * Implementation of the mandatory version entry point
@@ -282,20 +284,24 @@ static void monitorMain(void *arg) {
 
                 MYSQL_ROW row;
 
-                int numAccounts = 0;
-
-                while((row = mysql_fetch_row(result)) != NULL) {
-                        handle->accounts = realloc(handle->accounts, (numAccounts + 2) * sizeof(int *));
-
-                        int *account = malloc(sizeof(int) * 2);
-                        account[0] = strtol(row[0], NULL, 0);
-                        account[1] = strtol(row[1], NULL, 0);
-
-                        handle->accounts[numAccounts++] = account;
+                if(handle->accounts == NULL) {
+                        handle->accounts = hashtable_alloc(10000, account_monitor_hash, account_monitor_compare);
                 }
 
-                skygw_log_write(LOGFILE_TRACE, "found %d accounts", numAccounts - 1);
-                handle->accounts[numAccounts] = NULL;
+                int *key, *value;
+
+                while((row = mysql_fetch_row(result)) != NULL) {
+                        key = malloc(sizeof(int));
+                        value = malloc(sizeof(int));
+
+                        *key = strtol(row[0], NULL, 0);
+                        *value = strtol(row[1], NULL, 0);
+
+                        hashtable_add(handle->accounts, key, value);
+                }
+
+                int numAccounts = mysql_num_rows(result);
+                skygw_log_write(LOGFILE_TRACE, "found %d accounts", numAccounts);
 
                 mysql_free_result(result);
         }
@@ -347,4 +353,22 @@ int account_monitor_close(MYSQL_MONITOR *handle) {
         mysql_close(handle->connection);
         handle->connection = NULL;
         return 1;
+}
+
+int account_monitor_hash(void *key) {
+        if(key == NULL)
+                return 0;
+
+        return *((int *) key) % 10000;
+}
+
+int account_monitor_compare(void *v1, void *v2) {
+  int *i1 = (int *) v1;
+  int *i2 = (int *) v2;
+
+  if(*i1 == *i2) {
+          return 0;
+  } else {
+          return 1;
+  }
 }

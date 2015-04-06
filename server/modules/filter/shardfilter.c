@@ -357,18 +357,20 @@ int shardfilter_find_account(char *bufdata, int qlen) {
 
 int shardfilter_find_shard(ZENDESK_INSTANCE *instance, int account_id) {
         MYSQL_MONITOR *handle = (MYSQL_MONITOR *) instance->account_monitor->handle;
+
         if(handle == NULL || handle->accounts == NULL)
                 return 0;
 
         int i = 0, *account;
 
-        while((account = handle->accounts[i++]) != NULL) {
-                skygw_log_write(LOGFILE_TRACE, "accountMap: comparing %d to %d, %d", account_id, account[0], account[1]);
+        int *shard_id = (int *) hashtable_fetch(handle->accounts, &account_id);
 
-                if(account[0] == account_id) {
-                        return account[1];
-                }
+        if(shard_id == NULL) {
+                skygw_log_write(LOGFILE_TRACE, "shardfilter: could not find shard id for account_id %d", account_id);
+
+                return 0;
+        } else {
+                skygw_log_write(LOGFILE_TRACE, "shardfilter: found shard_id %d for account_id %d", *shard_id, account_id);
+                return *shard_id;
         }
-
-        return 0;
 }

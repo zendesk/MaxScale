@@ -39,7 +39,7 @@ typedef struct {
 					 */
         SERVICE *service;
         char *account_database;
-        int **accounts;
+        HASHTABLE *accounts;
 
         MYSQL		*connection;		/**< The MySQL connection */
 } MYSQL_MONITOR;

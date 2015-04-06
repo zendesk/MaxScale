@@ -9,6 +9,11 @@ install(TARGETS galeramon DESTINATION modules)
 add_library(ndbclustermon SHARED ndbcluster_mon.c)
 target_link_libraries(ndbclustermon log_manager utils)
 install(TARGETS ndbclustermon DESTINATION modules)
+
+add_library(accountmon SHARED account_mon.c)
+target_link_libraries(accountmon log_manager utils)
+install(TARGETS accountmon DESTINATION modules)
+
 if(BUILD_MMMON)
   add_library(mmmon SHARED mm_mon.c)
   target_link_libraries(mmmon log_manager utils)

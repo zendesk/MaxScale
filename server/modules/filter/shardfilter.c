@@ -1,9 +1,11 @@
 /* vim: set ts=8 sw=8 noexpandtab */
 
+#include "account_mon.h"
 #include "buffer.h"
 #include "filter.h"
 #include "log_manager.h"
 #include "modutil.h"
+#include "monitor.h"
 #include "mysql_client_server_protocol.h"
 
 #include <mysql.h>
@@ -56,8 +58,8 @@ typedef struct {
         SERVICE **downstreams;
 
         char *shard_format;
-        char *account_database;
 
+        MONITOR *account_monitor;
         SPINLOCK lock;
 } ZENDESK_INSTANCE;
 
@@ -71,12 +73,9 @@ typedef struct {
         SPINLOCK lock;
 } ZENDESK_SESSION;
 
-void shardfilter_refresh_accounts(ZENDESK_INSTANCE *, ZENDESK_SESSION *);
 SERVICE *shardfilter_service_for_shard(ZENDESK_INSTANCE *, char *);
-int shardfilter_find_shard(int);
+int shardfilter_find_shard(ZENDESK_INSTANCE *, int);
 int shardfilter_find_account(char *, int);
-int **accountMap = NULL;
-time_t accountRefresh = 0;
 
 extern int lm_enabled_logfiles_bitmask;
 extern size_t log_ses_count[];
@@ -131,13 +130,15 @@ static FILTER *createInstance(char **options, FILTER_PARAMETER **params) {
 
         my_instance->downstreams = calloc(1, sizeof(SERVICE *));
 
+        my_instance->account_monitor = monitor_find("account monitor");
+
+        if(my_instance->account_monitor == NULL) {
+                skygw_log_write(LOGFILE_TRACE, "shardfilter: could not find account monitor", service_param);
+        }
+
         for(i = 0; params[i]; i++) {
                 if(strcasecmp(params[i]->name, "shard_format") == 0) {
                         my_instance->shard_format = strdup(params[i]->value);
-                }
-
-                if(strcasecmp(params[i]->name, "account_database") == 0) {
-                        my_instance->account_database = strdup(params[i]->value);
                 }
 
                 if(strcasecmp(params[i]->name, "shard_services") == 0) {
@@ -152,12 +153,6 @@ static FILTER *createInstance(char **options, FILTER_PARAMETER **params) {
 
                         free(service_param);
                 }
-        }
-
-        if(my_instance->account_database == NULL) {
-                // default account db of zd_account
-                my_instance->account_database = calloc(11, sizeof(char));
-                strcpy(my_instance->account_database, "zd_account");
         }
 
         if(my_instance->shard_format == NULL) {
@@ -184,8 +179,6 @@ static void *newSession(FILTER *instance, SESSION *session) {
 
         ZENDESK_INSTANCE *my_instance = (ZENDESK_INSTANCE *) instance;
         my_instance->sessions++;
-
-        shardfilter_refresh_accounts(my_instance, my_session);
 
 	return my_session;
 }
@@ -249,7 +242,7 @@ static int routeQuery(FILTER *instance, void *session, GWBUF *queue) {
                         int account_id = shardfilter_find_account((char *) bufdata + 5, qlen);
 
                         if(account_id > 0) {
-                                int shard_id = shardfilter_find_shard(account_id);
+                                int shard_id = shardfilter_find_shard(zd_instance, account_id);
 
                                 if(shard_id <= 0) {
                                         char errmsg[2048];
@@ -321,7 +314,7 @@ static void diagnostic(FILTER *instance, void *session, DCB *dcb) {
         ZENDESK_INSTANCE *my_instance = (ZENDESK_INSTANCE *) instance;
         ZENDESK_SESSION *my_session = (ZENDESK_SESSION *) session;
 
-        dcb_printf(dcb, "using shard_format: %s, account_database %s", my_instance->shard_format, my_instance->account_database);
+        dcb_printf(dcb, "using shard_format: %s", my_instance->shard_format);
 
         SERVICE *downstream;
         int i = 0;
@@ -362,13 +355,14 @@ int shardfilter_find_account(char *bufdata, int qlen) {
         return account_id;
 }
 
-int shardfilter_find_shard(int account_id) {
-        if(accountMap == NULL)
+int shardfilter_find_shard(ZENDESK_INSTANCE *instance, int account_id) {
+        MYSQL_MONITOR *handle = (MYSQL_MONITOR *) instance->account_monitor->handle;
+        if(handle == NULL || handle->accounts == NULL)
                 return 0;
 
         int i = 0, *account;
 
-        while((account = accountMap[i++]) != NULL) {
+        while((account = handle->accounts[i++]) != NULL) {
                 skygw_log_write(LOGFILE_TRACE, "accountMap: comparing %d to %d, %d", account_id, account[0], account[1]);
 
                 if(account[0] == account_id) {
@@ -377,85 +371,4 @@ int shardfilter_find_shard(int account_id) {
         }
 
         return 0;
-}
-
-void shardfilter_refresh_accounts(ZENDESK_INSTANCE *instance, ZENDESK_SESSION *session) {
-        time_t now;
-        time(&now);
-
-        // 5 minute refresh interval
-        if(accountRefresh > 0 && now - accountRefresh < 3000) {
-                skygw_log_write(LOGFILE_TRACE, "not refreshing account map (%d, %d)", accountRefresh, now);
-                return;
-        }
-
-
-        skygw_log_write(LOGFILE_TRACE, "refreshing account map");
-
-        spinlock_init(&instance->lock);
-        spinlock_acquire(&instance->lock);
-
-        // just choose one server
-        SERVER *server = session->rses->service->dbref->server;
-
-        MYSQL *connection = mysql_init(NULL);
-
-        if(connection == NULL) {
-                LOGIF(LE, (skygw_log_write_flush(LOGFILE_ERROR, "Error: could not initialize mysql connection")));
-                goto release;
-        }
-
-        /*
-        if (gw_mysql_set_timeouts(connection, DEFAULT_READ_TIMEOUT, DEFAULT_WRITE_TIMEOUT, DEFAULT_CONNECT_TIMEOUT) != 0) {
-                LOGIF(LE, (skygw_log_write_flush(LOGFILE_ERROR, "Error: failed to set timeout values for backend connection.")));
-                goto close;
-        }
-        */
-
-        if (mysql_options(connection, MYSQL_OPT_USE_REMOTE_CONNECTION, NULL) != 0) {
-                LOGIF(LE, (skygw_log_write_flush(LOGFILE_ERROR, "Error: failed to set external connection. It is needed for backend server connections.")));
-                goto close;
-        }
-
-        if(mysql_real_connect(connection, server->name, session->rses->service->credentials.name, session->rses->service->credentials.authdata, instance->account_database, server->port, NULL, 0) == NULL) {
-                LOGIF(LE, (skygw_log_write_flush(LOGFILE_ERROR, "Error: could not connect to server")));
-                goto close;
-        }
-
-        if(mysql_query(connection, "SELECT id, shard_id FROM accounts") != 0) {
-                LOGIF(LE, (skygw_log_write_flush(LOGFILE_ERROR, "Error: could not query accounts")));
-                goto close;
-        }
-
-        MYSQL_RES *result = mysql_store_result(connection);
-
-        if(result == NULL) {
-                LOGIF(LE, (skygw_log_write_flush(LOGFILE_ERROR, "Error: could not fetch results")));
-                goto close;
-        }
-
-        MYSQL_ROW row;
-
-        int numAccounts = 0;
-
-        while((row = mysql_fetch_row(result)) != NULL) {
-                accountMap = realloc(accountMap, (numAccounts + 2) * sizeof(int *));
-
-                int *account = malloc(sizeof(int) * 2);
-                account[0] = strtol(row[0], NULL, 0);
-                account[1] = strtol(row[1], NULL, 0);
-
-                accountMap[numAccounts++] = account;
-        }
-
-        skygw_log_write(LOGFILE_TRACE, "found %d accounts", numAccounts - 1);
-        accountMap[numAccounts] = NULL;
-
-        time(&accountRefresh);
-
-        mysql_free_result(result);
-close:
-        mysql_close(connection);
-release:
-        spinlock_release(&instance->lock);
 }

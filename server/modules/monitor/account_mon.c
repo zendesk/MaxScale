@@ -231,8 +231,26 @@ static void monitorMain(void *arg) {
         }
 
         handle->status = MONITOR_RUNNING;
+        int retries;
+
+        for(retries = 0; retries < 10; retries ++) {
+                if(account_monitor_connect(handle) == 0) {
+                        break;
+                } else {
+                        thread_millisleep(MON_BASE_INTERVAL_MS);
+                }
+        }
+
+        if(handle->connection == NULL) {
+                LOGIF(LE, (skygw_log_write_flush(LOGFILE_ERROR, "Fatal: account monitor could not initiate a connection\n")));
+
+                handle->status = MONITOR_STOPPING;
+                mysql_thread_end();
+                handle->status = MONITOR_STOPPED;
+                return;
+        }
+
         size_t nrounds = 0;
-        int retries = 0;
 
         while(1) {
                 if(handle->shutdown) {
@@ -250,20 +268,6 @@ static void monitorMain(void *arg) {
 		}
 
 		nrounds += 1;
-
-                if(handle->connection == NULL) {
-                        if(account_monitor_connect(handle) != 0) {
-                                if(retries < 10) {
-                                        retries += 1;
-                                        continue;
-                                } else {
-                                        handle->status = MONITOR_STOPPING;
-                                        mysql_thread_end();
-                                        handle->status = MONITOR_STOPPED;
-                                        return;
-                                }
-                        }
-                }
 
                 if(mysql_query(handle->connection, "SELECT id, shard_id FROM accounts") != 0) {
                         LOGIF(LE, (skygw_log_write_flush(LOGFILE_ERROR, "Error: could not query accounts")));

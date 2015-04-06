@@ -366,11 +366,10 @@ int shardfilter_find_shard(ZENDESK_INSTANCE *instance, int account_id) {
         int *shard_id = (int *) hashtable_fetch(handle->accounts, &account_id);
 
         if(shard_id == NULL) {
-                skygw_log_write(LOGFILE_TRACE, "shardfilter: could not find shard id for account_id %d", account_id);
-
+                skygw_log_write(LOGFILE_TRACE, "shardfilter: could not find shard id for account %d", account_id);
                 return 0;
         } else {
-                skygw_log_write(LOGFILE_TRACE, "shardfilter: found shard_id %d for account_id %d", *shard_id, account_id);
+                skygw_log_write(LOGFILE_TRACE, "shardfilter: found shard_id %d for account %d", *shard_id, account_id);
                 return *shard_id;
         }
 }

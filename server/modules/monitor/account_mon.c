@@ -141,7 +141,7 @@ static void stopMonitor(void *arg) {
         MYSQL_MONITOR *handle = (MYSQL_MONITOR *) arg;
 
         handle->shutdown = 1;
-        thread_wait((void *)handle->tid);
+        thread_wait((void *) handle->tid);
 }
 
 static void registerServer(void *arg, SERVER *server) {
@@ -169,15 +169,20 @@ static void diagnostics(DCB *dcb, void *arg) {
                 case MONITOR_STOPPED:
                         dcb_printf(dcb, "\tMonitor stopped\n");
                         break;
-	}
+        }
 
-	dcb_printf(dcb,"\tSampling interval:\t%lu milliseconds\n", handle->interval);
-	dcb_printf(dcb,"\tMaxScale MonitorId:\t%lu\n", handle->id);
-	dcb_printf(dcb,"\tConnect Timeout:\t%i seconds\n", handle->connect_timeout);
-	dcb_printf(dcb,"\tRead Timeout:\t\t%i seconds\n", handle->read_timeout);
-	dcb_printf(dcb,"\tWrite Timeout:\t\t%i seconds\n", handle->write_timeout);
+        dcb_printf(dcb, "\tSampling interval:\t%lu milliseconds\n", handle->interval);
+        dcb_printf(dcb, "\tMaxScale MonitorId:\t%lu\n", handle->id);
+        dcb_printf(dcb, "\tConnect Timeout:\t%i seconds\n", handle->connect_timeout);
+        dcb_printf(dcb, "\tRead Timeout:\t\t%i seconds\n", handle->read_timeout);
+        dcb_printf(dcb, "\tWrite Timeout:\t\t%i seconds\n", handle->write_timeout);
 
-        // TODO: Print account stats
+        int hashsize, total, longest;
+        hashtable_get_stats(handle->accounts, &hashsize, &total, &longest);
+
+        dcb_printf(dcb, "\tAccounts hashsize:\t%i\n", hashsize);
+        dcb_printf(dcb,"\tAccounts total:\t\t%i\n", total);
+        dcb_printf(dcb,"\tAcconts longest chain:\t\t%i\n", longest);
 }
 
 static void setInterval(void *arg, size_t interval) {
@@ -236,25 +241,6 @@ static void monitorMain(void *arg) {
         }
 
         handle->status = MONITOR_RUNNING;
-        int retries;
-
-        for(retries = 0; retries < 10; retries ++) {
-                if(account_monitor_connect(handle) == 0) {
-                        break;
-                } else {
-                        thread_millisleep(MON_BASE_INTERVAL_MS);
-                }
-        }
-
-        if(handle->connection == NULL) {
-                LOGIF(LE, (skygw_log_write_flush(LOGFILE_ERROR, "Fatal: account monitor could not initiate a connection\n")));
-
-                handle->status = MONITOR_STOPPING;
-                mysql_thread_end();
-                handle->status = MONITOR_STOPPED;
-                return;
-        }
-
         size_t nrounds = 0;
 
         while(1) {
@@ -267,22 +253,37 @@ static void monitorMain(void *arg) {
 
                 thread_millisleep(MON_BASE_INTERVAL_MS);
 
+                if(handle->current_server == NULL || !(SERVER_IS_RUNNING(handle->current_server) && SERVER_IS_SLAVE(handle->current_server))) {
+                        if(handle->connection != NULL) {
+                                LOGIF(LE, (skygw_log_write_flush(LOGFILE_ERROR, "Error: current server is not slave nor running")));
+                                account_monitor_close(handle);
+                        }
+
+                        account_monitor_connect(handle);
+                }
+
+                if(handle->connection == NULL) {
+                        LOGIF(LE, (skygw_log_write_flush(LOGFILE_ERROR, "Error: could not query accounts -- no connection")));
+                        continue;
+                }
+
                 if (nrounds != 0 && ((nrounds * MON_BASE_INTERVAL_MS) % handle->interval) >= MON_BASE_INTERVAL_MS) {
-			nrounds += 1;
+                        nrounds += 1;
 			continue;
 		}
 
-		nrounds += 1;
+                nrounds += 1;
 
                 if(mysql_query(handle->connection, "SELECT id, shard_id FROM accounts") != 0) {
                         LOGIF(LE, (skygw_log_write_flush(LOGFILE_ERROR, "Error: could not query accounts")));
-                        // TODO?
+                        continue;
                 }
 
                 MYSQL_RES *result = mysql_store_result(handle->connection);
 
                 if(result == NULL) {
                         LOGIF(LE, (skygw_log_write_flush(LOGFILE_ERROR, "Error: could not fetch results")));
+                        continue;
                 }
 
                 MYSQL_ROW row;
@@ -304,7 +305,7 @@ static void monitorMain(void *arg) {
                 }
 
                 int numAccounts = mysql_num_rows(result);
-                skygw_log_write(LOGFILE_TRACE, "found %d accounts", numAccounts);
+                skygw_log_write(LOGFILE_MESSAGE, "account monitor: found %d accounts", numAccounts);
 
                 mysql_free_result(result);
         }
@@ -314,8 +315,17 @@ int account_monitor_connect(MYSQL_MONITOR *handle) {
         if(handle->service->dbref == NULL)
                 return 1;
 
-        // just choose one server
         SERVER *server = handle->service->dbref->server;
+
+        while(server != NULL) {
+                if(SERVER_IS_RUNNING(server) && SERVER_IS_SLAVE(server))
+                        break;
+
+                server = server->next;
+        }
+
+        if(server == NULL)
+                return 1;
 
         handle->connection = mysql_init(NULL);
 
@@ -349,12 +359,17 @@ int account_monitor_connect(MYSQL_MONITOR *handle) {
                 return account_monitor_close(handle);
         }
 
+        skygw_log_write(LOGFILE_MESSAGE, "account monitor: connected to %s", server->name);
+        handle->current_server = server;
+
         return 0;
 }
 
 int account_monitor_close(MYSQL_MONITOR *handle) {
         mysql_close(handle->connection);
         handle->connection = NULL;
+        handle->current_server = NULL;
+
         return 1;
 }
 

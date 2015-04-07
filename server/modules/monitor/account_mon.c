@@ -315,13 +315,16 @@ int account_monitor_connect(MYSQL_MONITOR *handle) {
         if(handle->service->dbref == NULL)
                 return 1;
 
-        SERVER *server = handle->service->dbref->server;
+        SERVER_REF *dbref = handle->service->dbref;
+        SERVER *server;
 
-        while(server != NULL) {
+        while(dbref != NULL) {
+                server = dbref->server;
+
                 if(SERVER_IS_RUNNING(server) && SERVER_IS_SLAVE(server))
                         break;
 
-                server = server->next;
+                dbref = dbref->next;
         }
 
         if(server == NULL)

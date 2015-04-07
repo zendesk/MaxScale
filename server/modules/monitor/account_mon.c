@@ -355,7 +355,7 @@ int account_monitor_connect(MYSQL_MONITOR *handle) {
         }
 
         if(mysql_real_connect(handle->connection, server->name, handle->service->credentials.name, handle->service->credentials.authdata, handle->account_database, server->port, NULL, 0) == NULL) {
-                LOGIF(LE, (skygw_log_write_flush(LOGFILE_ERROR, "Error: could not connect to server %s, %s as %s", server->name, server->port, handle->service->credentials.name)));
+                LOGIF(LE, (skygw_log_write_flush(LOGFILE_ERROR, "Error: could not connect to server %s:%d as %s", server->name, server->port, handle->service->credentials.name)));
                 return account_monitor_close(handle);
         }
 

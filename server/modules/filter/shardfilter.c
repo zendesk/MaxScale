@@ -277,19 +277,21 @@ static int routeQuery(FILTER *instance, void *session, GWBUF *queue) {
 
                                 SESSION *session = session_alloc(service, my_session->rses->client);
 
-                                my_session->shard_server.instance = (void *) service->router_instance;
-                                my_session->shard_server.session = session->router_session;
-                                my_session->shard_server.routeQuery = (void *) router->routeQuery;
-                                my_session->shard_id = shard_id;
+                                if(session != NULL) {
+                                        my_session->shard_server.instance = (void *) service->router_instance;
+                                        my_session->shard_server.session = session->router_session;
+                                        my_session->shard_server.routeQuery = (void *) router->routeQuery;
+                                        my_session->shard_id = shard_id;
 
-                                // XXX: modutil_replace_SQL checks explicitly for COM_QUERY
-                                // but just generically replaces the GWBUF data
-                                bufdata[4] = MYSQL_COM_QUERY;
+                                        // XXX: modutil_replace_SQL checks explicitly for COM_QUERY
+                                        // but just generically replaces the GWBUF data
+                                        bufdata[4] = MYSQL_COM_QUERY;
 
-                                queue = modutil_replace_SQL(queue, shard_database_id);
-                                queue = gwbuf_make_contiguous(queue);
+                                        queue = modutil_replace_SQL(queue, shard_database_id);
+                                        queue = gwbuf_make_contiguous(queue);
 
-                                ((uint8_t *) queue->start)[4] = MYSQL_COM_INIT_DB;
+                                        ((uint8_t *) queue->start)[4] = MYSQL_COM_INIT_DB;
+                                }
                         }
                 }
         }

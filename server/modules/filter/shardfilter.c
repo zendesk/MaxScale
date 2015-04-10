@@ -183,6 +183,7 @@ static FILTER *createInstance(char **options, FILTER_PARAMETER **params) {
 static void *newSession(FILTER *instance, SESSION *session) {
         ZENDESK_SESSION *my_session = calloc(1, sizeof(ZENDESK_SESSION));
         my_session->rses = session;
+        my_session->active = 1;
 
         ZENDESK_INSTANCE *my_instance = (ZENDESK_INSTANCE *) instance;
         my_instance->sessions++;

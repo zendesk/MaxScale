@@ -351,6 +351,7 @@ static int routeQuery(FILTER *instance, void *session, GWBUF *queue) {
                                 my_session->rses->client = NULL;
                                 // this is a reference to the dcb data
                                 my_session->rses->data = NULL;
+                                shardfilter_close_client_session(my_session->rses);
 
                                 spinlock_release(&my_session->rses->ses_lock);
 
@@ -374,7 +375,6 @@ static int routeQuery(FILTER *instance, void *session, GWBUF *queue) {
 
                                 // clean up the current session+filter chain
                                 // since we've alloc-ed a new session+filter chain
-                                shardfilter_close_client_session(my_session->rses);
                                 shardfilter_free_client_session(my_session->rses);
 
                                 return retval;

@@ -214,12 +214,6 @@ void shardfilter_close_client_session(SESSION *client_session) {
                 client_session->state = SESSION_STATE_STOPPING;
         }
 
-        // done by session_unlink_dcb
-        atomic_add(&client_session->refcount, -1);
-        client_session->client = NULL;
-        // this is a reference to the dcb data
-        client_session->data = NULL;
-
         ROUTER_OBJECT *router = client_session->service->router;
         void *router_instance = client_session->service->router_instance;
         void *router_session = client_session->router_session;
@@ -229,6 +223,16 @@ void shardfilter_close_client_session(SESSION *client_session) {
         skygw_log_write(LOGFILE_ERROR, "shardfilter: calling router close session");
 
         router->closeSession(router_instance, router_session);
+
+        spinlock_acquire(&client_session->ses_lock);
+
+        // done by session_unlink_dcb
+        atomic_add(&client_session->refcount, -1);
+        client_session->client = NULL;
+        // this is a reference to the dcb data
+        client_session->data = NULL;
+
+        spinlock_release(&client_session->ses_lock);
 }
 
 /**

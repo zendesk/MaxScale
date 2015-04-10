@@ -351,9 +351,10 @@ static int routeQuery(FILTER *instance, void *session, GWBUF *queue) {
                                 my_session->rses->client = NULL;
                                 // this is a reference to the dcb data
                                 my_session->rses->data = NULL;
-                                shardfilter_close_client_session(my_session->rses);
 
                                 spinlock_release(&my_session->rses->ses_lock);
+
+                                shardfilter_close_client_session(my_session->rses);
 
                                 DOWNSTREAM shard;
                                 shard.instance = (void *) service->router_instance;

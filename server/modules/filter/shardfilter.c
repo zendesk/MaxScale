@@ -214,6 +214,12 @@ void shardfilter_close_client_session(SESSION *client_session) {
                 client_session->state = SESSION_STATE_STOPPING;
         }
 
+        // done by session_unlink_dcb
+        atomic_add(&client_session->refcount, -1);
+        client_session->client = NULL;
+        // this is a reference to the dcb data
+        client_session->data = NULL;
+
         ROUTER_OBJECT *router = client_session->service->router;
         void *router_instance = client_session->service->router_instance;
         void *router_session = client_session->router_session;
@@ -343,16 +349,6 @@ static int routeQuery(FILTER *instance, void *session, GWBUF *queue) {
                                 }
 
                                 CHK_SESSION(new_session);
-
-                                spinlock_acquire(&my_session->rses->ses_lock);
-
-                                // done by session_unlink_dcb
-                                atomic_add(&my_session->rses->refcount, -1);
-                                my_session->rses->client = NULL;
-                                // this is a reference to the dcb data
-                                my_session->rses->data = NULL;
-
-                                spinlock_release(&my_session->rses->ses_lock);
 
                                 shardfilter_close_client_session(my_session->rses);
 

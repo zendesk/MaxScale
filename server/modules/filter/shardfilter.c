@@ -223,16 +223,6 @@ void shardfilter_close_client_session(SESSION *client_session) {
         skygw_log_write(LOGFILE_ERROR, "shardfilter: calling router close session");
 
         router->closeSession(router_instance, router_session);
-
-        spinlock_acquire(&client_session->ses_lock);
-
-        // done by session_unlink_dcb
-        atomic_add(&client_session->refcount, -1);
-        client_session->client = NULL;
-        // this is a reference to the dcb data
-        client_session->data = NULL;
-
-        spinlock_release(&client_session->ses_lock);
 }
 
 /**
@@ -354,7 +344,23 @@ static int routeQuery(FILTER *instance, void *session, GWBUF *queue) {
 
                                 CHK_SESSION(new_session);
 
-                                shardfilter_close_client_session(my_session->rses);
+                                spinlock_acquire(&my_session->rses->ses_lock);
+
+                                // done by session_unlink_dcb
+                                atomic_add(&my_session->rses->refcount, -1);
+                                my_session->rses->client = NULL;
+                                // this is a reference to the dcb data
+
+                                void *data = malloc(sizeof(MYSQL_session));
+
+                                if(data == NULL) {
+                                        // well, shit
+                                }
+
+                                memcpy(data, my_session->rses->data, sizeof(MYSQL_session));
+                                my_session->rses->data = data;
+
+                                spinlock_release(&my_session->rses->ses_lock);
 
                                 DOWNSTREAM shard;
                                 shard.instance = (void *) service->router_instance;
@@ -376,6 +382,7 @@ static int routeQuery(FILTER *instance, void *session, GWBUF *queue) {
 
                                 // clean up the current session+filter chain
                                 // since we've alloc-ed a new session+filter chain
+                                shardfilter_close_client_session(my_session->rses);
                                 shardfilter_free_client_session(my_session->rses);
 
                                 return retval;

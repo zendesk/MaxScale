@@ -71,8 +71,12 @@ typedef struct {
         int shard_id;
 
         SPINLOCK lock;
+
+        int active;
 } ZENDESK_SESSION;
 
+void shardfilter_close_client_session(SESSION *);
+int shardfilter_free_client_session(SESSION *);
 SERVICE *shardfilter_service_for_shard(ZENDESK_INSTANCE *, char *);
 int shardfilter_find_shard(ZENDESK_INSTANCE *, int);
 int shardfilter_find_account(char *, int);
@@ -183,6 +187,8 @@ static void *newSession(FILTER *instance, SESSION *session) {
         ZENDESK_INSTANCE *my_instance = (ZENDESK_INSTANCE *) instance;
         my_instance->sessions++;
 
+        spinlock_init(&my_session->lock);
+
 	return my_session;
 }
 
@@ -194,6 +200,38 @@ static void *newSession(FILTER *instance, SESSION *session) {
  * @param session	The session being closed
  */
 static void closeSession(FILTER *instance, void *session) {
+        ZENDESK_SESSION *my_session = (ZENDESK_SESSION *) session;
+
+        if(my_session->active == 1) {
+                SESSION *client_session = my_session->rses;
+
+                if(client_session != NULL) {
+                        skygw_log_write(LOGFILE_ERROR, "shardfilter: calling client close session");
+                        shardfilter_close_client_session(client_session);
+                }
+
+                my_session->active = 0;
+        }
+}
+
+void shardfilter_close_client_session(SESSION *client_session) {
+        CHK_SESSION(client_session);
+
+        spinlock_acquire(&client_session->ses_lock);
+
+        if(client_session->state != SESSION_STATE_STOPPING) {
+                client_session->state = SESSION_STATE_STOPPING;
+        }
+
+        ROUTER_OBJECT *router = client_session->service->router;
+        void *router_instance = client_session->service->router_instance;
+        void *router_session = client_session->router_session;
+
+        spinlock_release(&client_session->ses_lock);
+
+        skygw_log_write(LOGFILE_ERROR, "shardfilter: calling router close session");
+
+        router->closeSession(router_instance, router_session);
 }
 
 /**
@@ -203,7 +241,28 @@ static void closeSession(FILTER *instance, void *session) {
  * @param session	The session being closed
  */
 static void freeSession(FILTER *instance, void *session) {
+        // we don't want to explicitly free the rses session
+        // because the DCB does this for us on the actual session end
         free(session);
+}
+
+
+int shardfilter_free_client_session(SESSION *client_session) {
+        session_state_t state = client_session->state;
+
+        if(state == SESSION_STATE_ROUTER_READY) {
+                session_free(client_session);
+        } else if(state == SESSION_STATE_TO_BE_FREED) {
+                client_session->service->router->freeSession(client_session->service->router_instance, client_session->router_session);
+                client_session->state = SESSION_STATE_FREE;
+
+                free(client_session);
+                return 0;
+        } else if(state == SESSION_STATE_STOPPING) {
+                skygw_log_write(LOGFILE_ERROR, "shardfilter: client session still stopping, will try to free later");
+        }
+
+        return 1;
 }
 
 /**
@@ -233,8 +292,13 @@ static int routeQuery(FILTER *instance, void *session, GWBUF *queue) {
         ZENDESK_INSTANCE *zd_instance = (ZENDESK_INSTANCE *)instance;
         ZENDESK_SESSION *my_session = (ZENDESK_SESSION *) session;
 
-        spinlock_init(&my_session->lock);
         spinlock_acquire(&my_session->lock);
+
+        if(my_session->active == 0) {
+                skygw_log_write(LOGFILE_TRACE, "shardfilter: session is not active");
+                gwbuf_free(queue);
+                return 0;
+        }
 
         uint8_t *bufdata = GWBUF_DATA(queue);
 
@@ -269,33 +333,62 @@ static int routeQuery(FILTER *instance, void *session, GWBUF *queue) {
                                 }
 
                                 ROUTER_OBJECT *router = service->router;
+                                DCB *dcb = my_session->rses->client;
+                                SESSION *new_session = session_alloc(service, dcb);
 
-                                if(my_session->shard_server.session) {
-                                        // router->freeSession(my_session->shard_server.instance, my_session->shard_server.session);
+                                if(new_session == NULL) {
+                                        LOGIF(LE, (skygw_log_write_flush(LOGFILE_ERROR, "shardfilter: error allocating session, terminating")));
+
+                                        freeSession(instance, session);
+                                        shardfilter_free_client_session(my_session->rses);
+
+                                        my_session = NULL;
+
+                                        spinlock_release(&my_session->lock);
+
+                                        skygw_log_write(LOGFILE_TRACE, "shardfilter: session does not exist -- returning");
+                                        gwbuf_free(queue);
+                                        return 0;
                                 }
 
+                                CHK_SESSION(new_session);
 
-                                SESSION *session = session_alloc(service, my_session->rses->client);
+                                spinlock_acquire(&my_session->rses->ses_lock);
 
-                                if(session != NULL) {
-                                        my_session->shard_server.instance = (void *) service->router_instance;
-                                        my_session->shard_server.session = session->router_session;
-                                        my_session->shard_server.routeQuery = (void *) router->routeQuery;
-                                        my_session->shard_id = shard_id;
+                                // done by session_unlink_dcb
+                                atomic_add(&my_session->rses->refcount, -1);
+                                my_session->rses->client = NULL;
 
-                                        // XXX: modutil_replace_SQL checks explicitly for COM_QUERY
-                                        // but just generically replaces the GWBUF data
-                                        bufdata[4] = MYSQL_COM_QUERY;
+                                spinlock_release(&my_session->rses->ses_lock);
 
-                                        queue = modutil_replace_SQL(queue, shard_database_id);
-                                        queue = gwbuf_make_contiguous(queue);
+                                DOWNSTREAM shard;
+                                shard.instance = (void *) service->router_instance;
+                                shard.session = new_session->router_session;
+                                shard.routeQuery = (void *) router->routeQuery;
 
-                                        ((uint8_t *) queue->start)[4] = MYSQL_COM_INIT_DB;
-                                }
+                                // XXX: modutil_replace_SQL checks explicitly for COM_QUERY
+                                // but just generically replaces the GWBUF data
+                                bufdata[4] = MYSQL_COM_QUERY;
+
+                                queue = modutil_replace_SQL(queue, shard_database_id);
+                                queue = gwbuf_make_contiguous(queue);
+
+                                ((uint8_t *) queue->start)[4] = MYSQL_COM_INIT_DB;
+
+                                int retval = shard.routeQuery(shard.instance, shard.session, queue);
+
+                                spinlock_release(&my_session->lock);
+
+                                // clean up the current session+filter chain
+                                // since we've alloc-ed a new session+filter chain
+                                closeSession(instance, session);
+                                shardfilter_free_client_session(my_session->rses);
+                                freeSession(instance, session);
+
+                                return retval;
                         }
                 }
         }
-
 
         spinlock_release(&my_session->lock);
 

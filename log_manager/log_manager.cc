@@ -54,7 +54,7 @@ static simple_mutex_t msg_mutex;
 static int highprec = 0;
 static int do_syslog = 1;
 static int do_maxscalelog = 1;
-
+static int use_stdout = 0;
 /**
  * Variable holding the enabled logfiles information.
  * Used from log users to check enabled logs prior calling
@@ -308,7 +308,7 @@ const char* get_suffix_default(void)
 
 const char* get_debug_prefix_default(void)
 {
-        return "skygw_debug";
+        return "debug";
 }
 
 const char* get_debug_suffix_default(void)
@@ -318,7 +318,7 @@ const char* get_debug_suffix_default(void)
 
 const char* get_trace_prefix_default(void)
 {
-        return "skygw_trace";
+        return "trace";
 }
 
 const char* get_trace_suffix_default(void)
@@ -328,7 +328,7 @@ const char* get_trace_suffix_default(void)
 
 const char* get_msg_prefix_default(void)
 {
-        return "skygw_msg";
+        return "messages";
 }
 
 const char* get_msg_suffix_default(void)
@@ -338,7 +338,7 @@ const char* get_msg_suffix_default(void)
 
 const char* get_err_prefix_default(void)
 {
-        return "skygw_err";
+        return "error";
 }
 
 const char* get_err_suffix_default(void)
@@ -1331,12 +1331,14 @@ static bool logfile_set_enabled(
         }
         lf = &lm->lm_logfile[id];
         CHK_LOGFILE(lf);
-
-        if (val) {
-            logstr = strdup("---\tLogging is enabled\t--");
-        } else {
-            logstr = strdup("---\tLogging is disabled\t--");
-        }
+        if(use_stdout == 0)
+        {
+            if (val) {
+                logstr = strdup("---\tLogging to file is enabled\t--");
+            } else {
+                logstr = strdup("---\tLogging to file is disabled\t--");
+            }
+        
         oldval = lf->lf_enabled;
         lf->lf_enabled = val;
         err = logmanager_write_log(id,
@@ -1348,7 +1350,7 @@ static bool logfile_set_enabled(
                                    logstr,
                                    notused);
         free(logstr);
-        
+        }
         if (err != 0) {
             lf->lf_enabled = oldval;
             fprintf(stderr,
@@ -1368,7 +1370,7 @@ int skygw_log_write_flush(
         const char*   str,
         ...)
 {
-        int     err = 0;
+        int     i,err = 0;
         va_list valist;
         size_t  len;
 
@@ -1379,15 +1381,6 @@ int skygw_log_write_flush(
         }
         CHK_LOGMANAGER(lm);
 
-	/**
-	 * If particular log is disabled in general and it is not enabled for
-	 * the current session, then unregister and return.
-	 */
-	if (!LOG_IS_ENABLED(id)) 
-	{
-		err = 1;
-		goto return_unregister;
-        }
         /**
          * Find out the length of log string (to be formatted str).
          */
@@ -1401,16 +1394,27 @@ int skygw_log_write_flush(
         /**
          * Write log string to buffer and add to file write list.
          */
-        va_start(valist, str);
-        err = logmanager_write_log(id, true, true, true, false, len, str, valist);
-        va_end(valist);
+        for(i = LOGFILE_FIRST;i<=LOGFILE_LAST;i <<=1)
+        {
+            /**
+             * If particular log is disabled in general and it is not enabled for
+             * the current session, check the next log.
+             */
+            if (!LOG_IS_ENABLED(i) || (i & id) == 0)
+            {
+                continue;
+            }
 
-        if (err != 0) {
-            fprintf(stderr, "skygw_log_write_flush failed.\n");
-            goto return_unregister;
+            va_start(valist, str);
+            err = logmanager_write_log((logfile_id_t)i, true, true, true, false, len, str, valist);
+            va_end(valist);
+
+            if (err != 0) {
+                fprintf(stderr, "skygw_log_write_flush failed.\n");
+                break;
+            }
         }
 
-return_unregister:
         logmanager_unregister();
 return_err:
         return err;
@@ -1423,7 +1427,7 @@ int skygw_log_write(
         const char*   str,
         ...)
 {
-        int     err = 0;
+        int     i,err = 0;
         va_list valist;
         size_t  len;
         
@@ -1438,16 +1442,12 @@ int skygw_log_write(
          * If particular log is disabled in general and it is not enabled for
 	 * the current session, then unregister and return.
          */
-        if (!LOG_IS_ENABLED(id))
-	{
-                err = 1;
-                goto return_unregister;
-        }
+
         /**
          * Find out the length of log string (to be formatted str).
          */
         va_start(valist, str);
-        len = vsnprintf(NULL, 0, str, valist);
+            len = vsnprintf(NULL, 0, str, valist);
         va_end(valist);
         /**
          * Add one for line feed.
@@ -1457,16 +1457,27 @@ int skygw_log_write(
          * Write log string to buffer and add to file write list.
          */
 
-        va_start(valist, str);
-        err = logmanager_write_log(id, false, true, true, false, len, str, valist);
-        va_end(valist);
+        for(i = LOGFILE_FIRST;i<=LOGFILE_LAST;i <<=1)
+        {
+            /**
+             * If particular log is disabled in general and it is not enabled for
+             * the current session, check the next log.
+             */
+            if (!LOG_IS_ENABLED(i) || (i & id) == 0)
+            {
+                continue;
+            }
 
-        if (err != 0) {
-            fprintf(stderr, "skygw_log_write failed.\n");
-            goto return_unregister;
+            va_start(valist, str);
+            err = logmanager_write_log((logfile_id_t)i, false, true, true, false, len, str, valist);
+            va_end(valist);
+
+            if (err != 0) {
+                fprintf(stderr, "skygw_log_write failed.\n");
+                break;
+            }
         }
 
-return_unregister:
         logmanager_unregister();
 return_err:
         return err;
@@ -1675,7 +1686,8 @@ static bool fnames_conf_init(
                 "-j <log path>       ............(\"/tmp\")\n"
                 "-l <syslog log file ids> .......(no default)\n"
                 "-m <syslog ident>   ............(argv[0])\n"
-                "-s <shmem log file ids>  .......(no default)\n";
+                "-s <shmem log file ids>  .......(no default)\n"
+                "-o                       .......(write logs to stdout)\n";
 
         /**
          * When init_started is set, clean must be done for it.
@@ -1686,9 +1698,12 @@ static bool fnames_conf_init(
         fn->fn_chk_tail = CHK_NUM_FNAMES;
 #endif
         optind = 1; /**<! reset getopt index */
-        while ((opt = getopt(argc, argv, "+a:b:c:d:e:f:g:h:i:j:l:m:s:")) != -1)
+        while ((opt = getopt(argc, argv, "+a:b:c:d:e:f:g:h:i:j:l:m:s:o")) != -1)
         {
                 switch (opt) {
+                case 'o':
+                        use_stdout = 1;
+                        break;
                 case 'a':
                         fn->fn_debug_prefix = strndup(optarg, MAX_PREFIXLEN);
                         break;
@@ -2144,8 +2159,14 @@ static bool logfile_open_file(
 	bool  succp;
 	char* start_msg_str;
 	int   err;
-	
-	if (lf->lf_store_shmem)
+
+        if(use_stdout)
+        {
+            fw->fwr_file[lf->lf_id] = skygw_file_alloc (
+                    lf->lf_full_file_name);
+            fw->fwr_file[lf->lf_id]->sf_file = stdout;
+        }
+	else if (lf->lf_store_shmem)
 	{
 		/** Create symlink pointing to log file */
 		fw->fwr_file[lf->lf_id] = skygw_file_init(
@@ -2168,32 +2189,35 @@ static bool logfile_open_file(
 		succp = false;
 		goto return_succp;
 	}
-	
-	if (lf->lf_enabled) 
-	{
+
+        if(use_stdout == 0)
+        {
+            if (lf->lf_enabled)
+            {
 		start_msg_str = strdup("---\tLogging is enabled.\n");
-	} 
-	else 
-	{
+            }
+            else
+            {
 		start_msg_str = strdup("---\tLogging is disabled.\n");
-	}
-	err = skygw_file_write(fw->fwr_file[lf->lf_id],
-			       (void *)start_msg_str,
-			       strlen(start_msg_str),
-			       true);
-	
-	if (err != 0)
-	{
+            }
+            err = skygw_file_write(fw->fwr_file[lf->lf_id],
+                                   (void *)start_msg_str,
+                                   strlen(start_msg_str),
+                                   true);
+            
+            if (err != 0)
+            {
 		fprintf(stderr,
-			"Error : writing to file %s failed due to %d, %s. "
+                 "Error : writing to file %s failed due to %d, %s. "
 			"Exiting MaxScale.\n",
-			lf->lf_full_file_name, 
-			err,
-			strerror(err));
+                 lf->lf_full_file_name,
+                 err,
+                 strerror(err));
 		succp = false;
 		goto return_succp;
-	}
-	free(start_msg_str);
+            }
+            free(start_msg_str);
+        }
 	succp = true;
 	
 return_succp:
@@ -2557,14 +2581,14 @@ static bool logfile_init(
         }
 
 #if defined(SS_DEBUG)
-        if (store_shmem)
+        if (store_shmem && !use_stdout)
 	{
 		fprintf(stderr, "%s\t: %s->%s\n", 
 			STRLOGNAME(logfile_id),
 			logfile->lf_full_link_name,
 			logfile->lf_full_file_name);
 	}
-	else
+	else if(!use_stdout)
 	{
 		fprintf(stderr, "%s\t: %s\n", 
 			STRLOGNAME(logfile_id),
@@ -2718,7 +2742,10 @@ static void filewriter_done(
                 for (i=LOGFILE_FIRST; i<=LOGFILE_LAST; i++) 
 		{
                     id = (logfile_id_t)i;
-                    skygw_file_close(fw->fwr_file[id], true);
+                    if(use_stdout)
+                        skygw_file_free(fw->fwr_file[id]);
+                    else
+                        skygw_file_close(fw->fwr_file[id], true);
                 }
                 fw->fwr_state = DONE;
             case DONE:
@@ -2850,6 +2877,9 @@ static void* thr_filewriter_fun(
 				} 
 				else if ((succp = logfile_open_file(fwr, lf)))
 				{
+                                    if(use_stdout)
+                                        skygw_file_free (file);
+                                    else
 					skygw_file_close(file, false); /*< close old file */
 				}
 				
@@ -3105,7 +3135,7 @@ void flushall_logfiles(bool flush)
  */
 void skygw_log_sync_all(void)
 {
-	skygw_log_write(LOGFILE_TRACE,"Starting log flushing to disk.");
+	if(!use_stdout)skygw_log_write(LOGFILE_TRACE,"Starting log flushing to disk.");
 	flushall_logfiles(true);
 	skygw_message_send(lm->lm_logmes);
 	skygw_message_wait(lm->lm_clientmes);

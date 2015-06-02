@@ -34,7 +34,7 @@
  - [Filter Tutorial](Tutorials/Filter-Tutorial.md)
  - [Galera Cluster Connection Routing Tutorial](Tutorials/Galera-Cluster-Connection-Routing-Tutorial.md)
  - [Galera Cluster Read-Write Splitting Tutorial](Tutorials/Galera-Cluster-Read-Write-Splitting-Tutorial.md)
- - [MaxScale Information Schema Tutorial](Tutorials/MaxScale-Informaton-Schema.md)
+ - [MaxScale Information Schema Tutorial](Tutorials/MaxScale-Information-Schema.md)
  - [MySQL Replication Connection Routing Tutorial](Tutorials/MySQL-Replication-Connection-Routing-Tutorial.md)
  - [MySQL Replication Read-Write Splitting Tutorial](Tutorials/MySQL-Replication-Read-Write-Splitting-Tutorial.md)
  - [MySQL Cluster Setup](Tutorials/MySQL-Cluster-Setup.md)
@@ -42,7 +42,15 @@
  - [RabbitMQ Setup and MaxScale Integration Tutorial](Tutorials/RabbitMQ-Setup-And-MaxScale-Integration.md)
  - [Nagios Plugins for MaxScale Tutorial](Tutorials/Nagios-Plugins.md)
 
+## Routers
+
+ - [Read Write Split](routers/ReadWriteSplit.md)
+ - [Read Connnection Router](routers/ReadConnRoute.md)
+ - [Schemarouter](routers/SchemaRouter.md)
+
 ## Filters
+
+Here are detailed documents about the filters MaxScale offers. They contain configuration guides and example use cases. Before reading these,you should have read the filter tutorial so that you know how they work and how to configure them.
 
  - [Query Log All](filters/Query-Log-All-Filter.md)
  - [Regex Filter](filters/Regex-Filter.md)
@@ -50,6 +58,12 @@
  - [Top N Filter](filters/Top-N-Filter.md)
  - [Database Firewall Filter](filters/Database-Firewall-Filter.md)
  - [RabbitMQ Filter](filters/RabbitMQ-Filter.md)
+
+## Monitors
+ - [MySQL Monitor](monitors/MySQL-Monitor.md)
+ - [Galera Monitor](monitors/Galera-Monitor.md)
+ - [Multi-Master Monitor](monitors/MM-Monitor.md)
+ - [MySQL Cluster Monitor](monitors/NDB-Cluster-Monitor.md)
 
 ## Utilities
 

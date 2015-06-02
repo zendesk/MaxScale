@@ -6,15 +6,17 @@
 #include <maxscale_test.h>
 #include <log_manager.h>
 
-void init_test_env()
+void init_test_env(char *path)
 {
-    int argc = 3;
+    int argc = 5;
     
     char* argv[] =
         {
             "log_manager",
+            "-l",
+            "LOGFILE_ERROR",
             "-j",
-            TEST_LOG_DIR,
+            path? path:TEST_LOG_DIR,
             NULL
         };
 

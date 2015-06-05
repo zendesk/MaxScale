@@ -43,12 +43,7 @@ static void setNetworkTimeout(void *, int, int);
 static MONITOR_OBJECT MyObject = {
 	startMonitor,
 	stopMonitor,
-	registerServer,
-	unregisterServer,
-	defaultUser,
-	diagnostics,
-	setInterval,
-	setNetworkTimeout
+        diagnostics
 };
 
 int account_monitor_connect(MYSQL_MONITOR *);
@@ -86,11 +81,10 @@ MONITOR_OBJECT *GetModuleObject() {
 }
 
 static void *startMonitor(void *arg, void *opt) {
-        MYSQL_MONITOR *handle;
+        MONITOR *monitor = (MONITOR *) arg;
+        MYSQL_MONITOR *handle = monitor->handle;
 
-        if(arg) { /* Must be a restart */
-                handle = arg;
-        } else {
+        if(handle == NULL) {
                 handle = (MYSQL_MONITOR *) calloc(1, sizeof(MYSQL_MONITOR));
 
                 if(handle == NULL)
@@ -311,21 +305,27 @@ static void monitorMain(void *arg) {
         }
 }
 
-int account_monitor_connect(MYSQL_MONITOR *handle) {
-        if(handle->service->dbref == NULL)
-                return 1;
-
-        SERVER_REF *dbref = handle->service->dbref;
+SERVER *account_monitor_find_slave(SERVER_REF *dbref) {
         SERVER *server;
 
         while(dbref != NULL) {
                 server = dbref->server;
 
                 if(SERVER_IS_RUNNING(server) && SERVER_IS_SLAVE(server))
-                        break;
+                        return server;
 
                 dbref = dbref->next;
         }
+
+        return NULL;
+}
+
+int account_monitor_connect(MYSQL_MONITOR *handle) {
+        if(handle->service->dbref == NULL)
+                return 1;
+
+        SERVER_REF *dbref = handle->service->dbref;
+        SERVER *server = account_monitor_find_slave(dbref);
 
         if(server == NULL)
                 return 1;

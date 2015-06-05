@@ -36,7 +36,7 @@ install(TARGETS namedserverfilter DESTINATION ${MAXSCALE_LIBDIR})
 
 add_library(shardfilter SHARED shardfilter.c)
 target_link_libraries(shardfilter log_manager utils)
-install(TARGETS shardfilter DESTINATION modules)
+install(TARGETS shardfilter DESTINATION ${MAXSCALE_LIBDIR})
 
 if(BUILD_SLAVELAG)
   add_library(slavelag SHARED slavelag.c)

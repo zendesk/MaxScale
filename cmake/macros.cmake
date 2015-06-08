@@ -131,6 +131,10 @@ macro(check_deps)
     message(FATAL_ERROR "Could not find libpthread")
   endif()
 
+  find_library(HAVE_LIBMICROHTTPD NAMES microhttpd)
+  if(NOT HAVE_LIBMICROHTTPD)
+    message(FATAL_ERROR "Could not find libmicrohttpd")
+  endif()
 
 endmacro()
 

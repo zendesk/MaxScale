@@ -14,6 +14,10 @@ add_library(accountmon SHARED account_mon.c)
 target_link_libraries(accountmon log_manager utils)
 install(TARGETS accountmon DESTINATION ${MAXSCALE_LIBDIR})
 
+add_library(flexmastermon SHARED flexmaster_monitor.c)
+target_link_libraries(flexmastermon microhttpd log_manager)
+install(TARGETS flexmastermon DESTINATION ${MAXSCALE_LIBDIR})
+
 if(BUILD_MMMON)
   add_library(mmmon SHARED mmmon.c  monitor_common.c)
   target_link_libraries(mmmon log_manager utils)

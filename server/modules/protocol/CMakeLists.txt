@@ -22,8 +22,3 @@ endif()
 add_library(maxscaled SHARED maxscaled.c)
 target_link_libraries(maxscaled log_manager utils)
 install(TARGETS maxscaled DESTINATION ${MAXSCALE_LIBDIR})
-
-
-
-
-

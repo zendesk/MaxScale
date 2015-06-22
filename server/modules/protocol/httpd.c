@@ -38,6 +38,7 @@
  */
 
 #include <httpd.h>
+#include <http_parser.h>
 #include <gw.h>
 #include <modinfo.h>
 #include <log_manager.h>
@@ -67,8 +68,20 @@ static int httpd_hangup(DCB *dcb);
 static int httpd_accept(DCB *dcb);
 static int httpd_close(DCB *dcb);
 static int httpd_listen(DCB *dcb, char *config);
-static int httpd_get_line(int sock, char *buf, int size);
-static void httpd_send_headers(DCB *dcb, int final);
+
+static int on_url(http_parser *, const char *, size_t);
+static int on_header_field(http_parser *, const char *, size_t);
+static int on_header_value(http_parser *, const char *, size_t);
+static int on_body(http_parser *, const char *, size_t);
+static int on_message_complete(http_parser *);
+
+static http_parser_settings http_settings = {
+        .on_url = on_url,
+        .on_header_field = on_header_field,
+        .on_header_value = on_header_value,
+        .on_body = on_body,
+        .on_message_complete = on_message_complete
+};
 
 /**
  * The "module object" for the httpd protocol module.
@@ -130,143 +143,37 @@ GetModuleObject()
 static int
 httpd_read_event(DCB* dcb)
 {
-SESSION		*session = dcb->session;
-ROUTER_OBJECT	*router = session->service->router;
-ROUTER		*router_instance = session->service->router_instance;
-void		*rsession = session->router_session;
+        SESSION		*session = dcb->session;
+        ROUTER_OBJECT	*router = session->service->router;
+        ROUTER		*router_instance = session->service->router_instance;
+        void		*rsession = session->router_session;
 
-int numchars = 1;
-char buf[HTTPD_REQUESTLINE_MAXLEN-1] = "";
-char *query_string = NULL;
-char method[HTTPD_METHOD_MAXLEN-1] = "";
-char url[HTTPD_SMALL_BUFFER] = "";
-int cgi = 0;
-size_t i, j;
-int headers_read = 0;
-HTTPD_session *client_data = NULL;
-GWBUF	*uri;
+        http_parser *parser = dcb->data;
 
-	client_data = dcb->data;
+        size_t len = 80*1024, nparsed;
+        char buf[len];
+        ssize_t recved;
 
-	/**
-	 * get the request line
-	 * METHOD URL HTTP_VER\r\n
-	 */
+        recved = recv(dcb->fd, buf, len, 0);
 
-	numchars = httpd_get_line(dcb->fd, buf, sizeof(buf));
+        if (recved < 0) {
+                  /* Handle error. */
+                dcb_close(dcb);
+        }
 
-	i = 0; j = 0;
-	while (!ISspace(buf[j]) && (i < sizeof(method) - 1)) {
-		method[i] = buf[j];
-		i++; j++;
-	}
-	method[i] = '\0';
+        /* Start up / continue the parser.
+         *  * Note we pass recved==0 to signal that EOF has been received.
+         *   */
+        nparsed = http_parser_execute(parser, &http_settings, buf, recved);
 
-	strcpy(client_data->method, method);
-
-	/* check allowed http methods */
-	if (strcasecmp(method, "GET") && strcasecmp(method, "POST")) {
-		//httpd_unimplemented(dcb->fd);
-		return 0;
-	}
-
-	if (strcasecmp(method, "POST") == 0)
-		cgi = 1;
-
-	i = 0;
-
-	while ( (j < sizeof(buf)) && ISspace(buf[j])) {
-		j++;
-	}
-
-	while ((j < sizeof(buf) - 1) && !ISspace(buf[j]) && (i < sizeof(url) - 1)) {
-		url[i] = buf[j];
-		i++; j++;
-	}
-
-	url[i] = '\0';
-
-	/**
-	 * Get the query string if availble
-	 */
-
-	if (strcasecmp(method, "GET") == 0) {
-		query_string = url;
-		while ((*query_string != '?') && (*query_string != '\0'))
-			query_string++;
-		if (*query_string == '?') {
-			cgi = 1;
-			*query_string = '\0';
-			query_string++;
-		}
-	}
-
-	/**
-	 * Get the request headers
-	 */
-
-	while ((numchars > 0) && strcmp("\n", buf)) {
-		char *value = NULL;
-		char *end = NULL;
-		numchars = httpd_get_line(dcb->fd, buf, sizeof(buf));
-		if ( (value = strchr(buf, ':'))) {
-			*value = '\0';
-			value++;
-			end = &value[strlen(value) -1];
-			*end = '\0';
-
-			if (strncasecmp(buf, "Hostname", 6) == 0) {
-				strcpy(client_data->hostname, value);
-			}
-			if (strncasecmp(buf, "useragent", 9) == 0) {
-				strcpy(client_data->useragent, value);
-			}
-		}
-	}
-
-	if (numchars) {
-		headers_read = 1;
-		memcpy(&client_data->headers_received, &headers_read, sizeof(int));
-	}
-
-	/**
-	 * Now begins the server reply
-	 */
-
-	/* send all the basic headers and close with \r\n */
-	httpd_send_headers(dcb, 1);
-
-#if 0
-	/**
-	 * ToDO: launch proper content handling based on the requested URI, later REST interface
-	 *
-	 */
-	if (strcmp(url, "/show") == 0) {
-		if (query_string && strlen(query_string)) {
-			if (strcmp(query_string, "dcb") == 0)
-				dprintAllDCBs(dcb);
-			if (strcmp(query_string, "session") == 0)
-				dprintAllSessions(dcb);
-		}
-	}
-	if (strcmp(url, "/services") == 0) {
-		RESULTSET *set, *seviceGetList();
-		if ((set = serviceGetList()) != NULL)
-		{
-			resultset_stream_json(set, dcb);
-			resultset_free(set);
-		}
-	}
-#endif
-	if ((uri = gwbuf_alloc(strlen(url) + 1)) != NULL)
-	{
-		strcpy((char *)GWBUF_DATA(uri), url);
-		gwbuf_set_type(uri, GWBUF_TYPE_HTTP);
-		SESSION_ROUTE_QUERY(session, uri);
-	}
+        if (parser->upgrade || nparsed != recved) {
+                // Error or upgrade request, just close it
+                dcb_close(dcb);
+        }
 
 	/* force the client connecton close */
-        dcb_close(dcb);
+        // TODO
+        // dcb_close(dcb);
 
 	return 0;
 }
@@ -354,15 +261,17 @@ int	n_connect = 0;
 				client->remote = strdup(inet_ntoa(addr.sin_addr));
 				memcpy(&client->func, &MyObject, sizeof(GWPROTOCOL));
 
-				/* we don't need the session */
-				client->session = NULL;
+                                http_parser *parser = malloc(sizeof(http_parser));
 
-				/* create the session data for HTTPD */
-				client_data = (HTTPD_session *)calloc(1, sizeof(HTTPD_session));
-				client->data = client_data;
+                                if(parser == NULL) { // todo
+                                }
+
+                                http_parser_init(parser, HTTP_REQUEST);
+                                parser->data = client;
+
+                                client->data = parser;
 			
-				client->session =
-                                	session_alloc(dcb->session->service, client);
+				client->session = session_alloc(dcb->session->service, client);
 
 				if (poll_add_dcb(client) == -1)
 					{
@@ -452,59 +361,35 @@ int			syseno = 0;
 	{
 		return 0;
 	}
+
 	return 1;
 }
 
-/**
- * HTTPD get line from client
- */
-static int httpd_get_line(int sock, char *buf, int size) {
-	int i = 0;
-	char c = '\0';
-	int n;
+static int on_message_complete(http_parser *parser) {
+        DCB *dcb = parser->data;
 
-	while ((i < size - 1) && (c != '\n')) {
-		n = recv(sock, &c, 1, 0);
-		/* DEBUG printf("%02X\n", c); */
-		if (n > 0) {
-			if (c == '\r') {
-				n = recv(sock, &c, 1, MSG_PEEK);
-				/* DEBUG printf("%02X\n", c); */
-				if ((n > 0) && (c == '\n')) {
-					if(recv(sock, &c, 1, 0) < 0){
-						c = '\n';	
-					}
-				} else {
-					c = '\n';
-				}
-			}
-			buf[i] = c;
-			i++;
-		} else {
-			c = '\n';
-		}
-	}
-
-	buf[i] = '\0';
-
-	return i;
-}
-
-/**
- * HTTPD send basic headers with 200 OK
- */
-static void httpd_send_headers(DCB *dcb, int final)
-{
 	char date[64] = "";
 	const char *fmt = "%a, %d %b %Y %H:%M:%S GMT";
 	time_t httpd_current_time = time(NULL);
 
 	strftime(date, sizeof(date), fmt, localtime(&httpd_current_time));
+        dcb_printf(dcb, "HTTP/1.1 200 OK\r\nDate: %s\r\nServer: %s\r\nConnection: close\r\nContent-Type: application/json\r\n\r\n", date, HTTP_SERVER_STRING);
 
-	dcb_printf(dcb, "HTTP/1.1 200 OK\r\nDate: %s\r\nServer: %s\r\nConnection: close\r\nContent-Type: application/json\r\n", date, HTTP_SERVER_STRING);
+        return 0;
+}
 
-	/* close the headers */
-	if (final) {
- 		dcb_printf(dcb, "\r\n");
-	}
+static int on_url(http_parser *parser, const char *at, size_t length) {
+        return 0;
+}
+
+static int on_header_field(http_parser *parser, const char *at, size_t length) {
+        return 0;
+}
+
+static int on_header_value(http_parser *parser, const char *at, size_t length) {
+        return 0;
+}
+
+static int on_body(http_parser *parser, const char *at, size_t length) {
+        return 0;
 }

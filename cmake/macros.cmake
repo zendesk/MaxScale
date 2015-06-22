@@ -131,6 +131,11 @@ macro(check_deps)
     message(FATAL_ERROR "Could not find libpthread")
   endif()
 
+  find_library(HAVE_HTTP_PARSER NAMES http_parser)
+  if(NOT HAVE_HTTP_PARSER)
+    message(FATAL_ERROR "Could not find libhttp_parser")
+  endif()
+
 
 endmacro()
 

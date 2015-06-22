@@ -14,6 +14,7 @@
   check_include_files(fcntl.h HAVE_FCNTL)
   check_include_files(ftw.h HAVE_FTW)
   check_include_files(getopt.h HAVE_GETOPT)
+  check_include_files(http_parser.h HAVE_HTTP_PARSER)
   check_include_files(ini.h HAVE_INI)
   check_include_files(math.h HAVE_MATH)
   check_include_files(memlog.h HAVE_MEMLOG)

@@ -52,11 +52,12 @@ MODULE_INFO info = {
 };
 
 typedef struct {
-        SERVICE         *service;
+        SERVICE *service;
+        SERVICE *top;
 } FLEXMASTER_INSTANCE;
 
 typedef struct {
-        SESSION         *session;
+        SESSION *session;
 } FLEXMASTER_SESSION;
 
 /** Defined in log_manager.cc */
@@ -133,6 +134,19 @@ static ROUTER *createInstance(SERVICE *service, char **options) {
                 return NULL;
 
         instance->service = service;
+
+        char *parent_service_name = options[0];
+
+        if(parent_service_name == NULL) {
+                // TODO
+        }
+
+        instance->top = service_find(parent_service_name);
+
+        if(instance->top == NULL) {
+                // TODO
+        }
+
         return (ROUTER *) instance;
 }
 
@@ -186,11 +200,7 @@ static void freeSession(ROUTER* router_instance, void *router_client_session) {
  */
 static int routeQuery(ROUTER *instance, void *session, GWBUF *queue) {
         FLEXMASTER_SESSION *flex_session = (FLEXMASTER_SESSION *) session;
-        char *url;
-
-        if ((url = gwbuf_get_property(queue, "URL")) == NULL) {
-                respond_error(flex_session, 404, "No URL available");
-        }
+        char *url = GWBUF_DATA(queue);
 
         gwbuf_free(queue);
         return 0;

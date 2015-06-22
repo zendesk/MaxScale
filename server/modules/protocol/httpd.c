@@ -147,7 +147,7 @@ httpd_read_event(DCB* dcb)
         ROUTER		*router_instance = session->service->router_instance;
         void		*rsession = session->router_session;
 
-        http_parser *parser = dcb->data->parser;
+        http_parser *parser = ((HTTPD_session *) dcb->data)->parser;
 
         char buf[HTTPD_SMALL_BUFFER];
         ssize_t recved = recv(dcb->fd, buf, HTTPD_SMALL_BUFFER, 0);

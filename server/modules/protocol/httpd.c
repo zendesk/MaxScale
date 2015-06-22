@@ -171,10 +171,6 @@ httpd_read_event(DCB* dcb)
                 dcb_close(dcb);
         }
 
-	/* force the client connecton close */
-        // TODO
-        // dcb_close(dcb);
-
 	return 0;
 }
 
@@ -374,6 +370,7 @@ static int on_message_complete(http_parser *parser) {
 
 	strftime(date, sizeof(date), fmt, localtime(&httpd_current_time));
         dcb_printf(dcb, "HTTP/1.1 200 OK\r\nDate: %s\r\nServer: %s\r\nConnection: close\r\nContent-Type: application/json\r\n\r\n", date, HTTP_SERVER_STRING);
+        dcb_close(dcb);
 
         return 0;
 }

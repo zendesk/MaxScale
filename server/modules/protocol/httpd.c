@@ -38,7 +38,6 @@
  */
 
 #include <httpd.h>
-#include <http_parser.h>
 #include <gw.h>
 #include <modinfo.h>
 #include <log_manager.h>
@@ -56,8 +55,8 @@ extern int            lm_enabled_logfiles_bitmask;
 extern size_t         log_ses_count[];
 extern __thread log_info_t tls_log_info;
 
-#define ISspace(x) isspace((int)(x))
 #define HTTP_SERVER_STRING "MaxScale(c) v.1.0.0"
+
 static char *version_str = "V1.0.1";
 
 static int httpd_read_event(DCB* dcb);
@@ -98,7 +97,7 @@ static GWPROTOCOL MyObject = {
 	httpd_listen,				/**< Create a listener		 */
 	NULL,					/**< Authentication		 */
 	NULL					/**< Session			 */
-	};
+};
 
 /**
  * Implementation of the mandatory version entry point
@@ -150,11 +149,8 @@ httpd_read_event(DCB* dcb)
 
         http_parser *parser = dcb->data;
 
-        size_t len = 80*1024, nparsed;
-        char buf[len];
-        ssize_t recved;
-
-        recved = recv(dcb->fd, buf, len, 0);
+        char buf[HTTPD_SMALL_BUFFER];
+        ssize_t recved = recv(dcb->fd, buf, HTTPD_SMALL_BUFFER, 0);
 
         if (recved < 0) {
                   /* Handle error. */
@@ -164,7 +160,7 @@ httpd_read_event(DCB* dcb)
         /* Start up / continue the parser.
          *  * Note we pass recved==0 to signal that EOF has been received.
          *   */
-        nparsed = http_parser_execute(parser, &http_settings, buf, recved);
+        size_t nparsed = http_parser_execute(parser, &http_settings, buf, recved);
 
         if (parser->upgrade || nparsed != recved) {
                 // Error or upgrade request, just close it
@@ -244,7 +240,6 @@ int	n_connect = 0;
 		struct sockaddr_in	addr;
 		socklen_t		addrlen;
 		DCB			*client = NULL;
-		HTTPD_session		*client_data = NULL;
 
 		if ((so = accept(dcb->fd, (struct sockaddr *)&addr, &addrlen)) == -1)
 			return n_connect;
@@ -257,15 +252,18 @@ int	n_connect = 0;
 				client->remote = strdup(inet_ntoa(addr.sin_addr));
 				memcpy(&client->func, &MyObject, sizeof(GWPROTOCOL));
 
-                                http_parser *parser = malloc(sizeof(http_parser));
+                                HTTPD_session *session = calloc(1, sizeof(HTTPD_session));
 
-                                if(parser == NULL) { // todo
+                                if(session == NULL) { // todo
                                 }
 
-                                http_parser_init(parser, HTTP_REQUEST);
-                                parser->data = client;
+                                session->parser = malloc(sizeof(http_parser));
 
-                                client->data = parser;
+                                if(session->parser == NULL) { // todo
+                                }
+
+                                http_parser_init(session->parser, HTTP_REQUEST);
+                                client->data = session;
 			
 				client->session = session_alloc(dcb->session->service, client);
 
@@ -363,6 +361,12 @@ int			syseno = 0;
 
 static int on_message_complete(http_parser *parser) {
         DCB *dcb = parser->data;
+        HTTPD_session *session = dcb->data;
+
+        http_parser_parse_url(session->url, session->url_len, 1, session->url_fields);
+
+        // TODO
+        SESSION_ROUTE_QUERY(dcb->session, NULL);
 
 	char date[64] = "";
 	const char *fmt = "%a, %d %b %Y %H:%M:%S GMT";
@@ -376,6 +380,29 @@ static int on_message_complete(http_parser *parser) {
 }
 
 static int on_url(http_parser *parser, const char *at, size_t length) {
+        DCB *dcb = parser->data;
+        HTTPD_session *session = dcb->data;
+
+        if(session->url_len == 0) {
+                session->url_len = length;
+                session->url = malloc(length + 1);
+
+                if(session->url == NULL) { // TODO
+                }
+
+                strncpy(session->url, at, length);
+        } else {
+                session->url_len += length;
+                session->url = realloc(session->url, session->url_len + 1);
+
+                if(session->url == NULL) { // TODO
+                }
+
+                strncat(session->url, at, length);
+        }
+
+        session->url[session->url_len + 1] = '\0';
+
         return 0;
 }
 

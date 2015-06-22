@@ -263,7 +263,12 @@ int	n_connect = 0;
                                 }
 
                                 http_parser_init(session->parser, HTTP_REQUEST);
+
+                                // DCB holds the HTTPD_session
                                 client->data = session;
+
+                                // Parser holds the DCB
+                                session->parser->data = client;
 			
 				client->session = session_alloc(dcb->session->service, client);
 

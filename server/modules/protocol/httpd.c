@@ -428,7 +428,7 @@ static int on_header_value(http_parser *parser, const char *at, size_t length) {
         HTTPD_session *session = dcb->data;
 
         if(last_header_was_value == 0) {
-                CURRENT_HEADAR->value_len = length;
+                CURRENT_HEADER->value_len = length;
                 CURRENT_HEADER->value = malloc(sizeof(char) * length);
 
                 strncpy(CURRENT_HEADER->value, at, length);

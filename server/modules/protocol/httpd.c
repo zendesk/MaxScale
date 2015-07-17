@@ -403,19 +403,19 @@ static int on_header_field(http_parser *parser, const char *at, size_t length) {
                         // TODO
                 }
 
-                CURRENT_HEADER->field_len = len;
-                CURRENT_HEADER->field = malloc(sizeof(char) * len);
+                CURRENT_HEADER->field_len = length;
+                CURRENT_HEADER->field = malloc(sizeof(char) * length);
 
-                strncpy(CURRENT_HEADER->field, at, len);
+                strncpy(CURRENT_HEADER->field, at, length);
 
         } else {
                 assert(CURRENT_HEADER->value_len == 0);
                 assert(CURRENT_HEADER->value == NULL);
 
-                CURRENT_HEADER->field_len += len;
+                CURRENT_HEADER->field_len += length;
                 CURRENT_HEADER->field = realloc(CURRENT_HEADER->field, sizeof(char) * CURRENT_HEADER->field_len);
 
-                strncat(CURRENT_HEADER->field, at, len);
+                strncat(CURRENT_HEADER->field, at, length);
         }
 
         last_header_was_value = 0;
@@ -428,15 +428,15 @@ static int on_header_value(http_parser *parser, const char *at, size_t length) {
         HTTPD_session *session = dcb->data;
 
         if(last_header_was_value == 0) {
-                CURRENT_HEADAR->value_len = len;
-                CURRENT_HEADER->value = malloc(sizeof(char) * len);
+                CURRENT_HEADAR->value_len = length;
+                CURRENT_HEADER->value = malloc(sizeof(char) * length);
 
-                strncpy(CURRENT_HEADER->value, at, len);
+                strncpy(CURRENT_HEADER->value, at, length);
 
         } else {
-                CURRENT_HEADER->value_len += len;
+                CURRENT_HEADER->value_len += length;
                 CURRENT_HEADER->value = realloc(CURRENT_HEADER->value, sizeof(char) * CURRENT_HEADER->value_len);
-                strncat(CURRENT_HEADER->value, at, len);
+                strncat(CURRENT_HEADER->value, at, length);
         }
 
         last_header_was_value = 1;

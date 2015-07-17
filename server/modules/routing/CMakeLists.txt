@@ -18,7 +18,7 @@ target_link_libraries(cli log_manager utils)
 install(TARGETS cli DESTINATION ${MAXSCALE_LIBDIR})
 
 add_library(flexmaster SHARED flexmaster.c)
-target_link_libraries(flexmaster log_manager utils)
+target_link_libraries(flexmaster log_manager utils httpd)
 install(TARGETS flexmaster DESTINATION ${MAXSCALE_LIBDIR})
 
 add_subdirectory(readwritesplit)

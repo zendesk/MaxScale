@@ -387,7 +387,7 @@ static int on_url(http_parser *parser, const char *at, size_t length) {
         HTTPD_session *session = dcb->data;
 
         if(append(&session->url, &session->url_len, at, length) != 0) {
-                httpd_respond_error(500, "Could not parse request.");
+                httpd_respond_error(dcb, 500, "Could not parse request.");
                 return 1;
         }
 

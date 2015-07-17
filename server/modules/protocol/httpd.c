@@ -369,7 +369,11 @@ static int on_message_complete(http_parser *parser) {
 
         session->url_fields = malloc(sizeof(struct http_parser_url));
 
-        // if(session->url_fields == NULL) TODO
+        if(session->url_fields == NULL) {
+                httpd_respond_error(dcb, 500, "Could not parse request.");
+                return 1;
+        }
+
         http_parser_parse_url(session->url, session->url_len, 0, session->url_fields);
 
         // TODO?
@@ -383,7 +387,8 @@ static int on_url(http_parser *parser, const char *at, size_t length) {
         HTTPD_session *session = dcb->data;
 
         if(append(&session->url, &session->url_len, at, length) != 0) {
-                // TODO
+                httpd_respond_error(500, "Could not parse request.");
+                return 1;
         }
 
         return 0;
@@ -400,7 +405,8 @@ static int on_header_field(http_parser *parser, const char *at, size_t length) {
                 session->headers_len++;
 
                 if(session->headers_len == HTTPD_MAX_HEADER_LINES) {
-                        // TODO
+                        httpd_respond_error(dcb, 500, "Could not parse request.");
+                        return 1;
                 }
 
                 CURRENT_HEADER->field_len = length;
@@ -449,7 +455,8 @@ static int on_body(http_parser *parser, const char *at, size_t length) {
         HTTPD_session *session = dcb->data;
 
         if(append(&session->body, &session->body_len, at, length) != 0) {
-                // TODO
+                httpd_respond_error(dcb, 500, "Could not parse request.");
+                return 1;
         }
 
         return 0;
@@ -477,4 +484,14 @@ static int append(char **ptr, size_t *len, const char *at, size_t length) {
         }
 
         return 0;
+}
+
+void httpd_respond_error(DCB *dcb, int err, char *msg) {
+        // TODO
+
+        dcb_printf(dcb, "HTTP/1.1 %d %s\n", err, msg);
+        dcb_printf(dcb, "Content-Type: text/plain\n");
+        dcb_printf(dcb, "\n");
+        dcb_printf(dcb, "%d: %s", err, msg);
+        dcb_close(dcb);
 }

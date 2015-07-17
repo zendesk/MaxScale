@@ -68,3 +68,5 @@ typedef struct httpd_session {
         size_t headers_len;
         struct httpd_header headers[HTTPD_MAX_HEADER_LINES];
 } HTTPD_session;
+
+void httpd_respond_error(DCB *, int, char *);

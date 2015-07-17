@@ -68,7 +68,7 @@ static int httpd_accept(DCB *dcb);
 static int httpd_close(DCB *dcb);
 static int httpd_listen(DCB *dcb, char *config);
 
-static int append(char **, int *, const char *, size_t);
+static int append(char **, size_t *, const char *, size_t);
 static int on_url(http_parser *, const char *, size_t);
 static int on_header_field(http_parser *, const char *, size_t);
 static int on_header_value(http_parser *, const char *, size_t);
@@ -426,7 +426,7 @@ static int on_body(http_parser *parser, const char *at, size_t length) {
         return 0;
 }
 
-static int append(char **ptr, int *len, const char *at, size_t length) {
+static int append(char **ptr, size_t *len, const char *at, size_t length) {
         if(*len == 0) {
                 *len = length;
                 *ptr = malloc(length + 1);
@@ -435,7 +435,7 @@ static int append(char **ptr, int *len, const char *at, size_t length) {
                         return 1;
                 }
 
-                strncpy(session->body, at, length);
+                strncpy(*ptr, at, length);
         } else {
                 *len += length;
                 *ptr = realloc(*ptr, *len + 1);

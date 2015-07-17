@@ -413,7 +413,7 @@ static int on_body(http_parser *parser, const char *at, size_t length) {
 static int append(char **ptr, size_t *len, const char *at, size_t length) {
         if(*len == 0) {
                 *len = length;
-                *ptr = malloc(length + 1);
+                *ptr = malloc(sizeof(char) * length);
 
                 if(*ptr == NULL) {
                         return 1;
@@ -422,7 +422,7 @@ static int append(char **ptr, size_t *len, const char *at, size_t length) {
                 strncpy(*ptr, at, length);
         } else {
                 *len += length;
-                *ptr = realloc(*ptr, *len);
+                *ptr = realloc(*ptr, sizeof(char) * (*len));
 
                 if(*ptr == NULL) {
                         return 1;

@@ -411,7 +411,7 @@ static int on_header_field(http_parser *parser, const char *at, size_t length) {
                 }
 
                 CURRENT_HEADER->field_len = length;
-                CURRENT_HEADER->field = malloc(sizeof(char) * length);
+                CURRENT_HEADER->field = malloc(length);
 
                 strncpy(CURRENT_HEADER->field, at, length);
 
@@ -420,7 +420,7 @@ static int on_header_field(http_parser *parser, const char *at, size_t length) {
                 assert(CURRENT_HEADER->value == NULL);
 
                 CURRENT_HEADER->field_len += length;
-                CURRENT_HEADER->field = realloc(CURRENT_HEADER->field, sizeof(char) * CURRENT_HEADER->field_len);
+                CURRENT_HEADER->field = realloc(CURRENT_HEADER->field, CURRENT_HEADER->field_len);
 
                 strncat(CURRENT_HEADER->field, at, length);
         }
@@ -438,13 +438,13 @@ static int on_header_value(http_parser *parser, const char *at, size_t length) {
 
         if(last_header_was_value == 0) {
                 CURRENT_HEADER->value_len = length;
-                CURRENT_HEADER->value = malloc(sizeof(char) * length);
+                CURRENT_HEADER->value = malloc(length);
 
                 strncpy(CURRENT_HEADER->value, at, length);
 
         } else {
                 CURRENT_HEADER->value_len += length;
-                CURRENT_HEADER->value = realloc(CURRENT_HEADER->value, sizeof(char) * CURRENT_HEADER->value_len);
+                CURRENT_HEADER->value = realloc(CURRENT_HEADER->value, CURRENT_HEADER->value_len);
                 strncat(CURRENT_HEADER->value, at, length);
         }
 
@@ -470,7 +470,7 @@ static int on_body(http_parser *parser, const char *at, size_t length) {
 static int append(char **ptr, size_t *len, const char *at, size_t length) {
         if(*len == 0) {
                 *len = length;
-                *ptr = malloc(sizeof(char) * length);
+                *ptr = malloc(length);
 
                 if(*ptr == NULL) {
                         return 1;
@@ -479,7 +479,7 @@ static int append(char **ptr, size_t *len, const char *at, size_t length) {
                 strncpy(*ptr, at, length);
         } else {
                 *len += length;
-                *ptr = realloc(*ptr, sizeof(char) * (*len));
+                *ptr = realloc(*ptr, *len);
 
                 if(*ptr == NULL) {
                         return 1;
@@ -488,7 +488,7 @@ static int append(char **ptr, size_t *len, const char *at, size_t length) {
                 strncat(*ptr, at, length);
         }
 
-        *ptr[*len] = '\0';
+        (*ptr)[*len] = '\0';
 
         return 0;
 }

@@ -32,6 +32,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
 #include <service.h>
 #include <session.h>
 #include <router.h>
@@ -43,6 +44,7 @@
 #include <poll.h>
 #include <skygw_utils.h>
 #include <log_manager.h>
+#include <httpd.h>
 
 MODULE_INFO info = {
         MODULE_API_ROUTER,
@@ -200,9 +202,8 @@ static void freeSession(ROUTER* router_instance, void *router_client_session) {
  */
 static int routeQuery(ROUTER *instance, void *session, GWBUF *queue) {
         FLEXMASTER_SESSION *flex_session = (FLEXMASTER_SESSION *) session;
-        char *url = GWBUF_DATA(queue);
+        HTTPD_session *http_session = flex_session->session->client->data;
 
-        gwbuf_free(queue);
         return 0;
 }
 

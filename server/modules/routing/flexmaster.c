@@ -205,13 +205,18 @@ static int routeQuery(ROUTER *instance, void *session, GWBUF *queue) {
         DCB *dcb = flex_session->session->client;
         HTTPD_session *http_session = dcb->data;
 
-        char date[64] = "";
-        const char *fmt = "%a, %d %b %Y %H:%M:%S GMT";
-        time_t httpd_current_time = time(NULL);
+        int *path = 1 << UF_PATH;
+        if((http_session->url_fields->field_set & path) == path) {
+                struct field_data data = http->session->url_fields->field_data[UF_PATH];
+                char *path = http_session->url[data.offset];
 
-        strftime(date, sizeof(date), fmt, localtime(&httpd_current_time));
-        dcb_printf(dcb, "HTTP/1.1 200 OK\r\nDate: %s\r\nConnection: close\r\nContent-Type: application/json\r\n\r\n", date);
-        dcb_close(dcb);
+                if(strncmp(path, "/", data.len) == 0) {
+                        diagnostics(instance, dcb);
+
+                }
+        } else {
+                httpd_respond_error(dcb, 500, "Could not find path to route.");
+        }
 
         return 0;
 }
@@ -223,17 +228,11 @@ static int routeQuery(ROUTER *instance, void *session, GWBUF *queue) {
  * @param dcb		DCB to send diagnostics to
  */
 static void diagnostics(ROUTER *instance, DCB *dcb) {
-        return;	/* Nothing to do currently */
-}
+        char date[64] = "";
+        const char *fmt = "%a, %d %b %Y %H:%M:%S GMT";
+        time_t httpd_current_time = time(NULL);
 
-static void respond_error(FLEXMASTER_SESSION *session, int err, char *msg) {
-        DCB *dcb = session->session->client;
-
-        // TODO
-
-        dcb_printf(dcb, "HTTP/1.1 %d %s\n", err, msg);
-        dcb_printf(dcb, "Content-Type: text/plain\n");
-        dcb_printf(dcb, "\n");
-        dcb_printf(dcb, "%d: %s", err, msg);
+        strftime(date, sizeof(date), fmt, localtime(&httpd_current_time));
+        dcb_printf(dcb, "HTTP/1.1 200 OK\r\nDate: %s\r\nConnection: close\r\nContent-Type: application/json\r\n\r\n", date);
         dcb_close(dcb);
 }

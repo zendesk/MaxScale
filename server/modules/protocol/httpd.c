@@ -390,8 +390,7 @@ static int on_url(http_parser *parser, const char *at, size_t length) {
 }
 
 static int last_header_was_value = 0;
-
-#define CURRENT_HEADER &session->headers[session->headers_len]
+#define CURRENT_HEADER (&session->headers[session->headers_len])
 
 static int on_header_field(http_parser *parser, const char *at, size_t length) {
         DCB *dcb = parser->data;
@@ -400,7 +399,7 @@ static int on_header_field(http_parser *parser, const char *at, size_t length) {
         if(last_header_was_value != 0) {
                 session->headers_len++;
 
-                if(session->headers_len == MAX_HEADER_LINES) {
+                if(session->headers_len == HTTPD_MAX_HEADER_LINES) {
                         // TODO
                 }
 

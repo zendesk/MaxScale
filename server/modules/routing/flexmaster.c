@@ -215,7 +215,26 @@ static int routeQuery(ROUTER *instance, void *session, GWBUF *queue) {
                 if(strncmp(path, "/", len) == 0 && http_session->method == HTTP_GET) {
                         diagnostics(instance, dcb);
                 } else if(strncmp(path, "/master_cut", len) == 0 && http_session->method == HTTP_POST) {
+                        char *old_master, *new_master;
 
+                        char *body = malloc(http_session->body_len);
+                        strncpy(body, http_session->body, http_session->body_len);
+
+                        char *token, *field, *value;
+
+                        while(token = strsep(&body, "&") != NULL) {
+                                field = strsep(&token, "=");
+                                value = token;
+
+                                if(strcmp(field, "old_master") == 0) {
+                                        old_master = value;
+                                } else if(strcmp(field, "new_master") == 0) {
+                                        new_master = value;
+                                }
+                        }
+
+                        dcb_printf(dcb, "HTTP/1.1 200 OK\nConnection: close\n\n");
+                        dcb_close(dcb);
                 } else {
                         httpd_respond_error(dcb, 404, "Could not find path to route.");
                 }

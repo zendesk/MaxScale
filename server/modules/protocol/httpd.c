@@ -438,7 +438,7 @@ static int append(char **ptr, size_t *len, const char *at, size_t length) {
                 strncpy(*ptr, at, length);
         } else {
                 *len += length;
-                *ptr = realloc(*ptr, *len + 1);
+                *ptr = realloc(*ptr, *len);
 
                 if(*ptr == NULL) {
                         return 1;
@@ -447,6 +447,5 @@ static int append(char **ptr, size_t *len, const char *at, size_t length) {
                 strncat(*ptr, at, length);
         }
 
-        *ptr[*len + 1] = '\0';
         return 0;
 }

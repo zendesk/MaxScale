@@ -202,9 +202,8 @@ static void freeSession(ROUTER* router_instance, void *router_client_session) {
  */
 static int routeQuery(ROUTER *instance, void *session, GWBUF *queue) {
         FLEXMASTER_SESSION *flex_session = (FLEXMASTER_SESSION *) session;
-        HTTPD_session *http_session = flex_session->session->client->data;
-
         DCB *dcb = flex_session->session->client;
+        HTTPD_session *http_session = dcb->data;
 
         char date[64] = "";
         const char *fmt = "%a, %d %b %Y %H:%M:%S GMT";

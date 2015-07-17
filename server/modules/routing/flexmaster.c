@@ -212,12 +212,13 @@ static int routeQuery(ROUTER *instance, void *session, GWBUF *queue) {
 
                 char *path = http_session->url + offset;
 
-                if(strncmp(path, "/", len) == 0) {
+                if(strncmp(path, "/", len) == 0 && http_session->method == HTTP_GET) {
                         diagnostics(instance, dcb);
-
+                } else {
+                        httpd_respond_error(dcb, 404, "Could not find path to route.");
                 }
         } else {
-                httpd_respond_error(dcb, 500, "Could not find path to route.");
+                httpd_respond_error(dcb, 404, "Could not find path to route.");
         }
 
         return 0;

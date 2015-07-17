@@ -367,6 +367,7 @@ static int on_message_complete(http_parser *parser) {
         DCB *dcb = parser->data;
         HTTPD_session *session = dcb->data;
 
+        session->method = parser->method;
         session->url_fields = malloc(sizeof(struct http_parser_url));
 
         if(session->url_fields == NULL) {

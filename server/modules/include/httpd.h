@@ -59,6 +59,8 @@ typedef struct httpd_session {
         http_parser *parser;
         struct http_parser_url *url_fields;
 
+        int method;
+
         size_t url_len;
 	char *url;
 

@@ -204,6 +204,16 @@ static int routeQuery(ROUTER *instance, void *session, GWBUF *queue) {
         FLEXMASTER_SESSION *flex_session = (FLEXMASTER_SESSION *) session;
         HTTPD_session *http_session = flex_session->session->client->data;
 
+        DCB *dcb = flex_session->session->client;
+
+        char date[64] = "";
+        const char *fmt = "%a, %d %b %Y %H:%M:%S GMT";
+        time_t httpd_current_time = time(NULL);
+
+        strftime(date, sizeof(date), fmt, localtime(&httpd_current_time));
+        dcb_printf(dcb, "HTTP/1.1 200 OK\r\nDate: %s\r\nConnection: close\r\nContent-Type: application/json\r\n\r\n", date);
+        dcb_close(dcb);
+
         return 0;
 }
 

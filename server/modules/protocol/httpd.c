@@ -55,7 +55,7 @@ extern int            lm_enabled_logfiles_bitmask;
 extern size_t         log_ses_count[];
 extern __thread log_info_t tls_log_info;
 
-#define HTTP_SERVER_STRING "MaxScale(c) v.1.0.0"
+#define HTTP_SERVER_STRING "MaxScale(c) v1.0.0"
 
 static char *version_str = "V1.0.1";
 
@@ -68,6 +68,7 @@ static int httpd_accept(DCB *dcb);
 static int httpd_close(DCB *dcb);
 static int httpd_listen(DCB *dcb, char *config);
 
+static int append(char **, int *, const char *, size_t);
 static int on_url(http_parser *, const char *, size_t);
 static int on_header_field(http_parser *, const char *, size_t);
 static int on_header_value(http_parser *, const char *, size_t);
@@ -194,9 +195,7 @@ httpd_write_event(DCB *dcb)
 static int
 httpd_write(DCB *dcb, GWBUF *queue)
 {
-        int rc;
-        rc = dcb_write(dcb, queue);
-	return rc;
+        return dcb_write(dcb, queue);
 }
 
 /**
@@ -370,19 +369,11 @@ static int on_message_complete(http_parser *parser) {
 
         session->url_fields = malloc(sizeof(struct http_parser_url));
 
-        // if(session->url_fields == NULL)
-        http_parser_parse_url(session->url, session->url_len, 1, session->url_fields);
+        // if(session->url_fields == NULL) TODO
+        http_parser_parse_url(session->url, session->url_len, 0, session->url_fields);
 
         // TODO
         SESSION_ROUTE_QUERY(dcb->session, NULL);
-
-	char date[64] = "";
-	const char *fmt = "%a, %d %b %Y %H:%M:%S GMT";
-	time_t httpd_current_time = time(NULL);
-
-	strftime(date, sizeof(date), fmt, localtime(&httpd_current_time));
-        dcb_printf(dcb, "HTTP/1.1 200 OK\r\nDate: %s\r\nServer: %s\r\nConnection: close\r\nContent-Type: application/json\r\n\r\n", date, HTTP_SERVER_STRING);
-        dcb_close(dcb);
 
         return 0;
 }
@@ -414,6 +405,8 @@ static int on_url(http_parser *parser, const char *at, size_t length) {
         return 0;
 }
 
+static int last_header_was_a_value = 0;
+
 static int on_header_field(http_parser *parser, const char *at, size_t length) {
         return 0;
 }
@@ -423,5 +416,37 @@ static int on_header_value(http_parser *parser, const char *at, size_t length) {
 }
 
 static int on_body(http_parser *parser, const char *at, size_t length) {
+        DCB *dcb = parser->data;
+        HTTPD_session *session = dcb->data;
+
+        if(append(&session->body, &session->body_len, at, length) != 0) {
+                // TODO
+        }
+
+        return 0;
+}
+
+static int append(char **ptr, int *len, const char *at, size_t length) {
+        if(*len == 0) {
+                *len = length;
+                *ptr = malloc(length + 1);
+
+                if(*ptr == NULL) {
+                        return 1;
+                }
+
+                strncpy(session->body, at, length);
+        } else {
+                *len += length;
+                *ptr = realloc(*ptr, *len + 1);
+
+                if(*ptr == NULL) {
+                        return 1;
+                }
+
+                strncat(*ptr, at, length);
+        }
+
+        *ptr[*len + 1] = '\0';
         return 0;
 }

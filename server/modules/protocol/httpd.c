@@ -425,6 +425,8 @@ static int on_header_field(http_parser *parser, const char *at, size_t length) {
                 strncat(CURRENT_HEADER->field, at, length);
         }
 
+        CURRENT_HEADER->field[CURRENT_HEADER->field_len] = '\0';
+
         last_header_was_value = 0;
 
         return 0;
@@ -445,6 +447,8 @@ static int on_header_value(http_parser *parser, const char *at, size_t length) {
                 CURRENT_HEADER->value = realloc(CURRENT_HEADER->value, sizeof(char) * CURRENT_HEADER->value_len);
                 strncat(CURRENT_HEADER->value, at, length);
         }
+
+        CURRENT_HEADER->value[CURRENT_HEADER->value_len] = '\0';
 
         last_header_was_value = 1;
 
@@ -483,6 +487,8 @@ static int append(char **ptr, size_t *len, const char *at, size_t length) {
 
                 strncat(*ptr, at, length);
         }
+
+        *ptr[*len] = '\0';
 
         return 0;
 }

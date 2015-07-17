@@ -382,25 +382,9 @@ static int on_url(http_parser *parser, const char *at, size_t length) {
         DCB *dcb = parser->data;
         HTTPD_session *session = dcb->data;
 
-        if(session->url_len == 0) {
-                session->url_len = length;
-                session->url = malloc(length + 1);
-
-                if(session->url == NULL) { // TODO
-                }
-
-                strncpy(session->url, at, length);
-        } else {
-                session->url_len += length;
-                session->url = realloc(session->url, session->url_len + 1);
-
-                if(session->url == NULL) { // TODO
-                }
-
-                strncat(session->url, at, length);
+        if(append(&session->url, &session->url_len, at, length) != 0) {
+                // TODO
         }
-
-        session->url[session->url_len + 1] = '\0';
 
         return 0;
 }

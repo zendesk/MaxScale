@@ -207,7 +207,7 @@ static int routeQuery(ROUTER *instance, void *session, GWBUF *queue) {
 
         int path = 1 << UF_PATH;
         if((http_session->url_fields->field_set & path) == path) {
-                int offset = http_session->url_fields->field_data[UF_PATH].offset;
+                int offset = http_session->url_fields->field_data[UF_PATH].off;
                 int len = http_session->url_fields->field_data[UF_PATH].len;
 
                 char *path = http_session->url[offset];

@@ -45,6 +45,7 @@
 #include <skygw_utils.h>
 #include <log_manager.h>
 #include <httpd.h>
+#include <mysql.h>
 
 MODULE_INFO info = {
         MODULE_API_ROUTER,
@@ -69,6 +70,8 @@ extern __thread log_info_t tls_log_info;
 
 static char *version_str = "V1.0.0";
 
+char *errmsg;
+
 /* The router entry points */
 static ROUTER *createInstance(SERVICE *, char **);
 static void *newSession(ROUTER *, SESSION *);
@@ -77,6 +80,10 @@ static void freeSession(ROUTER *, void *);
 static int routeQuery(ROUTER *, void *, GWBUF *);
 static void diagnostics(ROUTER *, DCB *);
 static void respond_error(FLEXMASTER_SESSION *, int, char *);
+static void master_cut(FLEXMASTER_INSTANCE *, DCB *, HTTPD_session *);
+static int preflight_check(SERVICE *, char *, char *);
+static MYSQL *mysql_connect(SERVICE *, char *, unsigned int);
+static void error(char *);
 
 /** The module object definition */
 static ROUTER_OBJECT MyObject = {
@@ -130,7 +137,7 @@ ROUTER_OBJECT *GetModuleObject() {
  * @return The instance data for this new instance
  */
 static ROUTER *createInstance(SERVICE *service, char **options) {
-        FLEXMASTER_INSTANCE *instance = (FLEXMASTER_INSTANCE *) malloc(sizeof(FLEXMASTER_INSTANCE));
+        FLEXMASTER_INSTANCE *instance = malloc(sizeof(FLEXMASTER_INSTANCE));
 
         if(instance == NULL)
                 return NULL;
@@ -201,7 +208,8 @@ static void freeSession(ROUTER* router_instance, void *router_client_session) {
  * @return The number of bytes sent
  */
 static int routeQuery(ROUTER *instance, void *session, GWBUF *queue) {
-        FLEXMASTER_SESSION *flex_session = (FLEXMASTER_SESSION *) session;
+        FLEXMASTER_INSTANCE *flex_instance = (FLEXMASTER_INSTANCE *) instance;
+        FLEXMASTER_SESSION *flex_session = session;
         DCB *dcb = flex_session->session->client;
         HTTPD_session *http_session = dcb->data;
 
@@ -215,30 +223,7 @@ static int routeQuery(ROUTER *instance, void *session, GWBUF *queue) {
                 if(strncmp(path, "/", len) == 0 && http_session->method == HTTP_GET) {
                         diagnostics(instance, dcb);
                 } else if(strncmp(path, "/master_cut", len) == 0 && http_session->method == HTTP_POST) {
-                        char *old_master = NULL, *new_master = NULL;
-
-                        char *body = malloc(http_session->body_len);
-                        strncpy(body, http_session->body, http_session->body_len);
-
-                        char *token, *field, *value;
-
-                        while((token = strsep(&body, "&")) != NULL) {
-                                field = strsep(&token, "=");
-                                value = token;
-
-                                if(strcmp(field, "old_master") == 0) {
-                                        old_master = value;
-                                } else if(strcmp(field, "new_master") == 0) {
-                                        new_master = value;
-                                }
-                        }
-
-                        if(new_master != NULL && old_master != NULL) {
-                                dcb_printf(dcb, "HTTP/1.1 200 OK\nConnection: close\n\n");
-                                dcb_close(dcb);
-                        } else {
-                                httpd_respond_error(dcb, 400, "Missing required parameters old_master and new_master");
-                        }
+                        master_cut(flex_instance, dcb, http_session);
                 } else {
                         httpd_respond_error(dcb, 404, "Could not find path to route.");
                 }
@@ -247,6 +232,243 @@ static int routeQuery(ROUTER *instance, void *session, GWBUF *queue) {
         }
 
         return 0;
+}
+
+static void master_cut(FLEXMASTER_INSTANCE *flex_instance, DCB *dcb, HTTPD_session *http_session) {
+        char *old_master = NULL, *new_master = NULL;
+
+        char *body = malloc(http_session->body_len);
+        strncpy(body, http_session->body, http_session->body_len);
+
+        char *token, *field, *value;
+
+        while((token = strsep(&body, "&")) != NULL) {
+                field = strsep(&token, "=");
+                value = token;
+
+                if(strcmp(field, "old_master") == 0) {
+                        old_master = value;
+                } else if(strcmp(field, "new_master") == 0) {
+                        new_master = value;
+                }
+        }
+
+        if(old_master != NULL && new_master != NULL) {
+                if(preflight_check(flex_instance->service, old_master, new_master) != 0) {
+                        httpd_respond_error(dcb, 400, errmsg);
+                        return;
+                }
+
+                dcb_printf(dcb, "HTTP/1.1 200 OK\nConnection: close\n\n");
+                dcb_close(dcb);
+        } else {
+                httpd_respond_error(dcb, 400, "Missing required parameters old_master and new_master");
+        }
+}
+
+static int preflight_check(SERVICE *service, char *old_master, char *new_master) {
+        char *old_master_host = NULL;
+
+        old_master_host = strsep(&old_master, ":");
+
+        if(old_master_host == NULL || old_master == NULL) {
+                error("Error: could not grab host and port from old master address");
+                return 1;
+        }
+
+        unsigned int old_master_port = strtol(old_master, NULL, 0);
+
+        if(old_master_port == 0) {
+                error("Error: could not grab port from old master address");
+                return 1;
+        }
+
+        MYSQL *old_master_connection = mysql_connect(service, old_master_host, old_master_port);
+
+        if(old_master_connection == NULL) {
+                return 1;
+        }
+
+        char *new_master_host = NULL;
+
+        new_master_host = strsep(&new_master, ":");
+
+        if(new_master_host == NULL || new_master == NULL) {
+                error("Error: could not grab host and port from new master address");
+                return 1;
+        }
+
+        unsigned int new_master_port = strtol(new_master, NULL, 0);
+
+        if(new_master_port == 0) {
+                error("Error: could not grab port from new master address");
+                return 1;
+        }
+
+        MYSQL *new_master_connection = mysql_connect(service, new_master_host, new_master_port);
+
+        if(new_master_connection == NULL) {
+                return 1;
+        }
+
+        // old master is not readonly
+        if(mysql_query(old_master_connection, "SELECT @@read_only") != 0) {
+                error("Error: could not query old master @@read_only");
+                return 1;
+        }
+
+        MYSQL_RES *result = mysql_store_result(old_master_connection);
+
+        if(result == NULL) {
+                error("Error: could not query old master @@read_only");
+                return 1;
+        }
+
+        MYSQL_ROW row = mysql_fetch_row(result);
+
+        if(row == NULL) {
+                error("Error: could not query old master @@read_only");
+                return 1;
+        }
+
+        if(strcmp(row[0], "0") != 0) {
+                error("Error: old master is read only!");
+                return 1;
+        }
+
+        // new master is readonly
+        if(mysql_query(new_master_connection, "SELECT @@read_only") != 0) {
+                error("Error: could not query new master @@read_only");
+                return 1;
+        }
+
+        result = mysql_store_result(new_master_connection);
+
+        if(result == NULL) {
+                error("Error: could not query new master @@read_only");
+                return 1;
+        }
+
+        row = mysql_fetch_row(result);
+
+        if(row == NULL) {
+                error("Error: could not query new master @@read_only");
+                return 1;
+        }
+
+        if(strcmp(row[0], "1") != 0) {
+                error("Error: new master is not read only!");
+                return 1;
+        }
+
+        // new master is (a slave, running (IO, SQL), not delayed)
+        if(mysql_query(new_master_connection, "SHOW SLAVE STATUS") != 0) {
+                error("Error: could not query new master slave status");
+                return 1;
+        }
+
+        result = mysql_store_result(new_master_connection);
+
+        if(result == NULL) {
+                error("Error: could not query new master slave status");
+                return 1;
+        }
+
+        row = mysql_fetch_row(result);
+
+        if(row == NULL) {
+                error("Error: could not query new master slave status");
+                return 1;
+        }
+
+        char *slave_io = row[10];
+        char *slave_sql = row[11];
+        char *seconds_behind = row[32];
+        char *master_host = row[1];
+
+        if(strcmp(slave_io, "Yes") != 0) {
+                error("Error: new master IO is not running");
+                return 1;
+        }
+
+        if(strcmp(slave_sql, "Yes") != 0) {
+                error("Error: new master SQL is not running");
+                return 1;
+        }
+
+        if(strcmp(seconds_behind, "0") != 0) {
+                error("Error: new master is not up-to-date");
+                return 1;
+        }
+
+        // slave master ip = master ip
+        struct addrinfo *old_master_addrinfo, *new_master_addrinfo;
+
+        if(getaddrinfo(old_master_host, NULL, NULL, &old_master_addrinfo) != 0) {
+                error("Error: could not obtain IP for old master address");
+                return 1;
+        }
+
+        if(getaddrinfo(master_host, NULL, NULL, &new_master_addrinfo) != 0) {
+                error("Error: could not obtain IP for new master's Master_Host address");
+                return 1;
+        }
+
+        if(strcmp(old_master_addrinfo->ai_addr->sa_data, new_master_addrinfo->ai_addr->sa_data) != 0) {
+                error("Error: new master is not a slave to the old master!");
+                return 1;
+        }
+
+        return 0;
+}
+
+static void error(char *msg) {
+        LOGIF(LE, (skygw_log_write_flush(LOGFILE_ERROR, msg)));
+        errmsg = malloc(strlen(msg) + 1);
+        strcpy(errmsg, msg);
+}
+
+static MYSQL *mysql_connect(SERVICE *service, char *host, unsigned int port) {
+        MYSQL *connection = mysql_init(NULL);
+
+        if(connection == NULL) {
+                error("Error: could not initialize mysql connection");
+                return NULL;
+        }
+
+        int timeout = 3;
+
+	if(mysql_options(connection, MYSQL_OPT_READ_TIMEOUT, (void *) &timeout) != 0) {
+                error("Error: failed to set read timeout value for backend connection.");
+                mysql_close(connection);
+                return NULL;
+	}
+	
+	if(mysql_options(connection, MYSQL_OPT_CONNECT_TIMEOUT, (void *) &timeout) != 0) {
+                error("Error: failed to set connect timeout value for backend connection.");
+                mysql_close(connection);
+                return NULL;
+	}
+	
+	if(mysql_options(connection, MYSQL_OPT_WRITE_TIMEOUT, (void *) &timeout) != 0) {
+                error("Error: failed to set connect timeout value for backend connection.");
+                mysql_close(connection);
+                return NULL;
+	}
+
+        if(mysql_options(connection, MYSQL_OPT_USE_REMOTE_CONNECTION, NULL) != 0) {
+                error("Error: failed to set external connection. It is needed for backend server connections.");
+                mysql_close(connection);
+                return NULL;
+        }
+
+        if(mysql_real_connect(connection, host, service->credentials.name, service->credentials.authdata, NULL, port, NULL, 0) == NULL) {
+                error("Error: could not connect to server.");
+                mysql_close(connection);
+                return NULL;
+        }
+
+        return connection;
 }
 
 /**

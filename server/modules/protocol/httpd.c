@@ -372,7 +372,7 @@ static int on_message_complete(http_parser *parser) {
         // if(session->url_fields == NULL) TODO
         http_parser_parse_url(session->url, session->url_len, 0, session->url_fields);
 
-        // TODO
+        // TODO?
         SESSION_ROUTE_QUERY(dcb->session, NULL);
 
         return 0;
@@ -389,13 +389,59 @@ static int on_url(http_parser *parser, const char *at, size_t length) {
         return 0;
 }
 
-static int last_header_was_a_value = 0;
+static int last_header_was_value = 0;
+
+#define CURRENT_HEADER &session->headers[session->headers_len]
 
 static int on_header_field(http_parser *parser, const char *at, size_t length) {
+        DCB *dcb = parser->data;
+        HTTPD_session *session = dcb->data;
+
+        if(last_header_was_value != 0) {
+                session->headers_len++;
+
+                if(session->headers_len == MAX_HEADER_LINES) {
+                        // TODO
+                }
+
+                CURRENT_HEADER->field_len = len;
+                CURRENT_HEADER->field = malloc(sizeof(char) * len);
+
+                strncpy(CURRENT_HEADER->field, at, len);
+
+        } else {
+                assert(CURRENT_HEADER->value_len == 0);
+                assert(CURRENT_HEADER->value == NULL);
+
+                CURRENT_HEADER->field_len += len;
+                CURRENT_HEADER->field = realloc(CURRENT_HEADER->field, sizeof(char) * CURRENT_HEADER->field_len);
+
+                strncat(CURRENT_HEADER->field, at, len);
+        }
+
+        last_header_was_value = 0;
+
         return 0;
 }
 
 static int on_header_value(http_parser *parser, const char *at, size_t length) {
+        DCB *dcb = parser->data;
+        HTTPD_session *session = dcb->data;
+
+        if(last_header_was_value == 0) {
+                CURRENT_HEADAR->value_len = len;
+                CURRENT_HEADER->value = malloc(sizeof(char) * len);
+
+                strncpy(CURRENT_HEADER->value, at, len);
+
+        } else {
+                CURRENT_HEADER->value_len += len;
+                CURRENT_HEADER->value = realloc(CURRENT_HEADER->value, sizeof(char) * CURRENT_HEADER->value_len);
+                strncat(CURRENT_HEADER->value, at, len);
+        }
+
+        last_header_was_value = 1;
+
         return 0;
 }
 

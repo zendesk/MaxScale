@@ -207,10 +207,12 @@ static int routeQuery(ROUTER *instance, void *session, GWBUF *queue) {
 
         int path = 1 << UF_PATH;
         if((http_session->url_fields->field_set & path) == path) {
-                struct field_data data = http->session->url_fields->field_data[UF_PATH];
-                char *path = http_session->url[data.offset];
+                int offset = http_session->url_fields->field_data[UF_PATH].offset;
+                int len = http_session->url_fields->field_data[UF_PATH].len;
 
-                if(strncmp(path, "/", data.len) == 0) {
+                char *path = http_session->url[offset];
+
+                if(strncmp(path, "/", len) == 0) {
                         diagnostics(instance, dcb);
 
                 }

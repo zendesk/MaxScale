@@ -214,6 +214,8 @@ static int routeQuery(ROUTER *instance, void *session, GWBUF *queue) {
 
                 if(strncmp(path, "/", len) == 0 && http_session->method == HTTP_GET) {
                         diagnostics(instance, dcb);
+                } else if(strncmp(path, "/master_cut", len) == 0 && http_session->method == HTTP_POST) {
+
                 } else {
                         httpd_respond_error(dcb, 404, "Could not find path to route.");
                 }

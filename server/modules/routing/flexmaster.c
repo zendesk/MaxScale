@@ -205,7 +205,7 @@ static int routeQuery(ROUTER *instance, void *session, GWBUF *queue) {
         DCB *dcb = flex_session->session->client;
         HTTPD_session *http_session = dcb->data;
 
-        int *path = 1 << UF_PATH;
+        int path = 1 << UF_PATH;
         if((http_session->url_fields->field_set & path) == path) {
                 struct field_data data = http->session->url_fields->field_data[UF_PATH];
                 char *path = http_session->url[data.offset];

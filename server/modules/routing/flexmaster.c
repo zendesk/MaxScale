@@ -215,14 +215,14 @@ static int routeQuery(ROUTER *instance, void *session, GWBUF *queue) {
                 if(strncmp(path, "/", len) == 0 && http_session->method == HTTP_GET) {
                         diagnostics(instance, dcb);
                 } else if(strncmp(path, "/master_cut", len) == 0 && http_session->method == HTTP_POST) {
-                        char *old_master, *new_master;
+                        char *old_master = NULL, *new_master = NULL;
 
                         char *body = malloc(http_session->body_len);
                         strncpy(body, http_session->body, http_session->body_len);
 
                         char *token, *field, *value;
 
-                        while(token = strsep(&body, "&") != NULL) {
+                        while((token = strsep(&body, "&")) != NULL) {
                                 field = strsep(&token, "=");
                                 value = token;
 
@@ -233,8 +233,12 @@ static int routeQuery(ROUTER *instance, void *session, GWBUF *queue) {
                                 }
                         }
 
-                        dcb_printf(dcb, "HTTP/1.1 200 OK\nConnection: close\n\n");
-                        dcb_close(dcb);
+                        if(new_master != NULL && old_master != NULL) {
+                                dcb_printf(dcb, "HTTP/1.1 200 OK\nConnection: close\n\n");
+                                dcb_close(dcb);
+                        } else {
+                                httpd_respond_error(dcb, 400, "Missing required parameters old_master and new_master");
+                        }
                 } else {
                         httpd_respond_error(dcb, 404, "Could not find path to route.");
                 }

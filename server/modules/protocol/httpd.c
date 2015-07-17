@@ -492,7 +492,7 @@ void httpd_respond_error(DCB *dcb, int err, char *msg) {
 
         dcb_printf(dcb, "HTTP/1.1 %d %s\n", err, msg);
         dcb_printf(dcb, "Content-Type: text/plain\n");
-        dcb_printf(dcb, "\n");
+        dcb_printf(dcb, "Connection: close\n\n");
         dcb_printf(dcb, "%d: %s", err, msg);
         dcb_close(dcb);
 }

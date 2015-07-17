@@ -236,6 +236,6 @@ static void diagnostics(ROUTER *instance, DCB *dcb) {
         time_t httpd_current_time = time(NULL);
 
         strftime(date, sizeof(date), fmt, localtime(&httpd_current_time));
-        dcb_printf(dcb, "HTTP/1.1 200 OK\r\nDate: %s\r\nConnection: close\r\nContent-Type: application/json\r\n\r\n", date);
+        dcb_printf(dcb, "HTTP/1.1 200 OK\nDate: %s\nConnection: close\nContent-Type: application/json\n\n", date);
         dcb_close(dcb);
 }

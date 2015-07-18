@@ -323,6 +323,9 @@ static void master_cut(FLEXMASTER_INSTANCE *flex_instance, DCB *dcb, HTTPD_sessi
         } else {
                 httpd_respond_error(dcb, 400, "Missing required parameters old_master and new_master");
         }
+
+        return;
+
 error:
         httpd_respond_error(dcb, 400, errmsg);
 }

@@ -308,10 +308,26 @@ static void master_cut(FLEXMASTER_INSTANCE *flex_instance, DCB *dcb, HTTPD_sessi
         dcb_close(dcb);
 
         // don't fall through
-        return;
+        goto free;
 
 error:
         httpd_respond_error(dcb, 400, errmsg);
+
+free:
+        free(body);
+
+        if(params.new_master_master_host != NULL) {
+                free(params.new_master_master_host);
+        }
+
+        if(params.old_master_connection) {
+                mysql_close(params.old_master_connection);
+        }
+
+        if(params.new_master_connection) {
+                mysql_close(params.new_master_connection);
+        }
+
 }
 
 static int swap(struct flexmaster_parameters *params) {

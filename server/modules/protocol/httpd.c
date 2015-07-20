@@ -291,9 +291,18 @@ int	n_connect = 0;
  * @param dcb	The descriptor control block
  */
 
-static int
-httpd_close(DCB *dcb)
-{
+static int httpd_close(DCB *dcb) {
+        HTTPD_session *session = dcb->data;
+
+        if(session != NULL) {
+                free(session->body);
+                free(session->url);
+                free(session->url_fields);
+                free(session->parser);
+
+                // session is freed by session.c:452
+        }
+
 	return 0;
 }
 

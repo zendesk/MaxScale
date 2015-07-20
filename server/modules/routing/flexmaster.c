@@ -75,7 +75,7 @@ struct flexmaster_parameters {
         MYSQL *old_master_connection, *new_master_connection;
 
         // Set in swap, but only used when rehome-ing
-        MYSQL_ROW old_master_info;
+        MYSQL_ROW new_master_info;
 
         // Set in preflight_check_new_master_slave
         // Used in preflight_check_addresses
@@ -352,22 +352,22 @@ static int swap(struct flexmaster_parameters *params) {
          * but it also serves as a final check before setting the new master read-write.
          * TODO: confirm this can't be moved
          */
-        if(mysql_query(params->old_master_connection, "SHOW MASTER STATUS") != 0) {
+        if(mysql_query(params->new_master_connection, "SHOW MASTER STATUS") != 0) {
                 error("Error: could not query old master status");
                 return 1;
         }
 
-        MYSQL_RES *result = mysql_store_result(params->old_master_connection);
+        MYSQL_RES *result = mysql_store_result(params->new_master_connection);
 
         if(result == NULL) {
                 error("Error: could not query old master status");
                 return 1;
         }
 
-        params->old_master_info = mysql_fetch_row(result);
+        params->new_master_info = mysql_fetch_row(result);
         mysql_free_result(result);
 
-        if(params->old_master_info == NULL) {
+        if(params->new_master_info == NULL) {
                 error("Error: could not query old master status");
                 return 1;
         }
@@ -382,8 +382,8 @@ static int swap(struct flexmaster_parameters *params) {
 }
 
 static int rehome(struct flexmaster_parameters *params) {
-        char *master_log_file = params->old_master_info[0];
-        unsigned int master_log_pos = strtol(params->old_master_info[1], NULL, 0);
+        char *master_log_file = params->new_master_info[0];
+        unsigned int master_log_pos = strtol(params->new_master_info[1], NULL, 0);
 
         char query[1024];
 

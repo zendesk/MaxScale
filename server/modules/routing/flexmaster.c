@@ -176,18 +176,6 @@ static ROUTER *createInstance(SERVICE *service, char **options) {
 
         instance->service = service;
 
-        char *parent_service_name = options[0];
-
-        if(parent_service_name == NULL) {
-                // TODO
-        }
-
-        instance->top = service_find(parent_service_name);
-
-        if(instance->top == NULL) {
-                // TODO
-        }
-
         return (ROUTER *) instance;
 }
 

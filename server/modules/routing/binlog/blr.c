@@ -35,6 +35,9 @@
  * 02/04/2014	Mark Riddoch		Initial implementation
  * 17/02/2015	Massimiliano Pinto	Addition of slave port and username in diagnostics
  * 18/02/2015	Massimiliano Pinto	Addition of dcb_close in closeSession
+ * 07/05/2015   Massimiliano Pinto      Addition of MariaDB 10 compatibility support
+ * 12/06/2015   Massimiliano Pinto      Addition of MariaDB 10 events in diagnostics()
+
  *
  * @endverbatim
  */
@@ -105,6 +108,9 @@ static void	stats_func(void *);
 
 static bool rses_begin_locked_router_action(ROUTER_SLAVE *);
 static void rses_end_locked_router_action(ROUTER_SLAVE *);
+void my_uuid_init(ulong seed1, ulong seed2);
+void my_uuid(char *guid);
+GWBUF *blr_cache_read_response(ROUTER_INSTANCE *router, char *response);
 
 static SPINLOCK	instlock;
 static ROUTER_INSTANCE *instances;
@@ -167,7 +173,7 @@ createInstance(SERVICE *service, char **options)
 ROUTER_INSTANCE	*inst;
 char		*value, *name;
 int		i;
-unsigned char	*defuuid;
+char	*defuuid;
 
         if ((inst = calloc(1, sizeof(ROUTER_INSTANCE))) == NULL) {
                 return NULL;
@@ -195,6 +201,7 @@ unsigned char	*defuuid;
 	inst->retry_backoff = 1;
 	inst->binlogdir = NULL;
 	inst->heartbeat = 300;	// Default is every 5 minutes
+	inst->mariadb10_compat = false;
 
 	inst->user = strdup(service->credentials.name);
 	inst->password = strdup(service->credentials.authdata);
@@ -281,6 +288,10 @@ unsigned char	*defuuid;
 				else if (strcmp(options[i], "master-id") == 0)
 				{
 					inst->masterid = atoi(value);
+				}
+				else if (strcmp(options[i], "mariadb10-compatibility") == 0)
+				{
+					inst->mariadb10_compat = config_truth_value(value);
 				}
 				else if (strcmp(options[i], "filestem") == 0)
 				{
@@ -388,6 +399,7 @@ unsigned char	*defuuid;
 	inst->saved_master.selectvercom = blr_cache_read_response(inst, "selectvercom");
 	inst->saved_master.selecthostname = blr_cache_read_response(inst, "selecthostname");
 	inst->saved_master.map = blr_cache_read_response(inst, "map");
+	inst->saved_master.mariadb10 = blr_cache_read_response(inst, "mariadb10");
 
 	/*
 	 * Initialise the binlog file and position
@@ -490,6 +502,7 @@ ROUTER_SLAVE		*slave;
 	strcpy(slave->binlogfile, "unassigned");
 	slave->connect_time = time(0);
 	slave->lastEventTimestamp = 0;
+	slave->mariadb10_compat = false;
 
 	/**
          * Add this session to the list of active sessions.
@@ -673,6 +686,15 @@ static char *event_names[] = {
 	"Anonymous GTID Event", "Previous GTIDS Event"
 };
 
+/* New MariaDB event numbers starts from 0xa0 */
+static char *event_names_mariadb10[] = {
+	"Annotate Rows Event",
+	/* New MariaDB 10.x event numbers */
+	"Binlog Checkpoint Event",
+	"GTID Event",
+	"GTID List Event"
+};
+
 /**
  * Display an entry from the spinlock statistics data
  *
@@ -789,14 +811,31 @@ struct tm	tm;
 				buf);
 	dcb_printf(dcb, "\t					(%d seconds ago)\n",
 			time(0) - router_inst->stats.lastReply);
-	dcb_printf(dcb, "\tLast event from master:  			0x%x, %s",
+
+	if (!router_inst->mariadb10_compat) {
+		dcb_printf(dcb, "\tLast event from master:  			0x%x, %s",
 			router_inst->lastEventReceived,
 			(router_inst->lastEventReceived >= 0 && 
-			router_inst->lastEventReceived < 0x24) ?
+			router_inst->lastEventReceived <= MAX_EVENT_TYPE) ?
 			event_names[router_inst->lastEventReceived] : "unknown");
+	} else {
+		char *ptr = NULL;
+		if (router_inst->lastEventReceived >= 0 && router_inst->lastEventReceived <= MAX_EVENT_TYPE) {
+			ptr = event_names[router_inst->lastEventReceived];
+		} else {
+			/* Check MariaDB 10 new events */
+			if (router_inst->lastEventReceived >= MARIADB_NEW_EVENTS_BEGIN && router_inst->lastEventReceived <= MAX_EVENT_TYPE_MARIADB10) {
+				ptr = event_names_mariadb10[(router_inst->lastEventReceived - MARIADB_NEW_EVENTS_BEGIN)];
+			}
+		}
+
+		dcb_printf(dcb, "\tLast event from master:  			0x%x, %s",
+			router_inst->lastEventReceived, (ptr != NULL) ? ptr : "unknown");
+	}
+
 	if (router_inst->lastEventTimestamp)
 	{
-		localtime_r(&router_inst->lastEventTimestamp, &tm);
+		localtime_r((const time_t*)&router_inst->lastEventTimestamp, &tm);
 		asctime_r(&tm, buf);
 		dcb_printf(dcb, "\tLast binlog event timestamp:  			%ld (%s)\n",
 				router_inst->lastEventTimestamp, buf);
@@ -806,9 +845,15 @@ struct tm	tm;
 	if (router_inst->reconnect_pending)
 		dcb_printf(dcb, "\tRouter pending reconnect to master\n");
 	dcb_printf(dcb, "\tEvents received:\n");
-	for (i = 0; i < 0x24; i++)
+	for (i = 0; i <= MAX_EVENT_TYPE; i++)
 	{
 		dcb_printf(dcb, "\t\t%-38s   %u\n", event_names[i], router_inst->stats.events[i]);
+	}
+
+	if (router_inst->mariadb10_compat) {
+		/* Display MariaDB 10 new events */
+		for (i = MARIADB_NEW_EVENTS_BEGIN; i <= MAX_EVENT_TYPE_MARIADB10; i++)
+			dcb_printf(dcb, "\t\tMariaDB 10 %-38s   %u\n", event_names_mariadb10[(i - MARIADB_NEW_EVENTS_BEGIN)], router_inst->stats.events[i]);
 	}
 
 #if SPINLOCK_PROFILE
@@ -918,7 +963,7 @@ struct tm	tm;
 			if (session->lastEventTimestamp
 					&& router_inst->lastEventTimestamp)
 			{
-				localtime_r(&session->lastEventTimestamp, &tm);
+				localtime_r((const time_t*)&session->lastEventTimestamp, &tm);
 				asctime_r(&tm, buf);
 				dcb_printf(dcb, "\t\tLast binlog event timestamp			%u, %s", session->lastEventTimestamp, buf);
 				dcb_printf(dcb, "\t\tSeconds behind master				%u\n", router_inst->lastEventTimestamp - session->lastEventTimestamp);
@@ -1016,7 +1061,8 @@ static  void
 errorReply(ROUTER *instance, void *router_session, GWBUF *message, DCB *backend_dcb, error_action_t action, bool *succp)
 {
 ROUTER_INSTANCE	*router = (ROUTER_INSTANCE *)instance;
-int		error, len;
+int		error;
+socklen_t len;
 char		msg[85], *errmsg;
 
 	if (action == ERRACT_RESET)
@@ -1169,10 +1215,10 @@ int	len;
 
 	snprintf(result, 1000,
 		"Uptime: %u  Threads: %u  Events: %u  Slaves: %u  Master State: %s",
-			time(0) - router->connect_time,
-			config_threadcount(),
-			router->stats.n_binlogs_ses,
-			router->stats.n_slaves,
+			(unsigned int)(time(0) - router->connect_time),
+			(unsigned int)config_threadcount(),
+			(unsigned int)router->stats.n_binlogs_ses,
+			(unsigned int)router->stats.n_slaves,
 			blrm_states[router->master_state]);
 	if ((ret = gwbuf_alloc(4 + strlen(result))) == NULL)
 		return 0;
@@ -1296,4 +1342,25 @@ GWBUF		*errbuf = NULL;
         memcpy(mysql_payload, mysql_error_msg, strlen(mysql_error_msg));
 
         return dcb->func.write(dcb, errbuf);
+}
+
+
+/**
+ * Extract a numeric field from a packet of the specified number of bits
+ *
+ * @param src	The raw packet source
+ * @param birs	The number of bits to extract (multiple of 8)
+ */
+uint32_t
+extract_field(uint8_t *src, int bits)
+{
+uint32_t	rval = 0, shift = 0;
+
+	while (bits > 0)
+	{
+		rval |= (*src++) << shift;
+		shift += 8;
+		bits -= 8;
+	}
+	return rval;
 }

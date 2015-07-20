@@ -23,8 +23,9 @@
  * @verbatim
  * Revision History
  *
- * Date		Who		Description
+ * Date		Who			Description
  * 14/04/2014	Mark Riddoch		Initial implementation
+ * 07/05/2015	Massimiliano Pinto	Added MAX_EVENT_TYPE_MARIADB10
  *
  * @endverbatim
  */
@@ -45,7 +46,7 @@
 #include <blr.h>
 #include <dcb.h>
 #include <spinlock.h>
-
+#include <gwdirs.h>
 #include <skygw_types.h>
 #include <skygw_utils.h>
 #include <log_manager.h>
@@ -57,7 +58,6 @@ extern __thread log_info_t tls_log_info;
 
 static int  blr_file_create(ROUTER_INSTANCE *router, char *file);
 static void blr_file_append(ROUTER_INSTANCE *router, char *file);
-static uint32_t extract_field(uint8_t *src, int bits);
 static void blr_log_header(logfile_id_t file, char *msg, uint8_t *ptr);
 
 /**
@@ -439,15 +439,26 @@ struct	stat	statb;
 	hdr->next_pos = EXTRACT32(&hdbuf[13]);
 	hdr->flags = EXTRACT16(&hdbuf[17]);
 
-	if (hdr->event_type > MAX_EVENT_TYPE)
-	{
-		LOGIF(LE, (skygw_log_write(LOGFILE_ERROR,
-				"Invalid event type 0x%x. "
+	if (router->mariadb10_compat) {
+		if (hdr->event_type > MAX_EVENT_TYPE_MARIADB10) {
+			LOGIF(LE, (skygw_log_write(LOGFILE_ERROR,
+				"Invalid MariaDB 10 event type 0x%x. "
 				"Binlog file is %s, position %d",
 				hdr->event_type,
 				file->binlogname, pos)));
-		return NULL;
-	}
+			return NULL;
+		}
+	} else {
+		if (hdr->event_type > MAX_EVENT_TYPE) {
+			LOGIF(LE, (skygw_log_write(LOGFILE_ERROR,
+				"Invalid event type 0x%x. " 
+				"Binlog file is %s, position %d",
+				hdr->event_type,
+				file->binlogname, pos))); 
+
+			return NULL;
+		} 
+	} 
 
 	if (hdr->next_pos < pos && hdr->event_type != ROTATE_EVENT)
 	{
@@ -587,26 +598,6 @@ blr_close_binlog(ROUTER_INSTANCE *router, BLFILE *file)
 		free(file);
 }
 
-/** 
- * Extract a numeric field from a packet of the specified number of bits
- *
- * @param src	The raw packet source
- * @param birs	The number of bits to extract (multiple of 8)
- */
-static uint32_t
-extract_field(uint8_t *src, int bits)
-{
-uint32_t	rval = 0, shift = 0;
-
-	while (bits > 0)
-	{
-		rval |= (*src++) << shift;
-		shift += 8;
-		bits -= 8;
-	}
-	return rval;
-}
-
 /**
  * Log the event header of  binlog event
  *
@@ -659,7 +650,7 @@ blr_cache_response(ROUTER_INSTANCE *router, char *response, GWBUF *buf)
 char	path[PATH_MAX+1], *ptr;
 int	fd;
 
-	strcpy(path,get_datadir());
+	strncpy(path,get_datadir(),PATH_MAX);
 	strncat(path,"/",PATH_MAX);
 	strncat(path, router->service->name, PATH_MAX);
 
@@ -694,7 +685,7 @@ char	path[PATH_MAX+1], *ptr;
 int	fd;
 GWBUF	*buf;
 
-	strcpy(path, get_datadir());
+	strncpy(path, get_datadir(),PATH_MAX);
 	strncat(path, "/", PATH_MAX);
 	strncat(path, router->service->name, PATH_MAX);
 	strncat(path, "/.cache/", PATH_MAX);

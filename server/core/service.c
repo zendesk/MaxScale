@@ -36,7 +36,8 @@
  * 06/02/15	Mark Riddoch		Added caching of authentication data
  * 18/02/15	Mark Riddoch		Added result set management
  * 03/03/15	Massimiliano Pinto	Added config_enable_feedback_task() call in serviceStartAll
- *
+ * 19/06/15	Martin Brampton		More meaningful names for temp variables
+
  * @endverbatim
  */
 #include <stdio.h>
@@ -125,7 +126,7 @@ SERVICE 	*service;
                         "Error : Unable to load %s module \"%s\".\n\t\t\t"
                         "      Ensure that lib%s.so exists in one of the "
                         "following directories :\n\t\t\t      "
-                        "- %s/modules\n%s%s",
+                        "- %s\n%s%s",
                         MODULE_ROUTER,
                         router,
                         router,
@@ -176,19 +177,19 @@ SERVICE 	*service;
 int
 service_isvalid(SERVICE *service)
 {
-SERVICE		*ptr;
+SERVICE		*checkservice;
 int		rval = 0;
 
 	spinlock_acquire(&service_spin);
-	ptr = allServices;
-	while (ptr)
+	checkservice = allServices;
+	while (checkservice)
 	{
-		if (ptr == service)
+		if (checkservice == service)
 		{
 			rval = 1;
 			break;
 		}
-		ptr = ptr->next;
+		checkservice = checkservice->next;
 	}
 	spinlock_release(&service_spin);
 	return rval;
@@ -268,7 +269,7 @@ GWPROTOCOL	*funcs;
 				/* Save authentication data to file cache */
 				char	*ptr, path[PATH_MAX + 1];
                                 int mkdir_rval = 0;
-				strcpy(path, get_cachedir());
+				strncpy(path, get_cachedir(),PATH_MAX);
 				strncat(path, "/", 4096);
 				strncat(path, service->name, PATH_MAX);
 				if (access(path, R_OK) == -1)
@@ -278,10 +279,13 @@ GWPROTOCOL	*funcs;
 
                                 if(mkdir_rval)
                                 {
-                                    skygw_log_write(LOGFILE_ERROR,"Error : Failed to create directory '%s': [%d] %s",
-                                                    path,
-                                                    errno,
-                                                    strerror(errno));
+				    if(errno != EEXIST)
+				    {
+					skygw_log_write(LOGFILE_ERROR,"Error : Failed to create directory '%s': [%d] %s",
+						 path,
+						 errno,
+						 strerror(errno));
+				    }
                                     mkdir_rval = 0;
                                 }
 
@@ -293,10 +297,13 @@ GWPROTOCOL	*funcs;
 
                                 if(mkdir_rval)
                                 {
-                                    skygw_log_write(LOGFILE_ERROR,"Error : Failed to create directory '%s': [%d] %s",
-                                                    path,
-                                                    errno,
-                                                    strerror(errno));
+				    if(errno != EEXIST)
+				    {
+					skygw_log_write(LOGFILE_ERROR,"Error : Failed to create directory '%s': [%d] %s",
+						 path,
+						 errno,
+						 strerror(errno));
+				    }
                                     mkdir_rval = 0;
                                 }
 				strncat(path, "/dbusers", PATH_MAX);
@@ -534,11 +541,16 @@ int		listeners = 0;
 	port = service->ports;
 	while (port)
 	{
-		poll_remove_dcb(port->listener);
-		port->listener->session->state = SESSION_STATE_LISTENER_STOPPED;
-		listeners++;
-
-		port = port->next;
+	    if(port->listener &&
+	     port->listener->session->state == SESSION_STATE_LISTENER)
+	    {
+		if(poll_remove_dcb(port->listener) == 0)
+		{
+		    port->listener->session->state = SESSION_STATE_LISTENER_STOPPED;
+		    listeners++;
+		}
+	    }
+	    port = port->next;
 	}
 	service->state = SERVICE_STATE_STOPPED;
 
@@ -562,13 +574,18 @@ int		listeners = 0;
 	port = service->ports;
 	while (port)
 	{
-                if (poll_add_dcb(port->listener) == 0) {
-                        port->listener->session->state = SESSION_STATE_LISTENER;
-                        listeners++;
-                }
-		port = port->next;
+	    if(port->listener &&
+	     port->listener->session->state == SESSION_STATE_LISTENER_STOPPED)
+	    {
+		if(poll_add_dcb(port->listener) == 0)
+		{
+		    port->listener->session->state = SESSION_STATE_LISTENER;
+		    listeners++;
+		}
+	    }
+	    port = port->next;
 	}
-
+	service->state = SERVICE_STATE_STARTED;
 	return listeners;
 }
 
@@ -913,10 +930,12 @@ serviceSetSSLVersion(SERVICE *service, char* version)
 	service->ssl_method_type = SERVICE_SSLV3;
     else if(strcasecmp(version,"TLSV10") == 0)
 	service->ssl_method_type = SERVICE_TLS10;
+#ifdef OPENSSL_1_0
     else if(strcasecmp(version,"TLSV11") == 0)
 	service->ssl_method_type = SERVICE_TLS11;
     else if(strcasecmp(version,"TLSV12") == 0)
 	service->ssl_method_type = SERVICE_TLS12;
+#endif
     else if(strcasecmp(version,"MAX") == 0)
 	service->ssl_method_type = SERVICE_SSL_TLS_MAX;
     else return -1;
@@ -1253,11 +1272,11 @@ int		i;
 void
 dListServices(DCB *dcb)
 {
-SERVICE	*ptr;
+SERVICE	*service;
 
 	spinlock_acquire(&service_spin);
-	ptr = allServices;
-	if (ptr)
+	service = allServices;
+	if (service)
 	{
 		dcb_printf(dcb, "Services.\n");
 		dcb_printf(dcb, "--------------------------+----------------------+--------+---------------\n");
@@ -1265,13 +1284,13 @@ SERVICE	*ptr;
 			"Service Name", "Router Module");
 		dcb_printf(dcb, "--------------------------+----------------------+--------+---------------\n");
 	}
-	while (ptr)
+	while (service)
 	{
-		ss_dassert(ptr->stats.n_current >= 0);
+		ss_dassert(service->stats.n_current >= 0);
 		dcb_printf(dcb, "%-25s | %-20s | %6d | %5d\n",
-			ptr->name, ptr->routerModule,
-			ptr->stats.n_current, ptr->stats.n_sessions);
-		ptr = ptr->next;
+			service->name, service->routerModule,
+			service->stats.n_current, service->stats.n_sessions);
+		service = service->next;
 	}
 	if (allServices)
 		dcb_printf(dcb, "--------------------------+----------------------+--------+---------------\n\n");
@@ -1286,12 +1305,12 @@ SERVICE	*ptr;
 void
 dListListeners(DCB *dcb)
 {
-SERVICE		*ptr;
+SERVICE		*service;
 SERV_PROTOCOL	*lptr;
 
 	spinlock_acquire(&service_spin);
-	ptr = allServices;
-	if (ptr)
+	service = allServices;
+	if (service)
 	{
 		dcb_printf(dcb, "Listeners.\n");
 		dcb_printf(dcb, "---------------------+--------------------+-----------------+-------+--------\n");
@@ -1299,13 +1318,13 @@ SERV_PROTOCOL	*lptr;
 			"Service Name", "Protocol Module", "Address");
 		dcb_printf(dcb, "---------------------+--------------------+-----------------+-------+--------\n");
 	}
-	while (ptr)
+	while (service)
 	{
-		lptr = ptr->ports;
+		lptr = service->ports;
 		while (lptr)
 		{
 			dcb_printf(dcb, "%-20s | %-18s | %-15s | %5d | %s\n",
-				ptr->name, lptr->protocol, 
+				service->name, lptr->protocol, 
 				(lptr && lptr->address) ? lptr->address : "*",
 				lptr->port,
 				(!lptr->listener || 
@@ -1316,7 +1335,7 @@ SERV_PROTOCOL	*lptr;
 
 			lptr = lptr->next;
 		}
-		ptr = ptr->next;
+		service = service->next;
 	}
 	if (allServices)
 		dcb_printf(dcb, "---------------------+--------------------+-----------------+-------+--------\n\n");
@@ -1731,15 +1750,15 @@ void service_shutdown()
 int
 serviceSessionCountAll()
 {
-SERVICE	*ptr;
+SERVICE	*service;
 int	rval = 0;
 
 	spinlock_acquire(&service_spin);
-	ptr = allServices;
-	while (ptr)
+	service = allServices;
+	while (service)
 	{
-		rval += ptr->stats.n_current;
-		ptr = ptr->next;
+		rval += service->stats.n_current;
+		service = service->next;
 	}
 	spinlock_release(&service_spin);
 	return rval;
@@ -1760,16 +1779,16 @@ int		*rowno = (int *)data;
 int		i = 0;;
 char		buf[20];
 RESULT_ROW	*row;
-SERVICE		*ptr;
+SERVICE		*service;
 SERV_PROTOCOL	*lptr = NULL;
 
 	spinlock_acquire(&service_spin);
-	ptr = allServices;
-	if (ptr)
-		lptr = ptr->ports;
-	while (i < *rowno && ptr)
+	service = allServices;
+	if (service)
+		lptr = service->ports;
+	while (i < *rowno && service)
 	{
-		lptr = ptr->ports;
+		lptr = service->ports;
 		while (i < *rowno && lptr)
 		{
 			if ((lptr = lptr->next) != NULL)
@@ -1777,8 +1796,8 @@ SERV_PROTOCOL	*lptr = NULL;
 		}
 		if (i < *rowno)
 		{
-			ptr = ptr->next;
-			if (ptr && (lptr = ptr->ports) != NULL)
+			service = service->next;
+			if (service && (lptr = service->ports) != NULL)
 				i++;
 		}
 	}
@@ -1790,7 +1809,7 @@ SERV_PROTOCOL	*lptr = NULL;
 	}
 	(*rowno)++;
 	row = resultset_make_row(set);
-	resultset_row_set(row, 0, ptr->name);
+	resultset_row_set(row, 0, service->name);
 	resultset_row_set(row, 1, lptr->protocol);
 	resultset_row_set(row, 2, (lptr && lptr->address) ? lptr->address : "*");
 	sprintf(buf, "%d", lptr->port);
@@ -1845,16 +1864,16 @@ int		*rowno = (int *)data;
 int		i = 0;;
 char		buf[20];
 RESULT_ROW	*row;
-SERVICE		*ptr;
+SERVICE		*service;
 
 	spinlock_acquire(&service_spin);
-	ptr = allServices;
-	while (i < *rowno && ptr)
+	service = allServices;
+	while (i < *rowno && service)
 	{
 		i++;
-		ptr = ptr->next;
+		service = service->next;
 	}
-	if (ptr == NULL)
+	if (service == NULL)
 	{
 		spinlock_release(&service_spin);
 		free(data);
@@ -1862,11 +1881,11 @@ SERVICE		*ptr;
 	}
 	(*rowno)++;
 	row = resultset_make_row(set);
-	resultset_row_set(row, 0, ptr->name);
-	resultset_row_set(row, 1, ptr->routerModule);
-	sprintf(buf, "%d", ptr->stats.n_current);
+	resultset_row_set(row, 0, service->name);
+	resultset_row_set(row, 1, service->routerModule);
+	sprintf(buf, "%d", service->stats.n_current);
 	resultset_row_set(row, 2, buf);
-	sprintf(buf, "%d", ptr->stats.n_sessions);
+	sprintf(buf, "%d", service->stats.n_sessions);
 	resultset_row_set(row, 3, buf);
 	spinlock_release(&service_spin);
 	return row;
@@ -1956,13 +1975,14 @@ int serviceInitSSL(SERVICE* service)
 	case SERVICE_TLS10:
 	    service->method = (SSL_METHOD*)TLSv1_server_method();
 	    break;
+#ifdef OPENSSL_1_0
 	case SERVICE_TLS11:
 	    service->method = (SSL_METHOD*)TLSv1_1_server_method();
 	    break;
 	case SERVICE_TLS12:
 	    service->method = (SSL_METHOD*)TLSv1_2_server_method();
 	    break;
-
+#endif
 	    /** Rest of these use the maximum available SSL/TLS methods */
 	case SERVICE_SSL_MAX:
 	    service->method = (SSL_METHOD*)SSLv23_server_method();

@@ -41,9 +41,9 @@
  * 30/10/14	Massimiliano Pinto	Added disable_master_failback parameter
  * 07/11/14	Massimiliano Pinto	Addition of monitor timeouts for connect/read/write
  * 20/02/15	Markus Mäkelä		Added connection_timeout parameter for services
- * 05/03/15	Massimiliano	Pinto	Added notification_feedback support
+ * 05/03/15	Massimiliano Pinto	Added notification_feedback support
  * 20/04/15	Guillaume Lefranc	Added available_when_donor parameter
- * 22/04/15     Martin Brampton         Added disable_master_role_setting parameter
+ * 22/04/15 Martin Brampton     Added disable_master_role_setting parameter
  *
  * @endverbatim
  */
@@ -85,6 +85,7 @@ static	int	process_config_context(CONFIG_CONTEXT	*);
 static	int	process_config_update(CONFIG_CONTEXT *);
 static	void	free_config_context(CONFIG_CONTEXT	*);
 static	char 	*config_get_value(CONFIG_PARAMETER *, const char *);
+static	const char 	*config_get_value_string(CONFIG_PARAMETER *, const char *);
 static	int	handle_global_item(const char *, const char *);
 static	int	handle_feedback_item(const char *, const char *);
 static	void	global_defaults();
@@ -300,18 +301,18 @@ int		rval;
 static	int
 process_config_context(CONFIG_CONTEXT *context)
 {
-CONFIG_CONTEXT		*obj;
-int			error_count = 0;
-HASHTABLE* monitorhash;
+    CONFIG_CONTEXT  *obj;
+    int             error_count = 0;
+    HASHTABLE*      monitorhash;
 
-if((monitorhash = hashtable_alloc(5,simple_str_hash,strcmp)) == NULL)
-{
-    skygw_log_write(LOGFILE_ERROR,"Error: Failed to allocate ,onitor configuration check hashtable.");
-    return 0;
-}
+    if((monitorhash = hashtable_alloc(5,simple_str_hash,strcmp)) == NULL)
+    {
+        skygw_log_write(LOGFILE_ERROR,"Error: Failed to allocate ,monitor configuration check hashtable.");
+        return 0;
+    }
+    hashtable_memory_fns(monitorhash,(HASHMEMORYFN)strdup,NULL,(HASHMEMORYFN)free,NULL);
 
-hashtable_memory_fns(monitorhash,strdup,NULL,free,NULL);
-	/**
+    /**
 	 * Process the data and create the services and servers defined
 	 * in the data.
 	 */
@@ -428,7 +429,7 @@ hashtable_memory_fns(monitorhash,strdup,NULL,free,NULL);
 
 				    /** Add the 5.5.5- string to the start of the version string if
 				     * the version string starts with "10.".
-				     * This mimics MariaDB 10.0 behavior which adds 5.5.5- for backwards compatibility. */
+				     * This mimics MariaDB 10.0 replication which adds 5.5.5- for backwards compatibility. */
 				    if(strncmp(version_string,"10.",3) == 0)
 				    {
 					((SERVICE *)(obj->element))->version_string = malloc((strlen(version_string) +
@@ -763,6 +764,9 @@ hashtable_memory_fns(monitorhash,strdup,NULL,free,NULL);
 			}
 			if (obj->element)
 			{
+                                SERVER *server = obj->element;
+                                server->persistpoolmax = strtol(config_get_value_string(obj->parameters, "persistpoolmax"), NULL, 0);
+                                server->persistmaxtime = strtol(config_get_value_string(obj->parameters, "persistmaxtime"), NULL, 0);
 				CONFIG_PARAMETER *params = obj->parameters;
 				while (params)
 				{
@@ -776,6 +780,10 @@ hashtable_memory_fns(monitorhash,strdup,NULL,free,NULL);
 								"monitorpw")
 						&& strcmp(params->name,
 								"type")
+						&& strcmp(params->name,
+								"persistpoolmax")
+						&& strcmp(params->name,
+								"persistmaxtime")
 						)
 					{
 						serverAddParameter(obj->element,
@@ -932,7 +940,7 @@ hashtable_memory_fns(monitorhash,strdup,NULL,free,NULL);
 			/* if id is not set, do it now */
 			if (gateway.id == 0) {
 				setipaddress(&serv_addr.sin_addr, (address == NULL) ? "0.0.0.0" : address);
-				gateway.id = (unsigned long) (serv_addr.sin_addr.s_addr + port != NULL ? atoi(port) : 0 + getpid());
+				gateway.id = (unsigned long) (serv_addr.sin_addr.s_addr + (port != NULL ? atoi(port) : 0 + getpid()));
 			}
                 
 			if (service && socket && protocol) {        
@@ -1164,6 +1172,25 @@ config_get_value(CONFIG_PARAMETER *params, const char *name)
 		params = params->next;
 	}
 	return NULL;
+}
+
+/**
+ * Get the value of a config parameter as a string
+ *
+ * @param params	The linked list of config parameters
+ * @param name		The parameter to return
+ * @return the parameter value or null string if not found
+ */
+static const char *
+config_get_value_string(CONFIG_PARAMETER *params, const char *name)
+{
+	while (params)
+	{
+		if (!strcmp(params->name, name))
+			return (const char *)params->value;
+		params = params->next;
+	}
+	return "";
 }
 
 
@@ -1730,9 +1757,6 @@ SERVER			*server;
 					char *enable_root_user;
 					char *connection_timeout;
 					char *allow_localhost_match_wildcard_host;
-					char *auth_all_servers;
-					char *optimize_wildcard;
-					char *strip_db_esc;
 
 					enable_root_user = 
                                                 config_get_value(obj->parameters, 
@@ -1740,16 +1764,6 @@ SERVER			*server;
 
 					connection_timeout = config_get_value(obj->parameters,
                                                           "connection_timeout");
-					
-					auth_all_servers = 
-                                                config_get_value(obj->parameters, 
-                                                                 "auth_all_servers");
-					optimize_wildcard =
-                                                config_get_value(obj->parameters,
-                                                                 "optimize_wildcard");
-					strip_db_esc = 
-                                                config_get_value(obj->parameters, 
-                                                                 "strip_db_esc");
 
 					allow_localhost_match_wildcard_host = 
 						config_get_value(obj->parameters, "localhost_match_wildcard_host");
@@ -2039,6 +2053,7 @@ static char *monitor_params[] =
                 "passwd",
 		"script",
 		"events",
+		"mysql51_replication",
 		"monitor_interval",
 		"detect_replication_lag",
 		"detect_stale_master",

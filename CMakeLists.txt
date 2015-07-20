@@ -31,17 +31,29 @@ include(cmake/CheckPlatform.cmake)
 
 check_deps()
 check_dirs()
+find_package(OpenSSL)
 find_package(Valgrind)
 find_package(MySQLClient)
 find_package(MySQL)
 find_package(Pandoc)
 find_package(TCMalloc)
 find_package(Jemalloc)
+find_package(CURL) 
 # You can find the variables set by this in the FindCURL.cmake file
 # which is a default module in CMake.
-find_package(CURL) 
+
 if(NOT CURL_FOUND)
   message(FATAL_ERROR "Failed to locate dependency: libcurl")
+endif()
+
+if(NOT OPENSSL_FOUND)
+  message(FATAL_ERROR "Failed to locate dependency: OpenSSL")
+else()
+  if(OPENSSL_VERSION VERSION_LESS 1 AND NOT FORCE_OPENSSL100)
+    add_definitions("-DOPENSSL_0_9")
+  else()
+    add_definitions("-DOPENSSL_1_0")
+  endif()
 endif()
 
 set(CMAKE_INSTALL_RPATH ${CMAKE_INSTALL_RPATH}:${CMAKE_INSTALL_PREFIX}/${MAXSCALE_LIBDIR})
@@ -102,7 +114,13 @@ if(PROFILE)
   set(FLAGS "${FLAGS} -pg " CACHE STRING "Compilation flags" FORCE)
 endif()
 
-set(CMAKE_C_FLAGS "${FLAGS}")
+if(USE_C99)
+  message(STATUS "Using C99 standard")
+  set(CMAKE_C_FLAGS "-std=c99 -D_GNU_SOURCE=1 ${FLAGS}")
+else()
+  set(CMAKE_C_FLAGS "${FLAGS}")
+endif()
+
 set(CMAKE_C_FLAGS_DEBUG "${DEBUG_FLAGS} -DSS_DEBUG -DLOG_ASSERT")
 set(CMAKE_C_FLAGS_RELEASE "")
 set(CMAKE_C_FLAGS_RELWITHDEBINFO "-ggdb")
@@ -153,6 +171,9 @@ install(FILES ${CMAKE_BINARY_DIR}/Changelog.txt DESTINATION ${MAXSCALE_SHAREDIR}
 install(FILES ${CMAKE_BINARY_DIR}/ReleaseNotes.txt DESTINATION ${MAXSCALE_SHAREDIR})
 install(FILES ${CMAKE_BINARY_DIR}/UpgradingToMaxScale110.txt DESTINATION ${MAXSCALE_SHAREDIR})
 install(FILES server/maxscale_template.cnf DESTINATION ${MAXSCALE_SHAREDIR})
+if(WITH_MAXSCALE_CNF)
+  install(FILES server/maxscale_template.cnf DESTINATION ${MAXSCALE_CONFDIR} RENAME maxscale.cnf)
+endif()
 install(FILES server/maxscale_binlogserver_template.cnf DESTINATION ${MAXSCALE_SHAREDIR})
 install(FILES ${ERRMSG} DESTINATION ${MAXSCALE_VARDIR}/lib/maxscale 
   PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
@@ -198,6 +219,7 @@ endif()
 # Only do packaging if configured
 if(PACKAGE)
 
+  execute_process(COMMAND uname -m COMMAND tr -d '\n' OUTPUT_VARIABLE CPACK_PACKAGE_ARCHITECTURE)
   # Install the files copied by the postinst script into the share folder
   install(FILES ${CMAKE_BINARY_DIR}/maxscale DESTINATION ${MAXSCALE_SHAREDIR}
     PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
@@ -217,7 +239,7 @@ if(PACKAGE)
     set(CPACK_PACKAGE_VERSION_MINOR "${MAXSCALE_VERSION_MINOR}")
     set(CPACK_PACKAGE_VERSION_PATCH "${MAXSCALE_VERSION_PATCH}")
     set(CPACK_PACKAGE_CONTACT "MariaDB Corporation Ab")
-    set(CPACK_PACKAGE_FILE_NAME "maxscale-${MAXSCALE_VERSION}")
+    set(CPACK_PACKAGE_FILE_NAME "maxscale-${MAXSCALE_VERSION}-${CPACK_PACKAGE_ARCHITECTURE}-${DISTRIB_SUFFIX}")
     set(CPACK_PACKAGE_NAME "maxscale")
     set(CPACK_PACKAGE_VENDOR "MariaDB Corporation Ab")
     set(CPACK_PACKAGE_DESCRIPTION_FILE ${CMAKE_SOURCE_DIR}/etc/DESCRIPTION)
@@ -231,7 +253,8 @@ if(PACKAGE)
     if(NOT ( ${RPMBUILD} STREQUAL "RPMBUILD-NOTFOUND" ) )
       include(cmake/package_rpm.cmake)
       message(STATUS "Generating RPM packages")
-    elseif(NOT ( ${DEBBUILD} STREQUAL "DEBBUILD-NOTFOUND" ) )
+    endif()
+    if(NOT ( ${DEBBUILD} STREQUAL "DEBBUILD-NOTFOUND" ) )
       include(cmake/package_deb.cmake)
       message(STATUS "Generating DEB packages for ${DEB_ARCHITECTURE}")
     endif()
@@ -247,7 +270,7 @@ add_custom_target(buildtests
 ) 
 
 add_custom_target(testall 
-  COMMAND ${CMAKE_COMMAND} ${CMAKE_SOURCE_DIR} -DBUILD_TESTS=Y -DCMAKE_BUILD_TYPE=Debug -DCMAKE_INSTALL_PREFIX=${CMAKE_BINARY_DIR} -DWITH_SCRIPTS=N -DMAXSCALE_VARDIR=${CMAKE_BINARY_DIR}
+  COMMAND ${CMAKE_COMMAND} ${CMAKE_SOURCE_DIR} -DBUILD_TESTS=Y -DCMAKE_BUILD_TYPE=Debug -DCMAKE_INSTALL_PREFIX=${CMAKE_BINARY_DIR} -DWITH_SCRIPTS=N -DWITH_MAXSCALE_CNF=N -DMAXSCALE_VARDIR=${CMAKE_BINARY_DIR}
   COMMAND make install
   COMMAND ${CMAKE_COMMAND} -P ${CMAKE_SOURCE_DIR}/cmake/testall.cmake
   COMMENT "Running full test suite..." VERBATIM)

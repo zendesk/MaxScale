@@ -460,6 +460,21 @@ The `socket` option may be included in a listener definition, this configures th
 
 If a socket option and an address option is given then the listener will listen on both the specific IP address and the Unix socket.
 
+#### `persistpoolmax`
+
+The `persistpoolmax` parameter defaults to zero but can be set to an integer value for a back end server.
+If it is non zero, then when a DCB connected to a back end server is discarded by the
+system, it will be held in a pool for reuse, remaining connected to the back end server.
+If the number of DCBs in the pool has reached the value given by `persistpoolmax` then
+any further DCB that is discarded will not be retained, but disconnected and discarded.
+
+#### `persistmaxtime`
+
+The `persistmaxtime` parameter defaults to zero but can be set to an integer value
+indicating a number of seconds. A DCB placed in the persistent pool for a server will
+only be reused if the elapsed time since it joined the pool is less than the given
+value. Otherwise, the DCB will be discarded and the connection closed.
+
 ### Filter
 
 Filters provide a means to manipulate or process requests as they pass through MaxScale between the client side protocol and the query router. A filter should be defined in a section with a type of filter.
@@ -1390,37 +1405,6 @@ count=10
 
 In addition parameters may be added to define patterns to match against to either include or exclude particular SQL statements to be duplicated. You may also define that the filter is only active for connections from a particular source or when a particular user is connected.
 
-## Encrypting Passwords
-
-Passwords stored in the maxscale.cnf file may optionally be encrypted for added security. This is done by creation of an encryption key on installation of MaxScale. Encryption keys may be created manually by executing the maxkeys utility with the argument of the filename to store the key. The default location MaxScale stores the keys is `/var/lib/maxscale`.
-
-```
- # Usage: maxkeys [PATH]
-maxkeys /var/lib/maxscale/
-```
-
-Changing the encryption key for MaxScale will invalidate any currently encrypted keys stored in the maxscale.cnf file.
-
-### Creating Encrypted Passwords
-
-Encrypted passwords are created by executing the maxpasswd command with the location of the .secrets file and the password you require to encrypt as an argument.
-
-```
-# Usage: maxpasswd PATH PASSWORD
-maxpasswd /var/lib/maxscale/ MaxScalePw001
-61DD955512C39A4A8BC4BB1E5F116705
-```
-
-The output of the maxpasswd command is a hexadecimal string, this should be inserted into the maxscale.cnf file in place of the ordinary, plain text, password. MaxScale will determine this as an encrypted password and automatically decrypt it before sending it the database server.
-
-```
-[Split Service]
-type=service
-router=readwritesplit
-servers=server1,server2,server3,server4
-user=maxscale
-password=61DD955512C39A4A8BC4BB1E5F116705
-```
 
 ## Reloading Configuration
 

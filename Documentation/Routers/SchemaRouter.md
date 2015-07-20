@@ -15,7 +15,7 @@ In almost all the cases these can be avoided by proper server configuration and 
 Here is an example configuration of the schemarouter router:
 
 ```
-Shard Router]
+[Shard Router]
 type=service
 router=schemarouter
 servers=server1,server2
@@ -64,4 +64,4 @@ The schemarouter router currently has some limitations due to the nature of the 
 
 ## Examples
 
-[Here](../../Tutorials/Simple-Sharding-Tutorial.md) is a small tutorial on how to set up a sharded database.
+[Here](../Tutorials/Simple-Sharding-Tutorial.md) is a small tutorial on how to set up a sharded database.

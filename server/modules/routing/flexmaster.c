@@ -338,13 +338,10 @@ static int swap(struct flexmaster_parameters *params) {
         }
 
         // Stop replication on the new master
-        mysql_query(params->new_master_connection, "SLAVE STOP");
-        // This spews a warning which fails mysql_query?
-        /*if(mysql_query(new_master_connection, "SLAVE STOP") != 0) {
-                LOGIF(LE, (skygw_log_write_flush(LOGFILE_ERROR, mysql_error(new_master_connection))));
+        if(mysql_query(params->new_master_connection, "STOP SLAVE") != 0) {
                 error("Error: could not stop slave on new master");
                 return 1;
-        }*/
+        }
 
         /*
          * Query old master status.

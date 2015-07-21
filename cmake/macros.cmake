@@ -152,6 +152,11 @@ macro(check_deps)
     message(FATAL_ERROR "Could not find libyajl")
   endif()
 
+  find_library(HAVE_ZOOKEEPER NAMES zookeeper_st)
+  if(NOT HAVE_ZOOKEEPER)
+    message(FATAL_ERROR "Could not find libzookeeper_st")
+  endif()
+
 endmacro()
 
 macro(check_dirs)

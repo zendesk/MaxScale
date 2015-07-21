@@ -17,6 +17,7 @@
   check_include_files(http_parser.h HAVE_HTTP_PARSER)
   check_include_files(librdkafka/rdkafka.h HAVE_LIBRDKAFKA)
   check_include_files(yajl/yajl_tree.h HAVE_JSON)
+  check_include_files(zookeeper/zookeeper.h HAVE_ZOOKEEPER)
   check_include_files(ini.h HAVE_INI)
   check_include_files(math.h HAVE_MATH)
   check_include_files(memlog.h HAVE_MEMLOG)

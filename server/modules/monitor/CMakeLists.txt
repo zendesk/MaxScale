@@ -11,7 +11,7 @@ target_link_libraries(ndbclustermon log_manager utils)
 install(TARGETS ndbclustermon DESTINATION ${MAXSCALE_LIBDIR})
 
 add_library(accountmon SHARED account_mon.c)
-target_link_libraries(accountmon log_manager utils rdkafka)
+target_link_libraries(accountmon log_manager utils rdkafka yajl)
 install(TARGETS accountmon DESTINATION ${MAXSCALE_LIBDIR})
 
 if(BUILD_MMMON)

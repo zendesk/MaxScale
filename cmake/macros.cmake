@@ -147,6 +147,11 @@ macro(check_deps)
     message(FATAL_ERROR "Could not find librdkafka")
   endif()
 
+  find_library(HAVE_JSON NAMES yajl)
+  if(NOT HAVE_JSON)
+    message(FATAL_ERROR "Could not find libyajl")
+  endif()
+
 endmacro()
 
 macro(check_dirs)

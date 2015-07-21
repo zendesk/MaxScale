@@ -18,7 +18,7 @@
 #include	<server.h>
 #include	<service.h>
 #include	<spinlock.h>
-#include	<mysql.h>
+#include	<librdkafka/rdkafka.h>
 
 /**
  * The handle for an instance of a MySQL Monitor module
@@ -26,28 +26,19 @@
 typedef struct {
 	SPINLOCK  lock;			/**< The monitor spinlock */
 	pthread_t tid;			/**< id of monitor thread */ 
+
 	int    	  shutdown;		/**< Flag to shutdown the monitor thread */
 	int       status;		/**< Monitor status */
+
 	unsigned long   interval;	/**< Monitor sampling interval */
 	unsigned long         id;	/**< Monitor ID */
-	int	connect_timeout;	/**< Connect timeout in seconds for mysql_real_connect */
-	int	read_timeout;		/**< Timeout in seconds to read from the server.
-					 * There are retries and the total effective timeout value is three times the option value.
-					 */
-	int	write_timeout;		/**< Timeout in seconds for each attempt to write to the server.
-					 * There are retries and the total effective timeout value is two times the option value.
-					 */
 
         // accounts storage
         HASHTABLE *accounts;
 
-        // accounts db connection
-        SERVICE *service;
-        char *account_database;
-
-        SERVER *current_server;
-        MYSQL *connection;
-} MYSQL_MONITOR;
+        // kafka config
+        rd_kafka_t *connection;
+} ACCOUNT_MONITOR;
 
 #define MONITOR_RUNNING		1
 #define MONITOR_STOPPING	2

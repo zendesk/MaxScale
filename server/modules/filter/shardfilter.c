@@ -457,7 +457,7 @@ int shardfilter_find_shard(ZENDESK_INSTANCE *instance, int account_id) {
         if(instance->account_monitor == NULL)
                 return 0;
 
-        MYSQL_MONITOR *handle = (MYSQL_MONITOR *) instance->account_monitor->handle;
+        ACCOUNT_MONITOR *handle = (ACCOUNT_MONITOR *) instance->account_monitor->handle;
 
         if(handle == NULL || handle->accounts == NULL)
                 return 0;

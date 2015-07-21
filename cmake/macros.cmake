@@ -152,9 +152,9 @@ macro(check_deps)
     message(FATAL_ERROR "Could not find libyajl")
   endif()
 
-  find_library(HAVE_ZOOKEEPER NAMES zookeeper_st)
+  find_library(HAVE_ZOOKEEPER NAMES zookeeper_mt)
   if(NOT HAVE_ZOOKEEPER)
-    message(FATAL_ERROR "Could not find libzookeeper_st")
+    message(FATAL_ERROR "Could not find libzookeeper_mt")
   endif()
 
 endmacro()

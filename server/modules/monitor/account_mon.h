@@ -15,10 +15,13 @@
  *
  * Copyright MariaDB Corporation Ab 2013-2014
  */
-#include	<server.h>
-#include	<service.h>
-#include	<spinlock.h>
-#include	<librdkafka/rdkafka.h>
+#include <server.h>
+#include <spinlock.h>
+#include <hashtable.h>
+
+#include <librdkafka/rdkafka.h>
+#include <zookeeper/zookeeper.h>
+#include <zookeeper/zookeeper.jute.h>
 
 /**
  * The handle for an instance of a MySQL Monitor module
@@ -38,6 +41,16 @@ typedef struct {
 
         // kafka config
         rd_kafka_t *connection;
+        rd_kafka_conf_t *configuration;
+        rd_kafka_topic_t *topic;
+
+        char *topic_name;
+
+        bool connected;
+
+        zhandle_t *zookeeper;
+
+        char **brokerlist;
 } ACCOUNT_MONITOR;
 
 #define MONITOR_RUNNING		1

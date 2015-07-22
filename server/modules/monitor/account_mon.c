@@ -452,7 +452,9 @@ void account_monitor_consume(ACCOUNT_MONITOR *handle, rd_kafka_message_t *messag
         long long int id = YAJL_GET_INTEGER(id_node);
         long long int shard_id = YAJL_GET_INTEGER(shard_id_node);
 
+        hashtable_delete(handle->accounts, (void *) id);
         hashtable_add(handle->accounts, (void *) id, (void *) shard_id);
+
         LOGIF(LM, (skygw_log_write(LOGFILE_MESSAGE, "found shard_id %lld for account %lld", shard_id, id)));
 
         yajl_tree_free(node);

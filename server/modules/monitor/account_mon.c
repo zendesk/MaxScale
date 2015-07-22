@@ -16,8 +16,6 @@
 #include <maxconfig.h>
 #include <yajl/yajl_tree.h>
 
-#define DEBUG YES
-
 /** Defined in log_manager.cc */
 extern int            lm_enabled_logfiles_bitmask;
 extern size_t         log_ses_count[];
@@ -156,7 +154,10 @@ static char *get_kafka_brokerlist(ACCOUNT_MONITOR *handle) {
                         }
 
                         char *new_brokers = malloc(len);
-                        //TODO
+
+                        if(new_brokers == NULL) {
+                                continue;
+                        }
 
                         if(brokers != NULL) {
                                 memcpy(new_brokers, brokers, previous_size);
@@ -243,10 +244,6 @@ static void *startMonitor(void *arg, void *opt) {
                 return NULL;
         }
 
-#ifdef DEBUG
-        zoo_set_debug_level(ZOO_LOG_LEVEL_DEBUG);
-#endif
-
         handle->zookeeper = zookeeper_init(zookeeper, watcher, 10000, 0, (void *) handle, 0);
 
         if(handle->zookeeper == NULL) {
@@ -277,6 +274,7 @@ static void stopMonitor(void *arg) {
         handle->shutdown = 1;
         thread_wait((void *) handle->tid);
 
+        // TODO could handle be already freed here?
         account_monitor_free(handle);
 }
 
@@ -354,13 +352,12 @@ static void monitorMain(void *arg) {
 
         rd_kafka_set_logger(handle->connection, logger);
 
-#ifdef DEBUG
-        rd_kafka_set_log_level(handle->connection, 7);
-#endif
-
         const struct rd_kafka_metadata *metadata;
-        rd_kafka_metadata(handle->connection, 0, handle->topic, &metadata, 5000);
-        // TODO
+        if(rd_kafka_metadata(handle->connection, 0, handle->topic, &metadata, 5000) != RD_KAFKA_RESP_ERR_NO_ERROR) {
+                LOGIF(LM, (skygw_log_write(LOGFILE_MESSAGE, "Could not create kafka topic.\n%s", rd_kafka_err2str(rd_kafka_errno2err(errno)))));
+                account_monitor_free(handle);
+                return;
+        }
 
         rd_kafka_queue_t *queue = rd_kafka_queue_new(handle->connection);
 
@@ -368,8 +365,7 @@ static void monitorMain(void *arg) {
                 int partition = metadata->topics[0].partitions[i].id;
 
                 if(rd_kafka_consume_start_queue(handle->topic, partition, RD_KAFKA_OFFSET_BEGINNING, queue) == -1) {
-                        fprintf(stderr, "%% Failed to start consuming: %s\n", rd_kafka_err2str(rd_kafka_errno2err(errno)));
-                        // TODO
+                        LOGIF(LM, (skygw_log_write(LOGFILE_MESSAGE, "Failed to start consuming partition %i: %s", partition, rd_kafka_err2str(rd_kafka_errno2err(errno)))));
                 }
         }
 
@@ -386,16 +382,11 @@ static void monitorMain(void *arg) {
 
         for(int i = 0; i < metadata->topics[0].partition_cnt; i++) {
                 int partition = metadata->topics[0].partitions[i].id;
-
-                if(rd_kafka_consume_stop(handle->topic, partition) == -1) {
-                        fprintf(stderr, "%% Failed to start consuming: %s\n", rd_kafka_err2str(rd_kafka_errno2err(errno)));
-                        // TODO
-                }
+                rd_kafka_consume_stop(handle->topic, partition);
         }
 
         rd_kafka_queue_destroy(queue);
         rd_kafka_metadata_destroy(metadata);
-        // rd_kafka_topic_conf_destroy(topic_configuration);
 
         handle->status = MONITOR_STOPPED;
 }
@@ -405,14 +396,11 @@ void account_monitor_consume(ACCOUNT_MONITOR *handle, rd_kafka_message_t *messag
                 return;
         }
 
-        printf("%s\n", message->payload);
-
         char errbuf[1024];
         char *payload = message->payload;
         // ?
         payload[message->len] = '\0';
         yajl_val node = yajl_tree_parse(payload, errbuf, sizeof(errbuf));
-
 
         if(node == NULL) {
                 LOGIF(LM, (skygw_log_write(LOGFILE_MESSAGE, "failed to parse: %s\n\"%s\"", errbuf, message->payload)));

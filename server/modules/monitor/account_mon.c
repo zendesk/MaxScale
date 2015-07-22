@@ -16,6 +16,8 @@
 #include <maxconfig.h>
 #include <yajl/yajl_tree.h>
 
+#define DEBUG YES
+
 /** Defined in log_manager.cc */
 extern int            lm_enabled_logfiles_bitmask;
 extern size_t         log_ses_count[];
@@ -337,8 +339,7 @@ static void monitorMain(void *arg) {
         char *brokers = get_kafka_brokerlist(handle);
 
         if(brokers != NULL) {
-                char *a = strdupa(brokers);
-                rd_kafka_brokers_add(handle->connection, a);
+                rd_kafka_brokers_add(handle->connection, brokers);
         }
 
         rd_kafka_topic_conf_t *topic_configuration = rd_kafka_topic_conf_new();
@@ -356,8 +357,19 @@ static void monitorMain(void *arg) {
         rd_kafka_set_log_level(handle->connection, 7);
 #endif
 
-        if(rd_kafka_consume_start(handle->topic, 0, RD_KAFKA_OFFSET_BEGINNING) == -1){
-                fprintf(stderr, "%% Failed to start consuming: %s\n", rd_kafka_err2str(rd_kafka_errno2err(errno)));
+        const struct rd_kafka_metadata *metadata;
+        rd_kafka_metadata(handle->connection, 0, handle->topic, &metadata, 5000);
+        // TODO
+
+        rd_kafka_queue_t *queue = rd_kafka_queue_new(handle->connection);
+
+        for(int i = 0; i < metadata->topics[0].partition_cnt; i++) {
+                int partition = metadata->topics[0].partitions[i].id;
+
+                if(rd_kafka_consume_start_queue(handle->topic, partition, RD_KAFKA_OFFSET_BEGINNING, queue) == -1) {
+                        fprintf(stderr, "%% Failed to start consuming: %s\n", rd_kafka_err2str(rd_kafka_errno2err(errno)));
+                        // TODO
+                }
         }
 
         while(1) {
@@ -366,7 +378,7 @@ static void monitorMain(void *arg) {
                         break;
                 }
 
-                rd_kafka_message_t *message = rd_kafka_consume(handle->topic, 0, 1000);
+                rd_kafka_message_t *message = rd_kafka_consume_queue(queue, 1000);
 
                 if(message == NULL) {
                         continue;
@@ -384,8 +396,14 @@ void account_monitor_consume(ACCOUNT_MONITOR *handle, rd_kafka_message_t *messag
                 return;
         }
 
+        printf("%s\n", message->payload);
+
         char errbuf[1024];
-        yajl_val node = yajl_tree_parse(message->payload, errbuf, sizeof(errbuf));
+        char *payload = message->payload;
+        // ?
+        payload[message->len] = '\0';
+        yajl_val node = yajl_tree_parse(payload, errbuf, sizeof(errbuf));
+
 
         if(node == NULL) {
                 LOGIF(LM, (skygw_log_write(LOGFILE_MESSAGE, "failed to parse: %s\n\"%s\"", errbuf, message->payload)));
@@ -432,6 +450,7 @@ void account_monitor_consume(ACCOUNT_MONITOR *handle, rd_kafka_message_t *messag
         }
 
         hashtable_add(handle->accounts, (void *) &id, (void *) &shard_id);
+        LOGIF(LM, (skygw_log_write(LOGFILE_MESSAGE, "found shard_id %lld for account %lld", shard_id, id)));
 
         yajl_tree_free(node);
 }

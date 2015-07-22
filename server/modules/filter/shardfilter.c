@@ -78,7 +78,7 @@ typedef struct {
 void shardfilter_close_client_session(SESSION *);
 int shardfilter_free_client_session(SESSION *);
 SERVICE *shardfilter_service_for_shard(ZENDESK_INSTANCE *, char *);
-int shardfilter_find_shard(ZENDESK_INSTANCE *, int);
+int shardfilter_find_shard(ZENDESK_INSTANCE *, long long int);
 int shardfilter_find_account(char *, int);
 
 extern int lm_enabled_logfiles_bitmask;
@@ -455,7 +455,7 @@ int shardfilter_find_account(char *bufdata, int qlen) {
         return account_id;
 }
 
-int shardfilter_find_shard(ZENDESK_INSTANCE *instance, int account_id) {
+int shardfilter_find_shard(ZENDESK_INSTANCE *instance, long long int account_id) {
         if(instance->account_monitor == NULL)
                 return 0;
 
@@ -468,7 +468,7 @@ int shardfilter_find_shard(ZENDESK_INSTANCE *instance, int account_id) {
 
         long long int shard_id = (long long int) hashtable_fetch(handle->accounts, (void *) account_id);
 
-        if(shard_id == NULL) {
+        if(shard_id == 0) {
                 skygw_log_write(LOGFILE_TRACE, "shardfilter: could not find shard id for account %d", account_id);
                 return 0;
         } else {

@@ -42,6 +42,9 @@ static MONITOR_OBJECT MyObject = {
         diagnostics
 };
 
+void account_monitor_free(ACCOUNT_MONITOR *);
+void account_monitor_consume(ACCOUNT_MONITOR *, rd_kafka_message_t *);
+
 int account_monitor_hash(void *);
 int account_monitor_compare(void *, void *);
 
@@ -82,12 +85,10 @@ static char *get_kafka_brokerlist(ACCOUNT_MONITOR *handle) {
         struct String_vector brokerlist;
 
         if(zoo_get_children(handle->zookeeper, BROKER_PATH, 1, &brokerlist) != ZOK) {
-                // TODO
                 return NULL;
         }
 
         if(brokerlist.count == 0) {
-                // TODO
                 return NULL;
         }
 
@@ -96,13 +97,19 @@ static char *get_kafka_brokerlist(ACCOUNT_MONITOR *handle) {
         for(int i = 0; i < brokerlist.count; i++) {
                 size_t len = sizeof(brokerlist.data[i]);
                 char *path = malloc(sizeof("/brokers/ids/") + len + 1);
+
+                if(path == NULL) {
+                        return NULL;
+                }
+
                 sprintf(path, "/brokers/ids/%s", brokerlist.data[i]);
-                //if(path == NULL)
 
                 int buffer_length = 1024;
                 char buffer[buffer_length];
 
                 zoo_get(handle->zookeeper, path, 0, buffer, &buffer_length, NULL);
+
+                free(path);
 
                 if(buffer_length > 0) {
                         buffer[buffer_length] = '\0';
@@ -111,30 +118,55 @@ static char *get_kafka_brokerlist(ACCOUNT_MONITOR *handle) {
                         yajl_val node = yajl_tree_parse(buffer, errbuf, sizeof(errbuf));
 
                         if(node == NULL) {
-                                // TODO
+                                LOGIF(LM, (skygw_log_write(LOGFILE_MESSAGE, "failed to parse: %s\n\"%s\"", errbuf, buffer)));
                                 continue;
                         }
 
-                        const char *host_path[] = { "host" };
+                        const char *host_path[] = { "host", (const char *) 0 };
                         yajl_val host = yajl_tree_get(node, host_path, yajl_t_string);
 
-                        const char *port_path[] = { "port" };
+                        if(host == NULL)  {
+                                LOGIF(LM, (skygw_log_write(LOGFILE_MESSAGE, "failed to fetch host: \"%s\"", buffer)));
+                                yajl_tree_free(node);
+                                continue;
+                        }
+
+                        const char *port_path[] = { "port", (const char *) 0 };
                         yajl_val port = yajl_tree_get(node, port_path, yajl_t_number);
+
+                        if(port == NULL)  {
+                                LOGIF(LM, (skygw_log_write(LOGFILE_MESSAGE, "failed to fetch port: \"%s\"", buffer)));
+                                yajl_tree_free(node);
+                                continue;
+                        }
 
                         char host_buffer[1024];
                         snprintf(host_buffer, 1024, "%s:%lld", YAJL_GET_STRING(host), YAJL_GET_INTEGER(port));
 
+                        yajl_tree_free(node);
+
                         int previous_size = brokers == NULL ? 0 : strlen(brokers);
-                        // strlen + , + strlen + \0
-                        int len = previous_size + strlen(host_buffer) + 2;
+                        // strlen + , + strlen
+                        int len = previous_size + strlen(host_buffer);
+
+                        if(i > 0) {
+                                len++;
+                        }
+
                         char *new_brokers = malloc(len);
+                        //TODO
 
-                        memcpy(new_brokers, brokers, previous_size);
-                        free(brokers);
+                        if(brokers != NULL) {
+                                memcpy(new_brokers, brokers, previous_size);
+                                free(brokers);
+                        }
 
-                        new_brokers[previous_size] = ',';
+                        if(i > 0) {
+                                new_brokers[previous_size] = ',';
+                                previous_size++;
+                        }
 
-                        memcpy(new_brokers + previous_size + 1, host_buffer, strlen(host_buffer));
+                        memcpy(new_brokers + previous_size, host_buffer, strlen(host_buffer));
 
                         new_brokers[len] = '\0';
                         brokers = new_brokers;
@@ -153,8 +185,10 @@ static void watcher(zhandle_t *zookeeper, int type, int state, const char *path,
                 handle->connected = true;
         } else if(type == ZOO_CHILD_EVENT && strncmp(path, BROKER_PATH, sizeof(BROKER_PATH) - 1) == 0) {
                 char *brokers = get_kafka_brokerlist(handle);
-                // if brokers
-                rd_kafka_brokers_add(handle->connection, brokers);
+
+                if(brokers != NULL) {
+                        rd_kafka_brokers_add(handle->connection, brokers);
+                }
         }
 }
 
@@ -171,7 +205,7 @@ static void *startMonitor(void *arg, void *opt) {
                 handle->id = config_get_gateway_id();
                 handle->accounts = NULL;
                 spinlock_init(&handle->lock);
-        } // else -- free zk?
+        }
 
         CONFIG_PARAMETER *params = opt;
         char *zookeeper = NULL;
@@ -183,32 +217,53 @@ static void *startMonitor(void *arg, void *opt) {
 
                 if(strcasecmp(params->name, "topic") == 0) {
                         handle->topic_name = malloc(sizeof(params->value));
-                        // if topic_name == NULL
+
+                        if(handle->topic_name == NULL) {
+                                account_monitor_free(handle);
+                                return NULL;
+                        }
+
                         strcpy(handle->topic_name, params->value);
                 }
 
                 params = params->next;
         }
 
-        // if zookeeper == NULL || topic == NULL
+        if(zookeeper == NULL) {
+                LOGIF(LM, (skygw_log_write(LOGFILE_MESSAGE, "missing required parameter: zookeeper")));
+                account_monitor_free(handle);
+                return NULL;
+        }
 
+        if(handle->topic_name == NULL) {
+                LOGIF(LM, (skygw_log_write(LOGFILE_MESSAGE, "missing required parameter: topic")));
+                account_monitor_free(handle);
+                return NULL;
+        }
+
+#ifdef DEBUG
         zoo_set_debug_level(ZOO_LOG_LEVEL_DEBUG);
+#endif
 
         handle->zookeeper = zookeeper_init(zookeeper, watcher, 10000, 0, (void *) handle, 0);
 
         if(handle->zookeeper == NULL) {
-                // TODO error
-                free(handle);
+                account_monitor_free(handle);
                 return NULL;
         }
 
         handle->configuration = rd_kafka_conf_new();
 
         handle->shutdown = 0;
-        handle->tid = (THREAD) thread_start(monitorMain, handle);
 
         handle->accounts = hashtable_alloc(10000, account_monitor_hash, account_monitor_compare);
-        // check err
+
+        if(handle->accounts == NULL) {
+                account_monitor_free(handle);
+                return NULL;
+        }
+
+        handle->tid = (THREAD) thread_start(monitorMain, handle);
 
         return handle;
 }
@@ -218,6 +273,8 @@ static void stopMonitor(void *arg) {
 
         handle->shutdown = 1;
         thread_wait((void *) handle->tid);
+
+        account_monitor_free(handle);
 }
 
 static void diagnostics(DCB *dcb, void *arg) {
@@ -237,53 +294,67 @@ static void diagnostics(DCB *dcb, void *arg) {
 
         dcb_printf(dcb, "\tMaxScale MonitorId:\t%lu\n", handle->id);
 
-        int hashsize, total, longest;
-        hashtable_get_stats(handle->accounts, &hashsize, &total, &longest);
+        if(handle->accounts != NULL) {
+                int hashsize, total, longest;
+                hashtable_get_stats(handle->accounts, &hashsize, &total, &longest);
 
-        dcb_printf(dcb, "\tAccounts hashsize:\t%i\n", hashsize);
-        dcb_printf(dcb,"\tAccounts total:\t\t%i\n", total);
-        dcb_printf(dcb,"\tAcconts longest chain:\t\t%i\n", longest);
+                dcb_printf(dcb, "\tAccounts hashsize:\t%i\n", hashsize);
+                dcb_printf(dcb,"\tAccounts total:\t\t%i\n", total);
+                dcb_printf(dcb,"\tAcconts longest chain:\t\t%i\n", longest);
+        }
 }
 
 static void logger(const rd_kafka_t *rk, int level, const char *fac, const char *buf) {
-        // TODO
-        struct timeval tv;
-        gettimeofday(&tv, NULL);
-        fprintf(stderr, "%u.%03u RDKAFKA-%i-%s: %s: %s\n", (int)tv.tv_sec, (int)(tv.tv_usec / 1000), level, fac, rd_kafka_name(rk), buf);
+        LOGIF(LM, (skygw_log_write(LOGFILE_MESSAGE, "rdkafka: %s", buf)));
 }
 
 static void monitorMain(void *arg) {
         ACCOUNT_MONITOR *handle = (ACCOUNT_MONITOR *) arg;
         handle->status = MONITOR_RUNNING;
 
+        int nrounds = 0;
         while(!handle->connected) {
+                if(nrounds > 100) {
+                        LOGIF(LM, (skygw_log_write(LOGFILE_MESSAGE, "Could not obtain zookeeper connection.", version_str)));
+                        account_monitor_free(handle);
+                        return;
+                }
+
                 thread_millisleep(1000);
-                // TODO
+                nrounds++;
         }
 
-        // check err
+        char errbuf[1024];
+
+        handle->connection = rd_kafka_new(RD_KAFKA_CONSUMER, handle->configuration, errbuf, sizeof(errbuf));
+
+        if(handle->connection == NULL) {
+                LOGIF(LM, (skygw_log_write(LOGFILE_MESSAGE, "Could not create kafka connection.\n%s", errbuf)));
+                account_monitor_free(handle);
+                return;
+        }
+
         char *brokers = get_kafka_brokerlist(handle);
 
-        char errbufa[1024];
-        printf("%s\n", brokers);
-        if(rd_kafka_conf_set(handle->configuration, "metadata.broker.list", brokers, errbufa, sizeof(errbufa) != RD_KAFKA_CONF_OK)) {
-                // ERR TODO
-        }
-
-        char errbufb[1024];
-        handle->connection = rd_kafka_new(RD_KAFKA_CONSUMER, handle->configuration, errbufb, sizeof(errbufb));
-
-        if(handle->connection != 0) {
-                // TODO
+        if(brokers != NULL) {
+                char *a = strdupa(brokers);
+                rd_kafka_brokers_add(handle->connection, a);
         }
 
         rd_kafka_topic_conf_t *topic_configuration = rd_kafka_topic_conf_new();
         handle->topic = rd_kafka_topic_new(handle->connection, handle->topic_name, topic_configuration);
 
-        // check err?
+        if(handle->topic == NULL) {
+                LOGIF(LM, (skygw_log_write(LOGFILE_MESSAGE, "Could not create kafka topic.\n%s", rd_kafka_err2str(rd_kafka_errno2err(errno)))));
+                account_monitor_free(handle);
+                return;
+        }
 
         rd_kafka_set_logger(handle->connection, logger);
+
+#ifdef DEBUG
         rd_kafka_set_log_level(handle->connection, 7);
+#endif
 
         if(rd_kafka_consume_start(handle->topic, 0, RD_KAFKA_OFFSET_BEGINNING) == -1){
                 fprintf(stderr, "%% Failed to start consuming: %s\n", rd_kafka_err2str(rd_kafka_errno2err(errno)));
@@ -301,32 +372,108 @@ static void monitorMain(void *arg) {
                         continue;
                 }
 
-                // msg_consume(rkmessage, NULL);
-
-                printf("%.*s\n", (int) message->len, (char *) message->payload);
+                account_monitor_consume(handle, message);
                 rd_kafka_message_destroy(message);
         }
 
-close:
         rd_kafka_consume_stop(handle->topic, 0);
+}
 
-        //TODO
-        //rd_kafka_topic_destroy(rkt);
-        //rd_kafka_destroy(rk);
-        //
-        //TODO zookeeper_close
+void account_monitor_consume(ACCOUNT_MONITOR *handle, rd_kafka_message_t *message) {
+        if(message->len == 0) {
+                return;
+        }
+
+        char errbuf[1024];
+        yajl_val node = yajl_tree_parse(message->payload, errbuf, sizeof(errbuf));
+
+        if(node == NULL) {
+                LOGIF(LM, (skygw_log_write(LOGFILE_MESSAGE, "failed to parse: %s\n\"%s\"", errbuf, message->payload)));
+                return;
+        }
+
+        const char *table_path[] = { "table", (const char *) 0 };
+        yajl_val table_node = yajl_tree_get(node, table_path, yajl_t_string);
+
+        if(table_node == NULL) {
+                return;
+        }
+
+        char *table = YAJL_GET_STRING(table_node);
+
+        if(table == NULL || strcmp(table, "accounts") != 0) {
+                yajl_tree_free(node);
+                return;
+        }
+
+        const char *id_path[] = { "data", "id", (const char *) 0 };
+        yajl_val id_node = yajl_tree_get(node, id_path, yajl_t_number);
+
+        if(id_node == NULL) {
+                yajl_tree_free(node);
+                return;
+        }
+
+        const char *shard_id_path[] = { "data", "shard_id", (const char *) 0 };
+        yajl_val shard_id_node = yajl_tree_get(node, shard_id_path, yajl_t_number);
+
+        if(shard_id_node == NULL) {
+                yajl_tree_free(node);
+                return;
+        }
+
+        long long int id = YAJL_GET_INTEGER(id_node);
+        long long int shard_id = YAJL_GET_INTEGER(shard_id_node);
+
+        char *existing_shard_id = (char *) hashtable_fetch(handle->accounts, (void * ) &id);
+
+        if(existing_shard_id) {
+                free(existing_shard_id);
+        }
+
+        hashtable_add(handle->accounts, (void *) &id, (void *) &shard_id);
+
+        yajl_tree_free(node);
+}
+
+void account_monitor_free(ACCOUNT_MONITOR *handle) {
+        if(handle->topic != NULL) {
+                rd_kafka_topic_destroy(handle->topic);
+                handle->topic = NULL;
+        }
+
+        if(handle->connection != NULL) {
+                rd_kafka_destroy(handle->connection);
+                handle->connection = NULL;
+        }
+
+        if(handle->zookeeper != NULL) {
+                zookeeper_close(handle->zookeeper);
+                handle->zookeeper = NULL;
+        }
+
+        if(handle->accounts != NULL) {
+                hashtable_free(handle->accounts);
+                handle->accounts = NULL;
+        }
+
+        if(handle->topic_name != NULL) {
+                free(handle->topic_name);
+        }
+
+        free(handle);
 }
 
 int account_monitor_hash(void *key) {
         if(key == NULL)
                 return 0;
 
-        return *((int *) key) % 10000;
+        return *((long long int *) key) % 10000;
 }
 
 int account_monitor_compare(void *v1, void *v2) {
-  int *i1 = (int *) v1;
-  int *i2 = (int *) v2;
+  long long int *i1 = (long long int *) v1;
+  long long int *i2 = (long long int *) v2;
 
   if(*i1 == *i2) {
           return 0;

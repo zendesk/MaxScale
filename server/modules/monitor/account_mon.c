@@ -271,7 +271,8 @@ static void *startMonitor(void *arg, void *opt) {
 }
 
 static void stopMonitor(void *arg) {
-        ACCOUNT_MONITOR *handle = (ACCOUNT_MONITOR *) arg;
+        MONITOR *monitor = (MONITOR *) arg;
+        ACCOUNT_MONITOR *handle = (ACCOUNT_MONITOR *) monitor->handle;
 
         handle->shutdown = 1;
         thread_wait((void *) handle->tid);
@@ -383,8 +384,20 @@ static void monitorMain(void *arg) {
                 rd_kafka_message_destroy(message);
         }
 
+        for(int i = 0; i < metadata->topics[0].partition_cnt; i++) {
+                int partition = metadata->topics[0].partitions[i].id;
+
+                if(rd_kafka_consume_stop(handle->topic, partition) == -1) {
+                        fprintf(stderr, "%% Failed to start consuming: %s\n", rd_kafka_err2str(rd_kafka_errno2err(errno)));
+                        // TODO
+                }
+        }
+
+        rd_kafka_queue_destroy(queue);
+        rd_kafka_metadata_destroy(metadata);
+        // rd_kafka_topic_conf_destroy(topic_configuration);
+
         handle->status = MONITOR_STOPPED;
-        rd_kafka_consume_stop(handle->topic, 0);
 }
 
 void account_monitor_consume(ACCOUNT_MONITOR *handle, rd_kafka_message_t *message) {

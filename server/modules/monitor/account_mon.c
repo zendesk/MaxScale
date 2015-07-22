@@ -372,12 +372,7 @@ static void monitorMain(void *arg) {
                 }
         }
 
-        while(1) {
-                if(handle->shutdown) {
-                        handle->status = MONITOR_STOPPED;
-                        break;
-                }
-
+        while(handle->shutdown == 0) {
                 rd_kafka_message_t *message = rd_kafka_consume_queue(queue, 1000);
 
                 if(message == NULL) {
@@ -388,6 +383,7 @@ static void monitorMain(void *arg) {
                 rd_kafka_message_destroy(message);
         }
 
+        handle->status = MONITOR_STOPPED;
         rd_kafka_consume_stop(handle->topic, 0);
 }
 
@@ -443,13 +439,9 @@ void account_monitor_consume(ACCOUNT_MONITOR *handle, rd_kafka_message_t *messag
         long long int id = YAJL_GET_INTEGER(id_node);
         long long int shard_id = YAJL_GET_INTEGER(shard_id_node);
 
-        char *existing_shard_id = (char *) hashtable_fetch(handle->accounts, (void * ) &id);
+        // void *existing_shard_id = hashtable_fetch(handle->accounts, (void * ) id);
 
-        if(existing_shard_id) {
-                free(existing_shard_id);
-        }
-
-        hashtable_add(handle->accounts, (void *) &id, (void *) &shard_id);
+        hashtable_add(handle->accounts, (void *) id, (void *) shard_id);
         LOGIF(LM, (skygw_log_write(LOGFILE_MESSAGE, "found shard_id %lld for account %lld", shard_id, id)));
 
         yajl_tree_free(node);
@@ -487,14 +479,11 @@ int account_monitor_hash(void *key) {
         if(key == NULL)
                 return 0;
 
-        return *((long long int *) key) % 10000;
+        return ((long long int) key) % 10000;
 }
 
 int account_monitor_compare(void *v1, void *v2) {
-  long long int *i1 = (long long int *) v1;
-  long long int *i2 = (long long int *) v2;
-
-  if(*i1 == *i2) {
+  if(v1 == v2) {
           return 0;
   } else {
           return 1;

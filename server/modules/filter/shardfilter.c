@@ -306,6 +306,7 @@ static int routeQuery(FILTER *instance, void *session, GWBUF *queue) {
                                         char errmsg[2048];
                                         snprintf(errmsg, 2048, "Could not find shard for account %d", account_id);
                                         GWBUF *err = modutil_create_mysql_err_msg(1, 0, 1046, "3D000", errmsg);
+                                        spinlock_release(&my_session->lock);
                                         return my_session->rses->client->func.write(my_session->rses->client, err);
                                 }
 
@@ -320,6 +321,7 @@ static int routeQuery(FILTER *instance, void *session, GWBUF *queue) {
                                         char errmsg[2048];
                                         snprintf((char *) &errmsg, 2048, "Could not find shard %d for account %d", shard_id, account_id);
                                         GWBUF *err = modutil_create_mysql_err_msg(1, 0, 1046, "3D000", errmsg);
+                                        spinlock_release(&my_session->lock);
                                         return my_session->rses->client->func.write(my_session->rses->client, err);
                                 }
 
@@ -464,13 +466,13 @@ int shardfilter_find_shard(ZENDESK_INSTANCE *instance, int account_id) {
 
         int i = 0, *account;
 
-        int *shard_id = (int *) hashtable_fetch(handle->accounts, &account_id);
+        long long int shard_id = (long long int) hashtable_fetch(handle->accounts, (void *) account_id);
 
         if(shard_id == NULL) {
                 skygw_log_write(LOGFILE_TRACE, "shardfilter: could not find shard id for account %d", account_id);
                 return 0;
         } else {
-                skygw_log_write(LOGFILE_TRACE, "shardfilter: found shard_id %d for account %d", *shard_id, account_id);
-                return *shard_id;
+                skygw_log_write(LOGFILE_TRACE, "shardfilter: found shard_id %d for account %d", shard_id, account_id);
+                return shard_id;
         }
 }

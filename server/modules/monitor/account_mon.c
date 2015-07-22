@@ -34,12 +34,7 @@ MODULE_INFO info = {
 
 static void *startMonitor(void *,void*);
 static void stopMonitor(void *);
-static void registerServer(void *, SERVER *);
-static void unregisterServer(void *, SERVER *);
-static void defaultUser(void *, char *, char *);
 static void diagnostics(DCB *, void *);
-static void setInterval(void *, size_t);
-static void setNetworkTimeout(void *, int, int);
 
 static MONITOR_OBJECT MyObject = {
 	startMonitor,
@@ -49,6 +44,10 @@ static MONITOR_OBJECT MyObject = {
 
 int account_monitor_hash(void *);
 int account_monitor_compare(void *, void *);
+
+#define BROKER_PATH "/brokers/ids"
+
+static char *get_kafka_brokerlist(ACCOUNT_MONITOR *);
 
 /**
  * Implementation of the mandatory version entry point
@@ -79,9 +78,7 @@ MONITOR_OBJECT *GetModuleObject() {
 	return &MyObject;
 }
 
-#define BROKER_PATH "/brokers/ids"
-
-static char *set_kafka_brokerlist(ACCOUNT_MONITOR *handle) {
+static char *get_kafka_brokerlist(ACCOUNT_MONITOR *handle) {
         struct String_vector brokerlist;
 
         if(zoo_get_children(handle->zookeeper, BROKER_PATH, 1, &brokerlist) != ZOK) {
@@ -155,7 +152,8 @@ static void watcher(zhandle_t *zookeeper, int type, int state, const char *path,
         if (type == ZOO_SESSION_EVENT && state == ZOO_CONNECTED_STATE) {
                 handle->connected = true;
         } else if(type == ZOO_CHILD_EVENT && strncmp(path, BROKER_PATH, sizeof(BROKER_PATH) - 1) == 0) {
-                char *brokers = set_kafka_brokerlist(handle);
+                char *brokers = get_kafka_brokerlist(handle);
+                // if brokers
                 rd_kafka_brokers_add(handle->connection, brokers);
         }
 }
@@ -171,10 +169,9 @@ static void *startMonitor(void *arg, void *opt) {
                         return NULL;
 
                 handle->id = config_get_gateway_id();
-                handle->interval = MONITOR_INTERVAL;
                 handle->accounts = NULL;
                 spinlock_init(&handle->lock);
-        }
+        } // else -- free zk?
 
         CONFIG_PARAMETER *params = opt;
         char *zookeeper = NULL;
@@ -196,6 +193,7 @@ static void *startMonitor(void *arg, void *opt) {
         // if zookeeper == NULL || topic == NULL
 
         zoo_set_debug_level(ZOO_LOG_LEVEL_DEBUG);
+
         handle->zookeeper = zookeeper_init(zookeeper, watcher, 10000, 0, (void *) handle, 0);
 
         if(handle->zookeeper == NULL) {
@@ -222,22 +220,6 @@ static void stopMonitor(void *arg) {
         thread_wait((void *) handle->tid);
 }
 
-static void registerServer(void *arg, SERVER *server) {
-        // unused
-}
-
-static void unregisterServer(void *arg, SERVER *server) {
-        // unused
-}
-
-static void defaultUser(void *arg, char *user, char *password) {
-        // unused
-}
-
-static void setNetworkTimeout(void *arg, int type, int value) {
-        // unused
-}
-
 static void diagnostics(DCB *dcb, void *arg) {
         ACCOUNT_MONITOR *handle = (ACCOUNT_MONITOR *) arg;
 
@@ -253,7 +235,6 @@ static void diagnostics(DCB *dcb, void *arg) {
                         break;
         }
 
-        dcb_printf(dcb, "\tSampling interval:\t%lu milliseconds\n", handle->interval);
         dcb_printf(dcb, "\tMaxScale MonitorId:\t%lu\n", handle->id);
 
         int hashsize, total, longest;
@@ -264,41 +245,30 @@ static void diagnostics(DCB *dcb, void *arg) {
         dcb_printf(dcb,"\tAcconts longest chain:\t\t%i\n", longest);
 }
 
-static void setInterval(void *arg, size_t interval) {
-        ACCOUNT_MONITOR *handle = (ACCOUNT_MONITOR *) arg;
-        memcpy(&handle->interval, &interval, sizeof(unsigned long));
-}
-
-static void logger(const rd_kafka_t *rk, int level,
-                const char *fac, const char *buf) {
+static void logger(const rd_kafka_t *rk, int level, const char *fac, const char *buf) {
+        // TODO
         struct timeval tv;
         gettimeofday(&tv, NULL);
-        fprintf(stderr, "%u.%03u RDKAFKA-%i-%s: %s: %s\n",
-                        (int)tv.tv_sec, (int)(tv.tv_usec / 1000),
-                        level, fac, rd_kafka_name(rk), buf);
+        fprintf(stderr, "%u.%03u RDKAFKA-%i-%s: %s: %s\n", (int)tv.tv_sec, (int)(tv.tv_usec / 1000), level, fac, rd_kafka_name(rk), buf);
 }
-
 
 static void monitorMain(void *arg) {
         ACCOUNT_MONITOR *handle = (ACCOUNT_MONITOR *) arg;
-
         handle->status = MONITOR_RUNNING;
-        size_t nrounds = 0;
 
         while(!handle->connected) {
-                sleep(1);
-                // help
+                thread_millisleep(1000);
+                // TODO
         }
 
         // check err
-        char *brokers = set_kafka_brokerlist(handle);
+        char *brokers = get_kafka_brokerlist(handle);
 
         char errbufa[1024];
         printf("%s\n", brokers);
         if(rd_kafka_conf_set(handle->configuration, "metadata.broker.list", brokers, errbufa, sizeof(errbufa) != RD_KAFKA_CONF_OK)) {
                 // ERR TODO
         }
-
 
         char errbufb[1024];
         handle->connection = rd_kafka_new(RD_KAFKA_CONSUMER, handle->configuration, errbufb, sizeof(errbufb));
@@ -321,23 +291,15 @@ static void monitorMain(void *arg) {
 
         while(1) {
                 if(handle->shutdown) {
-                        handle->status = MONITOR_STOPPING;
                         handle->status = MONITOR_STOPPED;
                         break;
                 }
 
-                /*thread_millisleep(MON_BASE_INTERVAL_MS);
-
-                if (nrounds != 0 && ((nrounds * MON_BASE_INTERVAL_MS) % handle->interval) >= MON_BASE_INTERVAL_MS) {
-                        nrounds += 1;
-			continue;
-		}
-
-                nrounds += 1;*/
-
                 rd_kafka_message_t *message = rd_kafka_consume(handle->topic, 0, 1000);
-                if(message == NULL)
+
+                if(message == NULL) {
                         continue;
+                }
 
                 // msg_consume(rkmessage, NULL);
 
@@ -345,11 +307,14 @@ static void monitorMain(void *arg) {
                 rd_kafka_message_destroy(message);
         }
 
+close:
         rd_kafka_consume_stop(handle->topic, 0);
 
         //TODO
         //rd_kafka_topic_destroy(rkt);
         //rd_kafka_destroy(rk);
+        //
+        //TODO zookeeper_close
 }
 
 int account_monitor_hash(void *key) {

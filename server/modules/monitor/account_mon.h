@@ -27,14 +27,13 @@
  * The handle for an instance of a MySQL Monitor module
  */
 typedef struct {
-	SPINLOCK  lock;			/**< The monitor spinlock */
+	SPINLOCK lock;			/**< The monitor spinlock */
 	pthread_t tid;			/**< id of monitor thread */ 
 
-	int    	  shutdown;		/**< Flag to shutdown the monitor thread */
-	int       status;		/**< Monitor status */
+	int shutdown;		/**< Flag to shutdown the monitor thread */
+	int status;		/**< Monitor status */
 
-	unsigned long   interval;	/**< Monitor sampling interval */
-	unsigned long         id;	/**< Monitor ID */
+	unsigned long id;	/**< Monitor ID */
 
         // accounts storage
         HASHTABLE *accounts;

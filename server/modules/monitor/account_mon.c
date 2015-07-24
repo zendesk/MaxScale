@@ -410,16 +410,13 @@ void account_monitor_consume(ACCOUNT_MONITOR *handle, rd_kafka_message_t *messag
 
         // sort of a right-stripping type mechanism
         // we know json ends with a '}', so just dump everything else
-        int i;
-        for(i = message->len; i >= 0; i--) {
-                if(payload[i] != '}') {
-                        payload[i] = '\0';
-
-                        // We got this far and there's nothing in the string
-                        if(i == 0) {
-                                return;
-                        }
+        for(int i = message->len; payload[i] != '}' && i >= 0; i--) {
+                // We got this far and there's nothing in the string
+                if(i == 0) {
+                        return;
                 }
+
+                payload[i] = '\0';
         }
 
         yajl_val node = yajl_tree_parse(payload, errbuf, sizeof(errbuf));

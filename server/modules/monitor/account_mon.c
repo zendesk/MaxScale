@@ -51,6 +51,8 @@ int account_monitor_compare(void *, void *);
 #define BROKER_PATH "/brokers/ids"
 
 static char *get_kafka_brokerlist(ACCOUNT_MONITOR *);
+static int wait_for_zookeeper(ACCOUNT_MONITOR *);
+static int init_kafka(ACCOUNT_MONITOR *);
 
 /**
  * Implementation of the mandatory version entry point
@@ -271,11 +273,13 @@ static void stopMonitor(void *arg) {
         MONITOR *monitor = (MONITOR *) arg;
         ACCOUNT_MONITOR *handle = (ACCOUNT_MONITOR *) monitor->handle;
 
-        handle->shutdown = 1;
-        thread_wait((void *) handle->tid);
+        if(handle != NULL) {
+                handle->shutdown = 1;
+                thread_wait((void *) handle->tid);
 
-        // TODO could handle be already freed here?
-        account_monitor_free(handle);
+                account_monitor_free(handle);
+                monitor->handle = NULL;
+        }
 }
 
 static void diagnostics(DCB *dcb, void *arg) {
@@ -309,30 +313,29 @@ static void logger(const rd_kafka_t *rk, int level, const char *fac, const char 
         LOGIF(LM, (skygw_log_write(LOGFILE_MESSAGE, "rdkafka: %s", buf)));
 }
 
-static void monitorMain(void *arg) {
-        ACCOUNT_MONITOR *handle = (ACCOUNT_MONITOR *) arg;
-        handle->status = MONITOR_RUNNING;
-
+static int wait_for_zookeeper(ACCOUNT_MONITOR *handle) {
         int nrounds = 0;
+
         while(!handle->connected) {
                 if(nrounds > 100) {
-                        LOGIF(LM, (skygw_log_write(LOGFILE_MESSAGE, "Could not obtain zookeeper connection.", version_str)));
-                        account_monitor_free(handle);
-                        return;
+                        return 1;
                 }
 
                 thread_millisleep(1000);
                 nrounds++;
         }
 
+        return 0;
+}
+
+static int init_kafka(ACCOUNT_MONITOR *handle) {
         char errbuf[1024];
 
         handle->connection = rd_kafka_new(RD_KAFKA_CONSUMER, handle->configuration, errbuf, sizeof(errbuf));
 
         if(handle->connection == NULL) {
-                LOGIF(LM, (skygw_log_write(LOGFILE_MESSAGE, "Could not create kafka connection.\n%s", errbuf)));
-                account_monitor_free(handle);
-                return;
+                LOGIF(LM, (skygw_log_write(LOGFILE_ERROR, "Could not create kafka connection.\n%s", errbuf)));
+                return 1;
         }
 
         char *brokers = get_kafka_brokerlist(handle);
@@ -345,32 +348,48 @@ static void monitorMain(void *arg) {
         handle->topic = rd_kafka_topic_new(handle->connection, handle->topic_name, topic_configuration);
 
         if(handle->topic == NULL) {
-                LOGIF(LM, (skygw_log_write(LOGFILE_MESSAGE, "Could not create kafka topic.\n%s", rd_kafka_err2str(rd_kafka_errno2err(errno)))));
-                account_monitor_free(handle);
-                return;
+                LOGIF(LM, (skygw_log_write(LOGFILE_ERROR, "Could not create kafka topic.\n%s", rd_kafka_err2str(rd_kafka_errno2err(errno)))));
+                return 1;
         }
 
         rd_kafka_set_logger(handle->connection, logger);
 
-        const struct rd_kafka_metadata *metadata;
-        if(rd_kafka_metadata(handle->connection, 0, handle->topic, &metadata, 5000) != RD_KAFKA_RESP_ERR_NO_ERROR) {
-                LOGIF(LM, (skygw_log_write(LOGFILE_MESSAGE, "Could not create kafka topic.\n%s", rd_kafka_err2str(rd_kafka_errno2err(errno)))));
+        if(rd_kafka_metadata(handle->connection, 0, handle->topic, &handle->metadata, 5000) != RD_KAFKA_RESP_ERR_NO_ERROR) {
+                LOGIF(LM, (skygw_log_write(LOGFILE_ERROR, "Could not fetch topic metadata (partitions).\n%s", rd_kafka_err2str(rd_kafka_errno2err(errno)))));
+                return 1;
+        }
+
+        handle->queue = rd_kafka_queue_new(handle->connection);
+
+        for(int i = 0; i < handle->metadata->topics[0].partition_cnt; i++) {
+                int partition = handle->metadata->topics[0].partitions[i].id;
+
+                if(rd_kafka_consume_start_queue(handle->topic, partition, RD_KAFKA_OFFSET_BEGINNING, handle->queue) == -1) {
+                        LOGIF(LM, (skygw_log_write(LOGFILE_ERROR, "Failed to start consuming partition %i: %s", partition, rd_kafka_err2str(rd_kafka_errno2err(errno)))));
+                        return 1;
+                }
+        }
+
+        return 0;
+}
+
+static void monitorMain(void *arg) {
+        ACCOUNT_MONITOR *handle = (ACCOUNT_MONITOR *) arg;
+        handle->status = MONITOR_RUNNING;
+
+        if(wait_for_zookeeper(handle) != 0) {
+                LOGIF(LM, (skygw_log_write(LOGFILE_ERROR, "Could not obtain zookeeper connection.", version_str)));
                 account_monitor_free(handle);
                 return;
         }
 
-        rd_kafka_queue_t *queue = rd_kafka_queue_new(handle->connection);
-
-        for(int i = 0; i < metadata->topics[0].partition_cnt; i++) {
-                int partition = metadata->topics[0].partitions[i].id;
-
-                if(rd_kafka_consume_start_queue(handle->topic, partition, RD_KAFKA_OFFSET_BEGINNING, queue) == -1) {
-                        LOGIF(LM, (skygw_log_write(LOGFILE_MESSAGE, "Failed to start consuming partition %i: %s", partition, rd_kafka_err2str(rd_kafka_errno2err(errno)))));
-                }
+        if(init_kafka(handle) != 0) {
+                account_monitor_free(handle);
+                return;
         }
 
         while(handle->shutdown == 0) {
-                rd_kafka_message_t *message = rd_kafka_consume_queue(queue, 1000);
+                rd_kafka_message_t *message = rd_kafka_consume_queue(handle->queue, 1000);
 
                 if(message == NULL) {
                         continue;
@@ -379,16 +398,6 @@ static void monitorMain(void *arg) {
                 account_monitor_consume(handle, message);
                 rd_kafka_message_destroy(message);
         }
-
-        for(int i = 0; i < metadata->topics[0].partition_cnt; i++) {
-                int partition = metadata->topics[0].partitions[i].id;
-                rd_kafka_consume_stop(handle->topic, partition);
-        }
-
-        rd_kafka_queue_destroy(queue);
-        rd_kafka_metadata_destroy(metadata);
-
-        handle->status = MONITOR_STOPPED;
 }
 
 void account_monitor_consume(ACCOUNT_MONITOR *handle, rd_kafka_message_t *message) {
@@ -398,8 +407,21 @@ void account_monitor_consume(ACCOUNT_MONITOR *handle, rd_kafka_message_t *messag
 
         char errbuf[1024];
         char *payload = message->payload;
-        // ?
-        payload[message->len] = '\0';
+
+        // sort of a right-stripping type mechanism
+        // we know json ends with a '}', so just dump everything else
+        int i;
+        for(i = message->len; i >= 0; i--) {
+                if(payload[i] != '}') {
+                        payload[i] = '\0';
+
+                        // We got this far and there's nothing in the string
+                        if(i == 0) {
+                                return;
+                        }
+                }
+        }
+
         yajl_val node = yajl_tree_parse(payload, errbuf, sizeof(errbuf));
 
         if(node == NULL) {
@@ -449,7 +471,25 @@ void account_monitor_consume(ACCOUNT_MONITOR *handle, rd_kafka_message_t *messag
 }
 
 void account_monitor_free(ACCOUNT_MONITOR *handle) {
+        handle->status = MONITOR_STOPPED;
+
+        if(handle->queue != NULL) {
+                rd_kafka_queue_destroy(handle->queue);
+                handle->queue = NULL;
+        }
+
         if(handle->topic != NULL) {
+                if(handle->metadata != NULL) {
+                        for(int i = 0; i < handle->metadata->topics[0].partition_cnt; i++) {
+                                int partition = handle->metadata->topics[0].partitions[i].id;
+                                rd_kafka_consume_stop(handle->topic, partition);
+                        }
+
+                        rd_kafka_metadata_destroy(handle->metadata);
+                        handle->metadata = NULL;
+                }
+
+
                 rd_kafka_topic_destroy(handle->topic);
                 handle->topic = NULL;
         }

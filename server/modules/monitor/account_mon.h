@@ -42,6 +42,8 @@ typedef struct {
         rd_kafka_t *connection;
         rd_kafka_conf_t *configuration;
         rd_kafka_topic_t *topic;
+        rd_kafka_queue_t *queue;
+        const struct rd_kafka_metadata *metadata;
 
         char *topic_name;
 

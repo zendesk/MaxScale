@@ -103,16 +103,16 @@ static ROUTER *createInstance(SERVICE *service, char **options) {
                 } else {
                         if(i > 0) {
                                 router->downstreams = realloc(router->downstreams, sizeof(SERVICE *) * (i + 2));
+                                // TODO null
                         }
 
-                        // TODO null
                         router->downstreams[i] = shard_service;
                 }
 
                 i++;
         }
 
-        router->downstreams[i - 1] = NULL;
+        router->downstreams[i] = NULL;
 
         return (ROUTER *) router;
 }

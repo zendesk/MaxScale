@@ -180,7 +180,7 @@ static int routeQuery(ROUTER *instance, void *session, GWBUF *queue) {
 
                         if(account_id > 0) {
                                 int shard_id = shards_find_shard(shard_router, account_id);
-                                char shard_database_id[MYSQL_DATABASE_MAXLEN + 1];
+                                char *shard_database_id = alloca(sizeof(char) * (MYSQL_DATABASE_MAXLEN + 1));
                                 snprintf(shard_database_id, MYSQL_DATABASE_MAXLEN, shard_router->shard_format, shard_id);
 
                                 // find downstream
@@ -189,6 +189,7 @@ static int routeQuery(ROUTER *instance, void *session, GWBUF *queue) {
 
                                 if(service == NULL) {
                                         service = shard_router->downstreams[0];
+                                        shard_database_id = service->name;
                                 }
 
                                 SESSION *current_downstream = shard_session->downstream;

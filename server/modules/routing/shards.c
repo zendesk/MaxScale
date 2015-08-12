@@ -1,3 +1,4 @@
+#include "account_mon.h"
 #include "router.h"
 #include "modinfo.h"
 #include "monitor.h"
@@ -53,6 +54,10 @@ typedef struct {
 
         int shard_id;
 } SHARD_SESSION;
+
+static SERVICE *shards_service_for_shard(SHARD_ROUTER *, char *);
+static int shards_find_shard(SHARD_ROUTER *, long long int);
+static int shards_find_account(char *, int);
 
 char *version() {
         return version_str;
@@ -278,4 +283,53 @@ static uint8_t getCapabilities(ROUTER *inst, void *router_session) {
 }
 
 static void handleError(ROUTER *instance, void *router_session, GWBUF *errbuf, DCB *backend_dcb, error_action_t action, bool *succp) {
+}
+
+static SERVICE *shards_service_for_shard(SHARD_ROUTER *instance, char *name) {
+        SERVICE *downstream;
+        int i = 0;
+
+        while((downstream = instance->downstreams[i++])) {
+                if(strcasecmp(downstream->name, name) == 0) {
+                        skygw_log_write(LOGFILE_TRACE, "shardfilter: found %s", name);
+                        return downstream;
+                }
+        }
+
+        return NULL;
+}
+
+static int shards_find_account(char *bufdata, int qlen) {
+        int account_id = 0;
+        char database_name[qlen];
+        strncpy(database_name, bufdata, qlen - 1);
+        database_name[qlen - 1] = 0;
+
+        if(strncmp("account_", database_name, 8) == 0) {
+                account_id = strtol(database_name + 8, NULL, 0);
+        }
+
+        return account_id;
+}
+
+static int shards_find_shard(SHARD_ROUTER *instance, long long int account_id) {
+        if(instance->account_monitor == NULL)
+                return 0;
+
+        ACCOUNT_MONITOR *handle = (ACCOUNT_MONITOR *) instance->account_monitor->handle;
+
+        if(handle == NULL || handle->accounts == NULL)
+                return 0;
+
+        int i = 0, *account;
+
+        long long int shard_id = (long long int) hashtable_fetch(handle->accounts, (void *) account_id);
+
+        if(shard_id == 0) {
+                skygw_log_write(LOGFILE_TRACE, "shardfilter: could not find shard id for account %d", account_id);
+                return 0;
+        } else {
+                skygw_log_write(LOGFILE_TRACE, "shardfilter: found shard_id %d for account %d", shard_id, account_id);
+                return shard_id;
+        }
 }

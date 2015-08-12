@@ -363,6 +363,7 @@ static int init_kafka(ACCOUNT_MONITOR *handle) {
 
         for(int i = 0; i < handle->metadata->topics[0].partition_cnt; i++) {
                 int partition = handle->metadata->topics[0].partitions[i].id;
+                LOGIF(LM, (skygw_log_write(LOGFILE_MESSAGE, "Listening to partition %d", partition)));
 
                 if(rd_kafka_consume_start_queue(handle->topic, partition, RD_KAFKA_OFFSET_BEGINNING, handle->queue) == -1) {
                         LOGIF(LM, (skygw_log_write(LOGFILE_ERROR, "Failed to start consuming partition %i: %s", partition, rd_kafka_err2str(rd_kafka_errno2err(errno)))));

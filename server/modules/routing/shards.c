@@ -87,13 +87,13 @@ static ROUTER *createInstance(SERVICE *service, char **options) {
                 skygw_log_write(LOGFILE_ERROR, "shards: could not find account monitor '%s'", options[1]);
         }
 
-        int i;
         char *shard;
         SERVICE *shard_service;
 
+        int i = 0;
         router->downstreams = calloc(1, sizeof(SERVICE *));
 
-        for(i = 2; (shard = options[i]) != NULL; i++) {
+        while((shard = options[i + 2]) != NULL) {
                 skygw_log_write(LOGFILE_DEBUG, "shardfilter: services %s", shard);
 
                 shard_service = service_find(shard);
@@ -101,16 +101,18 @@ static ROUTER *createInstance(SERVICE *service, char **options) {
                 // TODO
                 if(shard_service == NULL) {
                 } else {
-                        if(i > 2) {
-                                router->downstreams = realloc(router->downstreams, sizeof(SERVICE *) * (i - 1));
+                        if(i > 0) {
+                                router->downstreams = realloc(router->downstreams, sizeof(SERVICE *) * (i + 2));
                         }
 
                         // TODO null
-                        router->downstreams[i - 2] = shard_service;
+                        router->downstreams[i] = shard_service;
                 }
+
+                i++;
         }
 
-        router->downstreams[i - 2] = NULL;
+        router->downstreams[i - 1] = NULL;
 
         return (ROUTER *) router;
 }
@@ -214,16 +216,16 @@ static int routeQuery(ROUTER *instance, void *session, GWBUF *queue) {
 
                                         shard_session->downstream = new_session;
                                         shard_session->shard_id = shard_id;
-
-                                        // XXX: modutil_replace_SQL checks explicitly for COM_QUERY
-                                        // but just generically replaces the GWBUF data
-                                        bufdata[4] = MYSQL_COM_QUERY;
-
-                                        queue = modutil_replace_SQL(queue, shard_database_id);
-                                        queue = gwbuf_make_contiguous(queue);
-
-                                        ((uint8_t *) queue->start)[4] = MYSQL_COM_INIT_DB;
                                 }
+
+                                // XXX: modutil_replace_SQL checks explicitly for COM_QUERY
+                                // but just generically replaces the GWBUF data
+                                bufdata[4] = MYSQL_COM_QUERY;
+
+                                queue = modutil_replace_SQL(queue, shard_database_id);
+                                queue = gwbuf_make_contiguous(queue);
+
+                                ((uint8_t *) queue->start)[4] = MYSQL_COM_INIT_DB;
                         }
                 }
         }

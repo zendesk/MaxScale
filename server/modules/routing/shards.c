@@ -279,12 +279,6 @@ static int shards_find_account(char *bufdata, int qlen) {
 }
 
 static int shards_find_shard(SHARD_ROUTER *instance, long long int account_id) {
-        if(account_id == 1) {
-                return 2;
-        } else {
-                return 1;
-        }
-
         if(instance->account_monitor == NULL)
                 return 0;
 

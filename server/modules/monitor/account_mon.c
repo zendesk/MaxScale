@@ -53,6 +53,7 @@ int account_monitor_compare(void *, void *);
 static char *get_kafka_brokerlist(ACCOUNT_MONITOR *);
 static int wait_for_zookeeper(ACCOUNT_MONITOR *);
 static int init_kafka(ACCOUNT_MONITOR *);
+void account_monitor_update_partitions(ACCOUNT_MONITOR *);
 
 /**
  * Implementation of the mandatory version entry point
@@ -354,22 +355,7 @@ static int init_kafka(ACCOUNT_MONITOR *handle) {
 
         rd_kafka_set_logger(handle->connection, logger);
 
-        if(rd_kafka_metadata(handle->connection, 0, handle->topic, &handle->metadata, 5000) != RD_KAFKA_RESP_ERR_NO_ERROR) {
-                LOGIF(LM, (skygw_log_write(LOGFILE_ERROR, "Could not fetch topic metadata (partitions).\n%s", rd_kafka_err2str(rd_kafka_errno2err(errno)))));
-                return 1;
-        }
-
         handle->queue = rd_kafka_queue_new(handle->connection);
-
-        for(int i = 0; i < handle->metadata->topics[0].partition_cnt; i++) {
-                int partition = handle->metadata->topics[0].partitions[i].id;
-                LOGIF(LM, (skygw_log_write(LOGFILE_MESSAGE, "Listening to partition %d", partition)));
-
-                if(rd_kafka_consume_start_queue(handle->topic, partition, RD_KAFKA_OFFSET_BEGINNING, handle->queue) == -1) {
-                        LOGIF(LM, (skygw_log_write(LOGFILE_ERROR, "Failed to start consuming partition %i: %s", partition, rd_kafka_err2str(rd_kafka_errno2err(errno)))));
-                        return 1;
-                }
-        }
 
         return 0;
 }
@@ -389,6 +375,8 @@ static void monitorMain(void *arg) {
                 return;
         }
 
+        account_monitor_update_partitions(handle);
+
         while(handle->shutdown == 0) {
                 rd_kafka_message_t *message = rd_kafka_consume_queue(handle->queue, 1000);
 
@@ -399,6 +387,32 @@ static void monitorMain(void *arg) {
                 account_monitor_consume(handle, message);
                 rd_kafka_message_destroy(message);
         }
+}
+
+void account_monitor_update_partitions(ACCOUNT_MONITOR *handle) {
+        const struct rd_kafka_metadata *metadata;
+
+        if(rd_kafka_metadata(handle->connection, 0, handle->topic, &metadata, 5000) != RD_KAFKA_RESP_ERR_NO_ERROR) {
+                LOGIF(LM, (skygw_log_write(LOGFILE_ERROR, "Could not fetch topic metadata (partitions).\n%s", rd_kafka_err2str(rd_kafka_errno2err(errno)))));
+                return;
+        }
+
+        for(int i = 0; i < metadata->topics[0].partition_cnt; i++) {
+                int partition = metadata->topics[0].partitions[i].id;
+                LOGIF(LM, (skygw_log_write(LOGFILE_MESSAGE, "Listening to partition %d", partition)));
+
+                if(rd_kafka_consume_start_queue(handle->topic, partition, RD_KAFKA_OFFSET_BEGINNING, handle->queue) == -1) {
+                        LOGIF(LM, (skygw_log_write(LOGFILE_ERROR, "Failed to start consuming partition %i: %s", partition, rd_kafka_err2str(rd_kafka_errno2err(errno)))));
+                        return;
+                }
+        }
+
+        if(handle->metadata != NULL) {
+                // TODO null?
+                rd_kafka_metadata_destroy(metadata);
+        }
+
+        handle->metadata = metadata;
 }
 
 void account_monitor_consume(ACCOUNT_MONITOR *handle, rd_kafka_message_t *message) {
@@ -477,16 +491,11 @@ void account_monitor_free(ACCOUNT_MONITOR *handle) {
         }
 
         if(handle->topic != NULL) {
-                if(handle->metadata != NULL) {
-                        for(int i = 0; i < handle->metadata->topics[0].partition_cnt; i++) {
-                                int partition = handle->metadata->topics[0].partitions[i].id;
-                                rd_kafka_consume_stop(handle->topic, partition);
-                        }
-
-                        rd_kafka_metadata_destroy(handle->metadata);
-                        handle->metadata = NULL;
+                for(int i = 0; i < handle->metadata->topics[0].partition_cnt; i++) {
+                        int partition = handle->metadata->topics[0].partitions[i].id;
+                        // TODO err?
+                        rd_kafka_consume_stop(handle->topic, partition);
                 }
-
 
                 rd_kafka_topic_destroy(handle->topic);
                 handle->topic = NULL;
@@ -512,6 +521,9 @@ void account_monitor_free(ACCOUNT_MONITOR *handle) {
         }
 
         free(handle);
+
+        // Wait 2s for rd_kafka to stop
+        rd_kafka_wait_destroyed(2000);
 }
 
 int account_monitor_hash(void *key) {

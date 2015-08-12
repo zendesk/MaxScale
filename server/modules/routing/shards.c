@@ -178,14 +178,6 @@ static int routeQuery(ROUTER *instance, void *session, GWBUF *queue) {
 
                         if(account_id > 0) {
                                 int shard_id = shards_find_shard(shard_router, account_id);
-
-                                if(shard_id <= 0) {
-                                        char errmsg[2048];
-                                        snprintf(errmsg, 2048, "Could not find shard for account %d", account_id);
-                                        GWBUF *err = modutil_create_mysql_err_msg(1, 0, 1046, "3D000", errmsg);
-                                        // TODO
-                                }
-
                                 char shard_database_id[MYSQL_DATABASE_MAXLEN + 1];
                                 snprintf(shard_database_id, MYSQL_DATABASE_MAXLEN, shard_router->shard_format, shard_id);
 
@@ -194,44 +186,44 @@ static int routeQuery(ROUTER *instance, void *session, GWBUF *queue) {
                                 SERVICE *service = shards_service_for_shard(shard_router, shard_database_id);
 
                                 if(service == NULL) {
-                                        char errmsg[2048];
-                                        snprintf((char *) &errmsg, 2048, "Could not find shard %d for account %d", shard_id, account_id);
-                                        GWBUF *err = modutil_create_mysql_err_msg(1, 0, 1046, "3D000", errmsg);
-                                        // TODO
+                                        service = shard_router->downstreams[0];
                                 }
 
                                 SESSION *current_downstream = shard_session->downstream;
                                 SERVICE *current_downstream_service = current_downstream->service;
-                                ROUTER_CLIENT_SES *current_router_session = (ROUTER_CLIENT_SES *) current_downstream->router_session;
-                                ROUTER *current_router_instance = (ROUTER *) current_router_session->router;
-                                SESSION *new_session = session_alloc(service, current_downstream->client);
 
-                                if(new_session == NULL) {
-                                        // TODO
+                                if(service != current_downstream_service) {
+                                        ROUTER_CLIENT_SES *current_router_session = (ROUTER_CLIENT_SES *) current_downstream->router_session;
+                                        ROUTER *current_router_instance = (ROUTER *) current_router_session->router;
+                                        SESSION *new_session = session_alloc(service, current_downstream->client);
+
+                                        if(new_session == NULL) {
+                                                // TODO
+                                        }
+
+                                        CHK_SESSION(new_session);
+
+                                        current_downstream->client = NULL;
+                                        current_downstream->state = SESSION_STATE_STOPPING;
+                                        current_downstream_service->router->closeSession(current_router_instance, (void *) current_router_session);
+
+                                        // TODO memory leak!?
+                                        // readwritesplit closes its underlying backend DCBs, but they're still included in the refcount
+                                        // session_unlink_dcb is never called, so session_free's refcount check fails
+                                        // session_free(current_downstream);
+
+                                        shard_session->downstream = new_session;
+                                        shard_session->shard_id = shard_id;
+
+                                        // XXX: modutil_replace_SQL checks explicitly for COM_QUERY
+                                        // but just generically replaces the GWBUF data
+                                        bufdata[4] = MYSQL_COM_QUERY;
+
+                                        queue = modutil_replace_SQL(queue, shard_database_id);
+                                        queue = gwbuf_make_contiguous(queue);
+
+                                        ((uint8_t *) queue->start)[4] = MYSQL_COM_INIT_DB;
                                 }
-
-                                CHK_SESSION(new_session);
-
-                                current_downstream->client = NULL;
-                                current_downstream->state = SESSION_STATE_STOPPING;
-                                current_downstream_service->router->closeSession(current_router_instance, (void *) current_router_session);
-
-                                // TODO memory leak!?
-                                // readwritesplit closes its underlying backend DCBs, but they're still included in the refcount
-                                // session_unlink_dcb is never called, so session_free's refcount check fails
-                                // session_free(current_downstream);
-
-                                shard_session->downstream = new_session;
-                                shard_session->shard_id = shard_id;
-
-                                // XXX: modutil_replace_SQL checks explicitly for COM_QUERY
-                                // but just generically replaces the GWBUF data
-                                bufdata[4] = MYSQL_COM_QUERY;
-
-                                queue = modutil_replace_SQL(queue, shard_database_id);
-                                queue = gwbuf_make_contiguous(queue);
-
-                                ((uint8_t *) queue->start)[4] = MYSQL_COM_INIT_DB;
                         }
                 }
         }

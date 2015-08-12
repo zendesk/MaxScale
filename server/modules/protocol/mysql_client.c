@@ -425,15 +425,19 @@ static int gw_mysql_do_authentication(DCB *dcb, GWBUF **buf) {
 
         protocol = DCB_PROTOCOL(dcb, MySQLProtocol);
         CHK_PROTOCOL(protocol);
-	client_data = (MYSQL_session *)calloc(1, sizeof(MYSQL_session));
+	if(dcb->data == NULL)
+	{
+	    client_data = (MYSQL_session *)calloc(1, sizeof(MYSQL_session));
 #if defined(SS_DEBUG)
-	client_data->myses_chk_top = CHK_NUM_MYSQLSES;
-	client_data->myses_chk_tail = CHK_NUM_MYSQLSES;
+	    client_data->myses_chk_top = CHK_NUM_MYSQLSES;
+	    client_data->myses_chk_tail = CHK_NUM_MYSQLSES;
 #endif
-	/**
-	 * Assign authentication structure with client DCB.
-	 */
-	dcb->data = client_data; 
+	    dcb->data = client_data;
+	}
+	else
+	{
+	    client_data = (MYSQL_session *)dcb->data;
+	}
 
 	stage1_hash = client_data->client_sha1;
 	username = client_data->user;
@@ -889,6 +893,7 @@ int gw_read_client_event(
 		    /** SSL was requested and the handshake is either done or
 		     * still ongoing. After the handshake is done, the client
 		     * will send another auth packet. */
+		    while((read_buffer = gwbuf_consume(read_buffer,GWBUF_LENGTH(read_buffer))));
 		    break;
 		}
 		
@@ -1339,7 +1344,7 @@ int gw_MySQLListener(
 	struct sockaddr *current_addr;
 	int  one = 1;
         int  rc;
-
+	bool is_tcp = false;
 	memset(&serv_addr,0,sizeof(serv_addr));
 	memset(&local_addr,0,sizeof(local_addr));
 
@@ -1380,6 +1385,7 @@ int gw_MySQLListener(
 		}
 
 		current_addr = (struct sockaddr *) &serv_addr;
+		is_tcp = true;
 	}
 
 	listen_dcb->fd = -1;
@@ -1389,10 +1395,12 @@ int gw_MySQLListener(
 		LOGIF(LE, (skygw_log_write_flush(LOGFILE_ERROR,"Error: Failed to set socket options. Error %d: %s",errno,strerror(errno))));
 	}
 
-	if((syseno = setsockopt(l_so, IPPROTO_TCP, TCP_NODELAY, (char *)&one, sizeof(one))) != 0){
+	if(is_tcp)
+	{
+	    if((syseno = setsockopt(l_so, IPPROTO_TCP, TCP_NODELAY, (char *)&one, sizeof(one))) != 0){
 		LOGIF(LE, (skygw_log_write_flush(LOGFILE_ERROR,"Error: Failed to set socket options. Error %d: %s",errno,strerror(errno))));
+	    }
 	}
-
 	// set NONBLOCKING mode
 	setnonblocking(l_so);
 

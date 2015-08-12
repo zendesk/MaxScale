@@ -106,10 +106,9 @@ static inline bool dcb_write_parameter_check(DCB *dcb, GWBUF *queue);
 static inline void dcb_write_fake_code(DCB *dcb);
 #endif
 static inline void dcb_write_when_already_queued(DCB *dcb, GWBUF *queue);
-static void dcb_log_write_failure(DCB *dcb, GWBUF *queue, int eno);
+static int dcb_log_write_failure(DCB *dcb, GWBUF *queue, int eno);
 static inline void dcb_write_tidy_up(DCB *dcb, bool below_water);
 static int dcb_write_SSL_error_report (DCB *dcb, int ret);
-int session_unlink_dcb(SESSION*, DCB*);
 
 size_t dcb_get_session_id(
 	DCB *dcb)
@@ -558,8 +557,6 @@ dcb_process_victim_queue(DCB *listofdcb)
             }  
             else 
             {
-		if(dcb->server)
-		    atomic_add(&dcb->server->stats.n_current,-1);
                 dcb->fd = DCBFD_CLOSED;
 				
                 LOGIF(LD, (skygw_log_write_flush(
@@ -1150,7 +1147,8 @@ int	below_water;
 
             if (written < 0)
             {
-                dcb_log_write_failure(dcb, queue, errno);
+                int rv = dcb_log_write_failure(dcb, queue, errno);
+
                 /*<
                  * What wasn't successfully written is stored to write queue
                  * for suspended write.
@@ -1159,7 +1157,11 @@ int	below_water;
                 dcb->writeq = queue;
                 dcb->stats.n_buffered++;
                 spinlock_release(&dcb->writeqlock);
-                return 0;
+
+		/** Return 1 if the write failure was due to EWOULDBLOCK or EAGAIN.
+		 The rest of the buffer will be written once an EPOLL_OUT event
+		 arrives.*/
+                return rv == 0 ? 1 : 0;
             }
             /*
              * Pull the number of bytes we have written from
@@ -1309,9 +1311,10 @@ dcb_write_when_already_queued(DCB *dcb, GWBUF *queue)
  * @param queue Queue of buffers to write
  * @param eno	Error number for logging
  */
-static void
+static int
 dcb_log_write_failure(DCB *dcb, GWBUF *queue, int eno)
 {
+    int rval = 0;
     if (LOG_IS_ENABLED(LOGFILE_DEBUG))
     {
         if (eno == EPIPE)
@@ -1327,6 +1330,7 @@ dcb_log_write_failure(DCB *dcb, GWBUF *queue, int eno)
                 dcb->fd,
                 eno,
                 strerror(eno))));
+	    rval = -1;
         }
     }
 
@@ -1346,6 +1350,7 @@ dcb_log_write_failure(DCB *dcb, GWBUF *queue, int eno)
                 dcb->fd,
                 eno,
                 strerror(eno))));
+	    rval = -1;
 
         }
 
@@ -1378,8 +1383,10 @@ dcb_log_write_failure(DCB *dcb, GWBUF *queue, int eno)
                 dcb_isclient(dcb) ? "client" : "backend server",
                 eno,
                 strerror(eno))));
+	    rval = -1;
         }
     }
+    return rval;
 }
 
 /**
@@ -1836,27 +1843,7 @@ dcb_close(DCB *dcb)
 	if ((dcb->state == DCB_STATE_POLLING && !dcb_maybe_add_persistent(dcb))
             || (dcb->state == DCB_STATE_LISTENING))
 	{
-            poll_remove_dcb(dcb);
-            /*
-             * Return will always be 0 or function will have crashed, so we
-             * threw away return value.
-             */
-            LOGIF(LD, (skygw_log_write(
-                LOGFILE_DEBUG,
-                "%lu [dcb_close] Removed dcb %p in state %s from "
-                "poll set.",
-                pthread_self(),
-                dcb,
-                STRDCBSTATE(dcb->state))));
-            /**
-             * close protocol and router session
-             */
-            if (dcb->func.close != NULL)
-            {
-                dcb->func.close(dcb);
-            }
-            /** Call possible callback for this DCB in case of close */
-            dcb_call_callback(dcb, DCB_REASON_CLOSE);
+            dcb_close_finish(dcb);
         }
     }
     
@@ -1940,22 +1927,34 @@ dcb_maybe_add_persistent(DCB *dcb)
 static void
 dcb_close_finish(DCB *dcb)
 {
-    /**
-     * check persistent list, close protocol and router session
+    poll_remove_dcb(dcb);
+    /*
+     * Return will always be 0 or function will have crashed, so we
+     * threw away return value.
      */
-    if (dcb->func.close)
-    {
-        dcb->func.close(dcb);
-    }
+    LOGIF(LD, (skygw_log_write(
+        LOGFILE_DEBUG,
+        "%lu [dcb_close] Removed dcb %p in state %s from poll set.",
+        pthread_self(),
+        dcb,
+        STRDCBSTATE(dcb->state))));
+    /**
+     * Do a consistency check, then adjust counter if not from persistent pool
+     */
     if (dcb->server)
     {
         if (dcb->server->persistent) CHK_DCB(dcb->server->persistent);
         if (0 == dcb->persistentstart) atomic_add(&dcb->server->stats.n_current, -1);
     }
+    /**
+     * close protocol and router session
+     */
+    if (dcb->func.close != NULL)
+    {
+        dcb->func.close(dcb);
+    }
     /** Call possible callback for this DCB in case of close */
     dcb_call_callback(dcb, DCB_REASON_CLOSE);
-    /** Must be DCB_STATE_NOPOLLING when this function is called */
-    dcb_close(dcb);
  }
 
 /**
@@ -2847,8 +2846,8 @@ dcb_persistent_clean_count(DCB *dcb, bool cleanall)
         while (disposals)
         {
             nextdcb = disposals->nextpersistent;
-            poll_remove_dcb(disposals);
             dcb_close_finish(disposals);
+            dcb_close(disposals);
             disposals = nextdcb;
         }
     }

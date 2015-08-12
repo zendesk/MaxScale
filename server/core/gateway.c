@@ -36,7 +36,7 @@
  *					Put example code behind SS_DEBUG macros.
  * 05/02/14	Mark Riddoch		Addition of version string
  * 29/06/14	Massimiliano Pinto	Addition of pidfile
- *
+ * 10/08/15     Markus Makela           Added configurable directory locations
  * @endverbatim
  */
 #define _XOPEN_SOURCE 700
@@ -84,6 +84,7 @@
 #include <execinfo.h>
 
 #include <ini.h>
+#include <sys/wait.h>
 
 /** for procname */
 #if !defined(_GNU_SOURCE)
@@ -177,7 +178,7 @@ static struct option long_options[] = {
 static int cnf_preparser(void* data, const char* section, const char* name, const char* value);
 static void log_flush_shutdown(void);
 static void log_flush_cb(void* arg);
-static int write_pid_file(char *); /* write MaxScale pidfile */
+static int write_pid_file(); /* write MaxScale pidfile */
 static void unlink_pidfile(void); /* remove pidfile */
 static void libmysqld_done(void);
 static bool file_write_header(FILE* outfile);
@@ -333,6 +334,41 @@ sigint_handler (int i)
 	fprintf(stderr, "\n\nShutting down MaxScale\n\n");
 }
 
+static void
+sigchld_handler (int i)
+{
+    int exit_status = 0;
+    pid_t child = -1;
+
+    if((child = wait(&exit_status)) == -1)
+    {
+	char errbuf[512];
+	strerror_r(errno,errbuf,511);
+	errbuf[511] = '\0';
+	skygw_log_write_flush(LE,"Error: failed to wait child process: %d %s",errno,errbuf);
+    }
+    else
+    {
+	if(WIFEXITED(exit_status))
+	{
+	    skygw_log_write_flush(WEXITSTATUS(exit_status) != 0 ? LE : LT,
+			     "Child process %d exited with status %d",
+			     child,WEXITSTATUS(exit_status));
+	}
+	else if(WIFSIGNALED(exit_status))
+	{
+	    skygw_log_write_flush((LE|LT),
+			     "Child process %d was stopped by signal %d.",
+			     child,WTERMSIG(exit_status));
+	}
+	else
+	{
+	    skygw_log_write_flush((LE|LT),
+			     "Child process %d did not exit normally. Exit status: %d",
+			     child,exit_status);
+	}
+    }
+}
 
 int fatal_handling = 0;
 
@@ -942,7 +978,7 @@ return_cnf_file_buf:
 static void usage(void)
 {
         fprintf(stderr,
-                "\nUsage : %s [OPTION]...\n\n"
+		"\nUsage : %s [OPTION]...\n\n"
 		"  -d, --nodaemon             enable running in terminal process (default:disabled)\n"
                 "  -f, --config=FILE          relative|absolute pathname of MaxScale configuration file\n"
 		"                             (default:/etc/maxscale.cnf)\n"
@@ -957,6 +993,8 @@ static void usage(void)
 		"                             (default: /etc/)\n"
 		"  -D, --datadir=PATH         path to data directory, stored embedded mysql tables\n"
 		"                             (default: /var/cache/maxscale)\n"
+		"  -N, --language=PATH         apth to errmsg.sys file\n"
+		"                             (default: /var/lib/maxscale)\n"
 		"  -P, --piddir=PATH	      path to PID file directory\n"
 		"                             (default: /var/run/maxscale)\n"
 		"  -U, --user=USER	      run MaxScale as another user.\n"
@@ -1013,7 +1051,6 @@ int main(int argc, char **argv)
         char	 mysql_home[PATH_MAX+1];
         char	 datadir_arg[10+PATH_MAX+1];  /*< '--datadir='  + PATH_MAX */
         char     language_arg[11+PATH_MAX+1]; /*< '--language=' + PATH_MAX */
-        char*    home_dir = NULL;             /*< home dir, to be freed */
         char*    cnf_file_path = NULL;        /*< conf file, to be freed */
         char*    cnf_file_arg = NULL;         /*< conf filename from cmd-line arg */
         void*    log_flush_thr = NULL;
@@ -1021,8 +1058,8 @@ int main(int argc, char **argv)
 	char* tmp_var;
 	int      option_index;
 	int	 logtofile = 0;	      	      /* Use shared memory or file */
-	int	 syslog_enabled = 0; /** Log to syslog */
-	int	 maxscalelog_enabled = 1; /** Log with MaxScale */
+	int	 *syslog_enabled = &config_get_global_options()->syslog; /** Log to syslog */
+	int	 *maxscalelog_enabled = &config_get_global_options()->maxlog; /** Log with MaxScale */
         ssize_t  log_flush_timeout_ms = 0;
         sigset_t sigset;
         sigset_t sigpipe_mask;
@@ -1032,7 +1069,8 @@ int main(int argc, char **argv)
                                        write_footer,
                                        NULL};
 
-	
+	*syslog_enabled = 0;
+	*maxscalelog_enabled = 1;
 
         sigemptyset(&sigpipe_mask);
         sigaddset(&sigpipe_mask, SIGPIPE);
@@ -1124,43 +1162,66 @@ int main(int argc, char **argv)
 	
 		    if(handle_path_arg(&tmp_path,optarg,NULL,true,false))
 		    {
-			logdir = tmp_path;
+			set_logdir(tmp_path);
 		    }
-
+		    else
+		    {
+			succp = false;
+		    }
 		    break;
 		case 'N':
 		    if(handle_path_arg(&tmp_path,optarg,NULL,true,false))
 		    {
-			langdir = tmp_path;
+			set_langdir(tmp_path);
+		    }
+		    else
+		    {
+			succp = false;
 		    }
 		    break;
 		case 'P':
 		    if(handle_path_arg(&tmp_path,optarg,NULL,true,true))
 		    {
-			piddir = tmp_path;
+			set_piddir(tmp_path);
+		    }
+		    else
+		    {
+			succp = false;
 		    }
 		    break;
 		case 'D':
 		    sprintf(datadir,"%s",optarg);
-		    maxscaledatadir = strdup(optarg);
+		    set_datadir(strdup(optarg));
 		    datadir_defined = true;
 		    break;
 		case 'C':
 		    if(handle_path_arg(&tmp_path,optarg,NULL,true,false))
 		    {
-			configdir = tmp_path;
+			set_configdir(tmp_path);
+		    }
+		    else
+		    {
+			succp = false;
 		    }
 		    break;
 		case 'B':
 		    if(handle_path_arg(&tmp_path,optarg,NULL,true,false))
 		    {
-			libdir = tmp_path;
+			set_libdir(tmp_path);
+		    }
+		    else
+		    {
+			succp = false;
 		    }
 		    break;
 		case 'A':
 		    if(handle_path_arg(&tmp_path,optarg,NULL,true,true))
 		    {
-			cachedir = tmp_path;
+			set_cachedir(tmp_path);
+		    }
+		    else
+		    {
+			succp = false;
 		    }
 		    break;
 		case 'S':
@@ -1170,11 +1231,11 @@ int main(int argc, char **argv)
                 {
                     tok++;
                     if(tok)
-                        maxscalelog_enabled = config_truth_value(tok);
+                        *maxscalelog_enabled = config_truth_value(tok);
                 }
                 else
                 {
-                    maxscalelog_enabled = config_truth_value(optarg);
+                    *maxscalelog_enabled = config_truth_value(optarg);
                 }
             }
 		    break;
@@ -1185,11 +1246,11 @@ int main(int argc, char **argv)
                 {
                     tok++;
                     if(tok)
-                        syslog_enabled = config_truth_value(tok);
+                        *syslog_enabled = config_truth_value(tok);
                 }
                 else
                 {
-                    syslog_enabled = config_truth_value(optarg);
+                    *syslog_enabled = config_truth_value(optarg);
                 }
             }
 		    break;
@@ -1433,6 +1494,14 @@ int main(int argc, char **argv)
                                         "SIGFPE. Exiting.");
                         goto sigset_err;
                 }
+		l = signal_set(SIGCHLD, sigchld_handler);
+
+                if (l != 0)
+                {
+                        logerr = strdup("Failed to set signal handler for "
+                                        "SIGCHLD. Exiting.");
+                        goto sigset_err;
+                }
 #ifdef SIGBUS
                 l = signal_set(SIGBUS, sigfatal_handler);
 
@@ -1495,7 +1564,7 @@ int main(int argc, char **argv)
          * read accessibility.
          */
 	char pathbuf[PATH_MAX+1];
-	snprintf(pathbuf,PATH_MAX,"%s",configdir ? configdir:default_configdir);
+	snprintf(pathbuf,PATH_MAX,"%s",get_configdir());
 	if(pathbuf[strlen(pathbuf)-1] != '/')
 	    strcat(pathbuf,"/");
 
@@ -1506,14 +1575,15 @@ int main(int argc, char **argv)
                 goto return_main;
         }
 
-	ini_parse(cnf_file_path,cnf_preparser,NULL);
-
-	if(!datadir_defined)
-	    sprintf(datadir,"%s",default_datadir);
+	if(ini_parse(cnf_file_path,cnf_preparser,NULL) != 0)
+	{
+	    rc = MAXSCALE_BADCONFIG;
+	    goto return_main;
+	}
 
 
         /** Use the cache dir for the mysql folder of the embedded library */
-	sprintf(mysql_home, "%s/mysql", cachedir?cachedir:default_cachedir);
+	sprintf(mysql_home, "%s/mysql", get_cachedir());
 	setenv("MYSQL_HOME", mysql_home, 1);
 
 
@@ -1527,35 +1597,30 @@ int main(int argc, char **argv)
                 char buf[1024];
                 char *argv[8];
 		bool succp;
-		
-		/** Use default log directory /var/log/maxscale/ */
-		if(logdir == NULL)
+
+		if(mkdir(get_logdir(),0777) != 0 && errno != EEXIST)
 		{
-                    if(mkdir(default_logdir,0777) != 0 && errno != EEXIST)
-                    {
-                        fprintf(stderr,
-                         "Error: Cannot create log directory: %s\n",
-                         default_logdir);
-                        goto return_main;
-                    }
-		    logdir = strdup(default_logdir);
+		    fprintf(stderr,
+		     "Error: Cannot create log directory: %s\n",
+		     default_logdir);
+		    goto return_main;
 		}
 
                 argv[0] = "MaxScale";
                 argv[1] = "-j";
-                argv[2] = logdir;
+                argv[2] = get_logdir();
 
-		if(!syslog_enabled)
+		if(!(*syslog_enabled))
 		{
 		    printf("Syslog logging is disabled.\n");
 		}
 		
-		if(!maxscalelog_enabled)
+		if(!(*maxscalelog_enabled))
 		{
 		    printf("MaxScale logging is disabled.\n");
 		}
-		logmanager_enable_syslog(syslog_enabled);
-		logmanager_enable_maxscalelog(maxscalelog_enabled);
+		logmanager_enable_syslog(*syslog_enabled);
+		logmanager_enable_maxscalelog(*maxscalelog_enabled);
 
 		if (logtofile)
 		{
@@ -1584,42 +1649,33 @@ int main(int argc, char **argv)
         }
 
 
-
-	    if(cachedir == NULL)
-		cachedir = strdup(default_cachedir);
-	    if(langdir == NULL)
-		langdir = strdup(default_langdir);
-	    if(libdir == NULL)
-		libdir = strdup(default_libdir);
-	/**
+	/*
          * Set a data directory for the mysqld library, we use
          * a unique directory name to avoid clauses if multiple
          * instances of the gateway are being run on the same
          * machine.
          */
 
-	if(datadir[strlen(datadir)-1] != '/')
-	    strcat(datadir,"/");
-	strcat(datadir,"data");
-		if(mkdir(datadir, 0777) != 0){
+	sprintf(datadir,"%s/data",get_datadir());
+	if(mkdir(datadir, 0777) != 0){
 
-			if(errno != EEXIST){
-				fprintf(stderr,
-						"Error: Cannot create data directory: %s\n",datadir);
-				goto return_main;
-			}
-		}
+	    if(errno != EEXIST){
+		fprintf(stderr,
+		 "Error: Cannot create data directory '%s': %d %s\n",datadir,errno,strerror(errno));
+		goto return_main;
+	    }
+	}
 
-        sprintf(datadir, "%s/data%d", datadir, getpid());
+        sprintf(datadir, "%s/data/data%d", get_datadir(), getpid());
 
-		if(mkdir(datadir, 0777) != 0){
+	if(mkdir(datadir, 0777) != 0){
 
-			if(errno != EEXIST){
-				fprintf(stderr,
-						"Error: Cannot create data directory: %s\n",datadir);
-				goto return_main;
-			}
-		}
+	    if(errno != EEXIST){
+		fprintf(stderr,
+		 "Error: Cannot create data directory '%s': %d %s\n",datadir,errno,strerror(errno));
+		goto return_main;
+	    }
+	}
 
         if (!daemon_mode)
         {
@@ -1630,10 +1686,10 @@ int main(int argc, char **argv)
 			"Module directory   : %s\n"
 			"Service cache      : %s\n\n",
                         cnf_file_path,
-                        logdir,
-                        datadir,
-			libdir,
-			cachedir);
+                        get_logdir(),
+                        get_datadir(),
+			get_libdir(),
+			get_cachedir());
         }
 
         LOGIF(LM,
@@ -1645,20 +1701,20 @@ int main(int argc, char **argv)
 	      (skygw_log_write_flush(
 		LOGFILE_MESSAGE,
 			       "Log directory: %s/",
-			       logdir)));
+			       get_logdir())));
 	LOGIF(LM,
 	 (skygw_log_write_flush(
 		LOGFILE_MESSAGE,
 			  "Data directory: %s",
-			  datadir)));
+			  get_datadir())));
 	LOGIF(LM,
 	 (skygw_log_write_flush(LOGFILE_MESSAGE,
 			  "Module directory: %s",
-			  libdir)));
+			  get_libdir())));
 	LOGIF(LM,
 	 (skygw_log_write_flush(LOGFILE_MESSAGE,
 			  "Service cache: %s",
-			  cachedir)));
+			  get_cachedir())));
 
         /*< Update the server options */
         for (i = 0; server_options[i]; i++)
@@ -1673,7 +1729,7 @@ int main(int argc, char **argv)
                         snprintf(language_arg,
                                  11+PATH_MAX+1,
                                  "--language=%s",
-                                 langdir);
+                                 get_langdir());
                         server_options[i] = language_arg;
                 }
         }
@@ -1703,7 +1759,7 @@ int main(int argc, char **argv)
                                                 "exactly with that of the errmsg.sys "
                                                 "file.\n*\n",
                                                 mysql_error(NULL),
-                                                home_dir);
+                                                get_langdir());
                                 }
                                 else
                                 {
@@ -1729,9 +1785,6 @@ int main(int argc, char **argv)
         }
         libmysqld_started = TRUE;
 
-	if(libdir == NULL)
-	    libdir = strdup(default_libdir);
-
         if (!config_load(cnf_file_path))
         {
                 char* fprerr = "Failed to load MaxScale configuration "
@@ -1755,7 +1808,7 @@ int main(int argc, char **argv)
                 getpid())));
 
 	/* Write process pid into MaxScale pidfile */
-	write_pid_file(home_dir);
+	write_pid_file();
 
 	/* Init MaxScale poll system */
         poll_init();
@@ -1865,8 +1918,6 @@ int main(int argc, char **argv)
 return_main:
 	if (threads)
 		free(threads);
-	if (home_dir)
-		free(home_dir);
 	if (cnf_file_path)
 		free(cnf_file_path);
 
@@ -1948,11 +1999,11 @@ static void unlink_pidfile(void)
  *
  */
 
-static int write_pid_file(char *home_dir) {
+static int write_pid_file() {
 
 	int fd = -1;
 
-        snprintf(pidfile, PATH_MAX, "%smaxscale.pid",piddir?piddir:default_piddir);
+        snprintf(pidfile, PATH_MAX, "%s/maxscale.pid",get_piddir());
 
         fd = open(pidfile, O_WRONLY | O_CREAT | O_TRUNC, 0777);
         if (fd == -1) {
@@ -2014,7 +2065,7 @@ bool handle_path_arg(char** dest, char* path, char* arg, bool rd, bool wr)
 	    }
 	    else
 	    {
-		fprintf(stderr,"%s\n",errstr);
+		print_log_n_stderr(true,true,errstr,errstr,0);
 		free(errstr);
 		errstr = NULL;
 	    }
@@ -2029,56 +2080,109 @@ bool handle_path_arg(char** dest, char* path, char* arg, bool rd, bool wr)
  * @param section Section name
  * @param name Parameter name
  * @param value Parameter value
- * @return 1 in all cases
+ * @return 0 on error, 1 when successful
  */
 static int cnf_preparser(void* data, const char* section, const char* name, const char* value)
 {
-
-    char pathbuffer[PATH_MAX];
-    char* errstr;
-
+    GATEWAY_CONF* cnf = config_get_global_options();
+    char *tmp;
     /** These are read from the configuration file. These will not override
      * command line parameters but will override default values. */
     if(strcasecmp(section,"maxscale") == 0)
     {
 	if(strcmp(name, "logdir") == 0)
 	{
-	    if(logdir == NULL)
-		handle_path_arg(&logdir,(char*)value,NULL,true,true);
+	    if(strcmp(get_logdir(),default_logdir) == 0)
+	    {
+		if(handle_path_arg(&tmp,(char*)value,NULL,true,true))
+		{
+		    set_logdir(tmp);
+		}
+		else
+		{
+		    return 0;
+		}
+	    }
 	}
 	else if(strcmp(name, "libdir") == 0)
 	{
-	    if(libdir == NULL)
-		handle_path_arg(&libdir,(char*)value,NULL,true,false);
+	    if(strcmp(get_libdir(),default_libdir) == 0 )
+	    {
+		if(handle_path_arg(&tmp,(char*)value,NULL,true,false))
+		{
+		    set_libdir(tmp);
+		}
+		else
+		{
+		    return 0;
+		}
+	    }
 	}
 	else if(strcmp(name, "piddir") == 0)
 	{
-	    if(piddir == NULL)
-		handle_path_arg(&piddir,(char*)value,NULL,true,true);
+	    if(strcmp(get_piddir(),default_piddir) == 0)
+	    {
+		if(handle_path_arg(&tmp,(char*)value,NULL,true,true))
+		{
+		    set_piddir(tmp);
+		}
+		else
+		{
+		    return 0;
+		}
+	    }
 	}
 	else if(strcmp(name, "datadir") == 0)
 	{
 	    if(!datadir_defined)
 	    {
-		char* tmp;
 		if(handle_path_arg(&tmp,(char*)value,NULL,true,false))
 		{
 		    sprintf(datadir,"%s",tmp);
-		    maxscaledatadir = strdup(tmp);
+		    set_datadir(tmp);
 		    datadir_defined = true;
-		    free(tmp);
+		}
+		else
+		{
+		    return 0;
 		}
 	    }
 	}
 	else if(strcmp(name, "cachedir") == 0)
 	{
-	    if(cachedir == NULL)
-		handle_path_arg((char**)&cachedir,(char*)value,NULL,true,false);
+	    if(strcmp(get_cachedir(),default_cachedir) == 0)
+	    {
+		if(handle_path_arg((char**)&tmp,(char*)value,NULL,true,false))
+		{
+		    set_cachedir(tmp);
+		}
+		else
+		{
+		    return 0;
+		}
+	    }
 	}
 	else if(strcmp(name, "language") == 0)
 	{
-	    if(langdir == NULL)
-		handle_path_arg((char**)&langdir,(char*)value,NULL,true,false);
+	    if(strcmp(get_langdir(),default_langdir) == 0)
+	    {
+		if(handle_path_arg((char**)&tmp,(char*)value,NULL,true,false))
+		{
+		    set_langdir(tmp);
+		}
+		else
+		{
+		    return 0;
+		}
+	    }
+	}
+	else if(strcmp(name, "syslog") == 0)
+	{
+	    cnf->syslog = config_truth_value((char*)value);
+	}
+	else if(strcmp(name, "maxlog") == 0)
+	{
+	    cnf->maxlog = config_truth_value((char*)value);
 	}
     }
 

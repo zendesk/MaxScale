@@ -21,6 +21,10 @@ add_library(flexmaster SHARED flexmaster.c)
 target_link_libraries(flexmaster log_manager utils HTTPD)
 install(TARGETS flexmaster DESTINATION ${MAXSCALE_LIBDIR})
 
+add_library(shards SHARED shards.c)
+target_link_libraries(shards log_manager utils)
+install(TARGETS shards DESTINATION ${MAXSCALE_LIBDIR})
+
 add_subdirectory(readwritesplit)
 add_subdirectory(schemarouter)
 if(BUILD_BINLOG)

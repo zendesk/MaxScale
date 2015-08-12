@@ -1,7 +1,9 @@
 #include "account_mon.h"
 #include "router.h"
 #include "modinfo.h"
+#include "modutil.h"
 #include "monitor.h"
+#include "mysql_client_server_protocol.h"
 
 #include "readwritesplit.h"
 
@@ -42,7 +44,6 @@ typedef struct {
         char *shard_format;
 
         SERVICE **downstreams;
-        SERVICE *default_downstream;
 
         MONITOR *account_monitor;
 } SHARD_ROUTER;
@@ -90,6 +91,8 @@ static ROUTER *createInstance(SERVICE *service, char **options) {
         char *shard;
         SERVICE *shard_service;
 
+        router->downstreams = calloc(1, sizeof(SERVICE *));
+
         for(i = 2; (shard = options[i]) != NULL; i++) {
                 skygw_log_write(LOGFILE_DEBUG, "shardfilter: services %s", shard);
 
@@ -98,14 +101,16 @@ static ROUTER *createInstance(SERVICE *service, char **options) {
                 // TODO
                 if(shard_service == NULL) {
                 } else {
-                        router->downstreams = realloc(router->downstreams, sizeof(SERVICE *) * (i - 1));
+                        if(i > 2) {
+                                router->downstreams = realloc(router->downstreams, sizeof(SERVICE *) * (i - 1));
+                        }
+
                         // TODO null
                         router->downstreams[i - 2] = shard_service;
                 }
         }
 
-        router->downstreams[i - 1] = NULL;
-        router->default_downstream = router->downstreams[0];
+        router->downstreams[i - 2] = NULL;
 
         return (ROUTER *) router;
 }
@@ -117,10 +122,11 @@ static void *newSession(ROUTER *instance, SESSION *session) {
         // Set a default downstream
         DCB *original_dcb = session->client;
         DCB *cloned_dcb = dcb_clone(session->client);
+        cloned_dcb->func.write = original_dcb->func.write;
+        cloned_dcb->fd = original_dcb->fd;
         // TODO null
 
-        session->client = cloned_dcb;
-        SESSION *downstream = session_alloc(router->default_downstream, original_dcb);
+        SESSION *downstream = session_alloc(router->downstreams[0], cloned_dcb);
         // TODO null
 
         shard_session->downstream = downstream;
@@ -141,7 +147,7 @@ static void closeSession(ROUTER *instance, void *session) {
         // Make sure the downstream is "STOPPING"
         downstream->state = SESSION_STATE_STOPPING;
 
-        downstream_service->router->closeSession(router_instance, (void *) router_session);;
+        downstream_service->router->closeSession(router_instance, (void *) router_session);
 }
 
 static void freeSession(ROUTER *instance, void *session) {
@@ -159,87 +165,64 @@ static void freeSession(ROUTER *instance, void *session) {
 }
 
 static int routeQuery(ROUTER *instance, void *session, GWBUF *queue) {
-        SHARD_ROUTER *router = (SHARD_ROUTER *) instance;
+        SHARD_ROUTER *shard_router = (SHARD_ROUTER *) instance;
         SHARD_SESSION *shard_session = (SHARD_SESSION *) session;
 
-        /*
         uint8_t *bufdata = GWBUF_DATA(queue);
 
         if(MYSQL_GET_COMMAND(bufdata) == MYSQL_COM_INIT_DB) {
                 unsigned int qlen = MYSQL_GET_PACKET_LEN(bufdata);
 
                 if(qlen > 8 && qlen < MYSQL_DATABASE_MAXLEN + 1) {
-                        int account_id = shardfilter_find_account((char *) bufdata + 5, qlen);
+                        int account_id = shards_find_account((char *) bufdata + 5, qlen);
 
                         if(account_id > 0) {
-                                int shard_id = shardfilter_find_shard(zd_instance, account_id);
+                                int shard_id = shards_find_shard(shard_router, account_id);
 
                                 if(shard_id <= 0) {
                                         char errmsg[2048];
                                         snprintf(errmsg, 2048, "Could not find shard for account %d", account_id);
                                         GWBUF *err = modutil_create_mysql_err_msg(1, 0, 1046, "3D000", errmsg);
-                                        spinlock_release(&my_session->lock);
-                                        return my_session->rses->client->func.write(my_session->rses->client, err);
+                                        // TODO
                                 }
 
                                 char shard_database_id[MYSQL_DATABASE_MAXLEN + 1];
-                                snprintf(shard_database_id, MYSQL_DATABASE_MAXLEN, zd_instance->shard_format, shard_id);
+                                snprintf(shard_database_id, MYSQL_DATABASE_MAXLEN, shard_router->shard_format, shard_id);
 
                                 // find downstream
                                 skygw_log_write(LOGFILE_TRACE, "shardfilter: finding %s", shard_database_id);
-                                SERVICE *service = shardfilter_service_for_shard(zd_instance, shard_database_id);
+                                SERVICE *service = shards_service_for_shard(shard_router, shard_database_id);
 
                                 if(service == NULL) {
                                         char errmsg[2048];
                                         snprintf((char *) &errmsg, 2048, "Could not find shard %d for account %d", shard_id, account_id);
                                         GWBUF *err = modutil_create_mysql_err_msg(1, 0, 1046, "3D000", errmsg);
-                                        spinlock_release(&my_session->lock);
-                                        return my_session->rses->client->func.write(my_session->rses->client, err);
+                                        // TODO
                                 }
 
-                                ROUTER_OBJECT *router = service->router;
-                                DCB *dcb = my_session->rses->client;
-                                SESSION *new_session = session_alloc(service, dcb);
+                                SESSION *current_downstream = shard_session->downstream;
+                                SERVICE *current_downstream_service = current_downstream->service;
+                                ROUTER_CLIENT_SES *current_router_session = (ROUTER_CLIENT_SES *) current_downstream->router_session;
+                                ROUTER *current_router_instance = (ROUTER *) current_router_session->router;
+                                SESSION *new_session = session_alloc(service, current_downstream->client);
 
                                 if(new_session == NULL) {
-                                        LOGIF(LE, (skygw_log_write_flush(LOGFILE_ERROR, "shardfilter: error allocating session, terminating")));
-
-                                        freeSession(instance, session);
-                                        shardfilter_free_client_session(my_session->rses);
-
-                                        my_session = NULL;
-
-                                        spinlock_release(&my_session->lock);
-
-                                        skygw_log_write(LOGFILE_TRACE, "shardfilter: session does not exist -- returning");
-                                        gwbuf_free(queue);
-                                        return 0;
+                                        // TODO
                                 }
 
                                 CHK_SESSION(new_session);
 
-                                spinlock_acquire(&my_session->rses->ses_lock);
+                                current_downstream->client = NULL;
+                                current_downstream->state = SESSION_STATE_STOPPING;
+                                current_downstream_service->router->closeSession(current_router_instance, (void *) current_router_session);
 
-                                // done by session_unlink_dcb
-                                atomic_add(&my_session->rses->refcount, -1);
-                                my_session->rses->client = NULL;
-                                // this is a reference to the dcb data
+                                // TODO memory leak!?
+                                // readwritesplit closes its underlying backend DCBs, but they're still included in the refcount
+                                // session_unlink_dcb is never called, so session_free's refcount check fails
+                                // session_free(current_downstream);
 
-                                void *data = malloc(sizeof(MYSQL_session));
-
-                                if(data == NULL) {
-                                        // well, shit
-                                }
-
-                                memcpy(data, my_session->rses->data, sizeof(MYSQL_session));
-                                my_session->rses->data = data;
-
-                                spinlock_release(&my_session->rses->ses_lock);
-
-                                DOWNSTREAM shard;
-                                shard.instance = (void *) service->router_instance;
-                                shard.session = new_session->router_session;
-                                shard.routeQuery = (void *) router->routeQuery;
+                                shard_session->downstream = new_session;
+                                shard_session->shard_id = shard_id;
 
                                 // XXX: modutil_replace_SQL checks explicitly for COM_QUERY
                                 // but just generically replaces the GWBUF data
@@ -249,20 +232,9 @@ static int routeQuery(ROUTER *instance, void *session, GWBUF *queue) {
                                 queue = gwbuf_make_contiguous(queue);
 
                                 ((uint8_t *) queue->start)[4] = MYSQL_COM_INIT_DB;
-
-                                int retval = shard.routeQuery(shard.instance, shard.session, queue);
-
-                                spinlock_release(&my_session->lock);
-
-                                // clean up the current session+filter chain
-                                // since we've alloc-ed a new session+filter chain
-                                shardfilter_close_client_session(my_session->rses);
-                                shardfilter_free_client_session(my_session->rses);
-
-                                return retval;
                         }
                 }
-        } */
+        }
 
         SESSION *downstream = shard_session->downstream;
         SERVICE *downstream_service = downstream->service;
@@ -289,7 +261,7 @@ static SERVICE *shards_service_for_shard(SHARD_ROUTER *instance, char *name) {
         SERVICE *downstream;
         int i = 0;
 
-        while((downstream = instance->downstreams[i++])) {
+        while((downstream = instance->downstreams[i++]) != NULL) {
                 if(strcasecmp(downstream->name, name) == 0) {
                         skygw_log_write(LOGFILE_TRACE, "shardfilter: found %s", name);
                         return downstream;
@@ -313,6 +285,12 @@ static int shards_find_account(char *bufdata, int qlen) {
 }
 
 static int shards_find_shard(SHARD_ROUTER *instance, long long int account_id) {
+        if(account_id == 1) {
+                return 2;
+        } else {
+                return 1;
+        }
+
         if(instance->account_monitor == NULL)
                 return 0;
 

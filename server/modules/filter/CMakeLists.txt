@@ -34,10 +34,6 @@ add_library(namedserverfilter SHARED namedserverfilter.c)
 target_link_libraries(namedserverfilter log_manager utils)
 install(TARGETS namedserverfilter DESTINATION ${MAXSCALE_LIBDIR})
 
-add_library(shardfilter SHARED shardfilter.c)
-target_link_libraries(shardfilter log_manager utils)
-install(TARGETS shardfilter DESTINATION ${MAXSCALE_LIBDIR})
-
 add_library(flexmasterfilter SHARED flexmaster_filter.c)
 target_link_libraries(flexmasterfilter log_manager utils)
 install(TARGETS flexmasterfilter DESTINATION ${MAXSCALE_LIBDIR})

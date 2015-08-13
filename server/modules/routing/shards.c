@@ -316,6 +316,13 @@ static uint32_t shards_find_shard(SHARD_ROUTER *instance, uint32_t account_id) {
 
 static void shards_free_downstream(SHARD_DOWNSTREAM downstream) {
         downstream.service->router->freeSession(downstream.router_instance, downstream.router_session);
+
+        // unlink DCB from session for final free
+        if(downstream.session->client != NULL) {
+                downstream.session->client->session = NULL;
+        }
+
+        session_free(downstream.session);
 }
 
 static void shards_close_downstream_session(SHARD_DOWNSTREAM downstream) {

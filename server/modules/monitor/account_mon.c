@@ -477,7 +477,7 @@ static void account_monitor_consume(ACCOUNT_MONITOR *handle, rd_kafka_message_t 
         hashtable_delete(handle->accounts, (void *) id);
         hashtable_add(handle->accounts, (void *) id, (void *) shard_id);
 
-        LOGIF(LM, (skygw_log_write(LOGFILE_MESSAGE, "found shard_id %lld for account %lld", shard_id, id)));
+        LOGIF(LM, (skygw_log_write(LOGFILE_MESSAGE, "found shard_id %" PRIuPTR " for account %" PRIuPTR, shard_id, id)));
 
         yajl_tree_free(node);
 }

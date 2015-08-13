@@ -165,7 +165,7 @@ static void *newSession(ROUTER *instance, SESSION *session) {
                 return NULL;
         }
 
-        SHARD_SESSION *shard_session = malloc(sizeof(SHARD_SESSION));
+        SHARD_SESSION *shard_session = calloc(1, sizeof(SHARD_SESSION));
         shards_set_downstream(shard_session, downstream);
         shard_session->shard_id = 0;
         shard_session->client_session = session;

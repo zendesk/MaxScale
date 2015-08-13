@@ -231,6 +231,7 @@ static int routeQuery(ROUTER *instance, void *session, GWBUF *queue) {
                                 if(!shards_switch_session(shard_session, service)) {
                                         gwbuf_free(queue);
                                         char errmsg[2048];
+
                                         snprintf((char *) &errmsg, 2048, "Error allocating new session for shard %" PRIuPTR, shard_id);
                                         return shards_send_error(shard_session, errmsg);
                                 }
@@ -242,9 +243,13 @@ static int routeQuery(ROUTER *instance, void *session, GWBUF *queue) {
                         // but just generically replaces the GWBUF data
                         bufdata[4] = MYSQL_COM_QUERY;
 
-                        queue = modutil_replace_SQL(queue, shard_database_id);
-                        queue = gwbuf_make_contiguous(queue);
+                        GWBUF *modded_buf = modutil_replace_SQL(queue, shard_database_id);
 
+                        if(modded_buf != queue) {
+                                gwbuf_free(queue);
+                        }
+
+                        queue = gwbuf_make_contiguous(modded_buf);
                         ((uint8_t *) queue->start)[4] = MYSQL_COM_INIT_DB;
                 } else if(shard_session->downstream.service != shard_router->downstreams[0]) {
                         if(!shards_switch_session(shard_session, shard_router->downstreams[0])) {

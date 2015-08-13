@@ -417,14 +417,15 @@ static void account_monitor_consume(ACCOUNT_MONITOR *handle, rd_kafka_message_t 
         char errbuf[1024];
 
         // payloads are not null terminated strings
-        char *json = alloca(sizeof(char) * (message->len + 1));
+        char *json = calloc(1, sizeof(char) * (message->len + 1));
         memcpy(json, message->payload, message->len * sizeof(char));
-        json[message->len] = '\0';
 
         yajl_val node = yajl_tree_parse(json, errbuf, sizeof(errbuf));
 
+        free(json);
+
         if(node == NULL) {
-                LOGIF(LM, (skygw_log_write(LOGFILE_MESSAGE, "failed to parse: %s\n\"%s\"", errbuf, message->payload)));
+                LOGIF(LM, (skygw_log_write(LOGFILE_MESSAGE, "failed to parse: %s\n", errbuf, message->payload)));
                 return;
         }
 

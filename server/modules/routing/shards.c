@@ -175,6 +175,12 @@ static void *newSession(ROUTER *instance, SESSION *session) {
 
 static void closeSession(ROUTER *instance, void *session) {
         SHARD_SESSION *shard_session = (SHARD_SESSION *) session;
+
+        // The cloned DCB has the same FD so it will get closed twice
+        // Still results in a "epoll_ctl could not remove, not found" error, since that
+        // happens before we ever reach here, but this is deemed non-fatal inside poll_resolve_error
+        shard_session->client_session->client->fd = DCBFD_CLOSED;
+
         shards_close_downstream_session(shard_session->downstream);
 }
 

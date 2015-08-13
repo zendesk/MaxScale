@@ -60,16 +60,17 @@ typedef struct {
 
         SHARD_DOWNSTREAM downstream;
 
-        int shard_id;
+        uint32_t shard_id;
 } SHARD_SESSION;
 
 static SERVICE *shards_service_for_shard(SHARD_ROUTER *, char *);
-static int shards_find_shard(SHARD_ROUTER *, long long int);
+static uint32_t shards_find_shard(SHARD_ROUTER *, uint32_t);
 static int shards_find_account(char *, int);
 static void shards_free_downstream(SHARD_DOWNSTREAM);
 static void shards_close_downstream_session(SHARD_DOWNSTREAM);
 static void shards_set_downstream(SHARD_SESSION *, SESSION *);
 static int shards_send_error(SHARD_SESSION *, char *);
+static bool shards_switch_session(SHARD_SESSION *, SERVICE *);
 
 char *version() {
         return version_str;
@@ -95,7 +96,7 @@ static ROUTER *createInstance(SERVICE *service, char **options) {
                 return NULL;
         }
 
-        SHARD_ROUTER *router = malloc(sizeof(SHARD_ROUTER));
+        SHARD_ROUTER *router = calloc(1, sizeof(SHARD_ROUTER));
 
         router->shard_format = strdup(options[0]);
         router->account_monitor = monitor_find(options[1]);
@@ -187,69 +188,71 @@ static void freeSession(ROUTER *instance, void *session) {
 static int routeQuery(ROUTER *instance, void *session, GWBUF *queue) {
         SHARD_ROUTER *shard_router = (SHARD_ROUTER *) instance;
         SHARD_SESSION *shard_session = (SHARD_SESSION *) session;
-        SHARD_DOWNSTREAM downstream = shard_session->downstream;
 
         uint8_t *bufdata = GWBUF_DATA(queue);
 
         if(MYSQL_GET_COMMAND(bufdata) == MYSQL_COM_INIT_DB) {
                 unsigned int qlen = MYSQL_GET_PACKET_LEN(bufdata);
+                int account_id;
 
-                if(qlen > 8 && qlen < MYSQL_DATABASE_MAXLEN + 1) {
-                        int account_id = shards_find_account((char *) bufdata + 5, qlen);
+                if(qlen > 8 && qlen < MYSQL_DATABASE_MAXLEN + 1 && (account_id = shards_find_account((char *) bufdata + 5, qlen)) > 0) {
+                        uint32_t shard_id = shards_find_shard(shard_router, account_id);
 
-                        if(account_id > 0) {
-                                int shard_id = shards_find_shard(shard_router, account_id);
-                                char *shard_database_id = alloca(sizeof(char) * (MYSQL_DATABASE_MAXLEN + 1));
-                                snprintf(shard_database_id, MYSQL_DATABASE_MAXLEN, shard_router->shard_format, shard_id);
+                        if(shard_id < 1) {
+                                gwbuf_free(queue);
 
-                                // find downstream
-                                skygw_log_write(LOGFILE_TRACE, "shards: finding %s", shard_database_id);
-                                SERVICE *service = shards_service_for_shard(shard_router, shard_database_id);
+                                char errmsg[2048];
+                                snprintf((char *) &errmsg, 2048, "Could not find shard for account %d", account_id);
+                                return shards_send_error(shard_session, errmsg);
+                        }
 
-                                if(service == NULL) {
+                        char *shard_database_id = alloca(sizeof(char) * (MYSQL_DATABASE_MAXLEN + 1));
+                        snprintf(shard_database_id, MYSQL_DATABASE_MAXLEN, shard_router->shard_format, shard_id);
+
+                        // find downstream
+                        skygw_log_write(LOGFILE_TRACE, "shards: finding %s", shard_database_id);
+                        SERVICE *service = shards_service_for_shard(shard_router, shard_database_id);
+
+                        if(service == NULL) {
+                                gwbuf_free(queue);
+
+                                char errmsg[2048];
+                                snprintf((char *) &errmsg, 2048, "Could not find shard %d for account %d", shard_id, account_id);
+                                return shards_send_error(shard_session, errmsg);
+                        }
+
+                        if(service != shard_session->downstream.service) {
+                                if(!shards_switch_session(shard_session, service)) {
                                         gwbuf_free(queue);
-
                                         char errmsg[2048];
-                                        snprintf((char *) &errmsg, 2048, "Could not find shard %d for account %d", shard_id, account_id);
+                                        snprintf((char *) &errmsg, 2048, "Error allocating new session for shard %d", shard_id);
                                         return shards_send_error(shard_session, errmsg);
                                 }
 
-                                if(service != downstream.service) {
-                                        SESSION *new_session = session_alloc(service, downstream.session->client);
-
-                                        if(new_session == NULL) {
-                                                gwbuf_free(queue);
-
-                                                char errmsg[2048];
-                                                snprintf((char *) &errmsg, 2048, "Error allocating new session for shard %d", shard_id);
-                                                return shards_send_error(shard_session, errmsg);
-                                        }
-
-                                        CHK_SESSION(new_session);
-
-                                        downstream.session->client = NULL;
-                                        shards_close_downstream_session(downstream);
-                                        shards_free_downstream(downstream);
-
-                                        shards_set_downstream(shard_session, new_session);
-                                        // Make sure routeQuery is called on the right downstream
-                                        downstream = shard_session->downstream;
-
-                                        shard_session->shard_id = shard_id;
-                                }
-
-                                // XXX: modutil_replace_SQL checks explicitly for COM_QUERY
-                                // but just generically replaces the GWBUF data
-                                bufdata[4] = MYSQL_COM_QUERY;
-
-                                queue = modutil_replace_SQL(queue, shard_database_id);
-                                queue = gwbuf_make_contiguous(queue);
-
-                                ((uint8_t *) queue->start)[4] = MYSQL_COM_INIT_DB;
+                                shard_session->shard_id = shard_id;
                         }
+
+                        // XXX: modutil_replace_SQL checks explicitly for COM_QUERY
+                        // but just generically replaces the GWBUF data
+                        bufdata[4] = MYSQL_COM_QUERY;
+
+                        queue = modutil_replace_SQL(queue, shard_database_id);
+                        queue = gwbuf_make_contiguous(queue);
+
+                        ((uint8_t *) queue->start)[4] = MYSQL_COM_INIT_DB;
+                } else if(shard_session->downstream.service != shard_router->downstreams[0]) {
+                        if(!shards_switch_session(shard_session, shard_router->downstreams[0])) {
+                                gwbuf_free(queue);
+                                char errmsg[2048];
+                                snprintf((char *) &errmsg, 2048, "Error switching to default shard");
+                                return shards_send_error(shard_session, errmsg);
+                        }
+
+                        shard_session->shard_id = 0;
                 }
         }
 
+        SHARD_DOWNSTREAM downstream = shard_session->downstream;
         return downstream.service->router->routeQuery(downstream.router_instance, downstream.router_session, queue);
 }
 
@@ -293,26 +296,16 @@ static int shards_find_account(char *bufdata, int qlen) {
         return account_id;
 }
 
-static int shards_find_shard(SHARD_ROUTER *instance, long long int account_id) {
+static uint32_t shards_find_shard(SHARD_ROUTER *instance, uint32_t account_id) {
         if(instance->account_monitor == NULL)
                 return 0;
 
         ACCOUNT_MONITOR *handle = (ACCOUNT_MONITOR *) instance->account_monitor->handle;
 
-        if(handle == NULL || handle->accounts == NULL)
+        if(handle == NULL)
                 return 0;
 
-        int i = 0, *account;
-
-        long long int shard_id = (long long int) hashtable_fetch(handle->accounts, (void *) account_id);
-
-        if(shard_id == 0) {
-                skygw_log_write(LOGFILE_TRACE, "shards: could not find shard id for account %d", account_id);
-                return 0;
-        } else {
-                skygw_log_write(LOGFILE_TRACE, "shards: found shard_id %d for account %d", shard_id, account_id);
-                return shard_id;
-        }
+        return account_monitor_find_shard(handle, account_id);
 }
 
 static void shards_free_downstream(SHARD_DOWNSTREAM downstream) {
@@ -336,9 +329,24 @@ static int shards_send_error(SHARD_SESSION *shard_session, char *errmsg) {
         GWBUF *err = modutil_create_mysql_err_msg(1, 0, 1046, "3D000", errmsg);
 
         DCB *client = shard_session->client_session->client;
-        int retval = client->func.write(client, err);
+        return client->func.write(client, err);
+}
 
-        gwbuf_free(err);
+static bool shards_switch_session(SHARD_SESSION *shard_session, SERVICE *service) {
+        SHARD_DOWNSTREAM downstream = shard_session->downstream;
+        SESSION *new_session = session_alloc(service, downstream.session->client);
 
-        return retval;
+        if(new_session == NULL) {
+                return false;
+        }
+
+        CHK_SESSION(new_session);
+
+        downstream.session->client = NULL;
+        shards_close_downstream_session(downstream);
+        shards_free_downstream(downstream);
+
+        shards_set_downstream(shard_session, new_session);
+
+        return true;
 }

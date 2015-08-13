@@ -42,18 +42,18 @@ static MONITOR_OBJECT MyObject = {
         diagnostics
 };
 
-void account_monitor_free(ACCOUNT_MONITOR *);
-void account_monitor_consume(ACCOUNT_MONITOR *, rd_kafka_message_t *);
+static void account_monitor_free(ACCOUNT_MONITOR *);
+static void account_monitor_consume(ACCOUNT_MONITOR *, rd_kafka_message_t *);
 
-int account_monitor_hash(void *);
-int account_monitor_compare(void *, void *);
+static int account_monitor_hash(void *);
+static int account_monitor_compare(void *, void *);
 
 #define BROKER_PATH "/brokers/ids"
 
 static char *get_kafka_brokerlist(ACCOUNT_MONITOR *);
 static int wait_for_zookeeper(ACCOUNT_MONITOR *);
 static int init_kafka(ACCOUNT_MONITOR *);
-void account_monitor_update_partitions(ACCOUNT_MONITOR *);
+static void account_monitor_update_partitions(ACCOUNT_MONITOR *);
 
 /**
  * Implementation of the mandatory version entry point
@@ -389,7 +389,7 @@ static void monitorMain(void *arg) {
         }
 }
 
-void account_monitor_update_partitions(ACCOUNT_MONITOR *handle) {
+static void account_monitor_update_partitions(ACCOUNT_MONITOR *handle) {
         const struct rd_kafka_metadata *metadata;
 
         if(rd_kafka_metadata(handle->connection, 0, handle->topic, &metadata, 5000) != RD_KAFKA_RESP_ERR_NO_ERROR) {
@@ -415,7 +415,7 @@ void account_monitor_update_partitions(ACCOUNT_MONITOR *handle) {
         handle->metadata = metadata;
 }
 
-void account_monitor_consume(ACCOUNT_MONITOR *handle, rd_kafka_message_t *message) {
+static void account_monitor_consume(ACCOUNT_MONITOR *handle, rd_kafka_message_t *message) {
         if(message->len == 0) {
                 return;
         }
@@ -471,8 +471,8 @@ void account_monitor_consume(ACCOUNT_MONITOR *handle, rd_kafka_message_t *messag
                 return;
         }
 
-        long long int id = YAJL_GET_INTEGER(id_node);
-        long long int shard_id = YAJL_GET_INTEGER(shard_id_node);
+        uint32_t id = YAJL_GET_INTEGER(id_node);
+        uint32_t shard_id = YAJL_GET_INTEGER(shard_id_node);
 
         hashtable_delete(handle->accounts, (void *) id);
         hashtable_add(handle->accounts, (void *) id, (void *) shard_id);
@@ -482,7 +482,7 @@ void account_monitor_consume(ACCOUNT_MONITOR *handle, rd_kafka_message_t *messag
         yajl_tree_free(node);
 }
 
-void account_monitor_free(ACCOUNT_MONITOR *handle) {
+static void account_monitor_free(ACCOUNT_MONITOR *handle) {
         handle->status = MONITOR_STOPPED;
 
         if(handle->queue != NULL) {
@@ -526,17 +526,34 @@ void account_monitor_free(ACCOUNT_MONITOR *handle) {
         rd_kafka_wait_destroyed(2000);
 }
 
-int account_monitor_hash(void *key) {
+static int account_monitor_hash(void *key) {
         if(key == NULL)
                 return 0;
 
-        return ((long long int) key) % 10000;
+        return ((uint32_t) key) % 10000;
 }
 
-int account_monitor_compare(void *v1, void *v2) {
+static int account_monitor_compare(void *v1, void *v2) {
   if(v1 == v2) {
           return 0;
   } else {
           return 1;
   }
+}
+
+uint32_t account_monitor_find_shard(ACCOUNT_MONITOR *handle, uint32_t account_id) {
+        if(handle->accounts == NULL)
+                return 0;
+
+        int i = 0, *account;
+
+        uint32_t shard_id = (uint32_t) hashtable_fetch(handle->accounts, (void *) account_id);
+
+        if(shard_id == 0) {
+                skygw_log_write(LOGFILE_TRACE, "account_mon: could not find shard id for account %d", account_id);
+                return 0;
+        } else {
+                skygw_log_write(LOGFILE_TRACE, "account_mon: found shard_id %d for account %d", shard_id, account_id);
+                return shard_id;
+        }
 }

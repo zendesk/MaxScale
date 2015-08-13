@@ -60,3 +60,5 @@ typedef struct {
 
 #define MONITOR_INTERVAL 10000 // in milliseconds
 #define MONITOR_DEFAULT_ID 1UL // unsigned long value
+
+uint32_t account_monitor_find_shard(ACCOUNT_MONITOR *, uint32_t);

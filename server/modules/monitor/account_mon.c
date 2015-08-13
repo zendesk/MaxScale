@@ -149,13 +149,8 @@ static char *get_kafka_brokerlist(ACCOUNT_MONITOR *handle) {
                         yajl_tree_free(node);
 
                         int previous_size = brokers == NULL ? 0 : strlen(brokers);
-                        // strlen + , + strlen
-                        int len = previous_size + strlen(host_buffer);
-
-                        if(i > 0) {
-                                len++;
-                        }
-
+                        // strlen + , + strlen + \0
+                        int len = previous_size + strlen(host_buffer) + 1;
                         char *new_brokers = malloc(len);
 
                         if(new_brokers == NULL) {
@@ -174,7 +169,7 @@ static char *get_kafka_brokerlist(ACCOUNT_MONITOR *handle) {
 
                         memcpy(new_brokers + previous_size, host_buffer, strlen(host_buffer));
 
-                        new_brokers[len] = '\0';
+                        new_brokers[len - 1] = '\0';
                         brokers = new_brokers;
                 }
         }
@@ -335,7 +330,7 @@ static int init_kafka(ACCOUNT_MONITOR *handle) {
         handle->connection = rd_kafka_new(RD_KAFKA_CONSUMER, handle->configuration, errbuf, sizeof(errbuf));
 
         if(handle->connection == NULL) {
-                LOGIF(LM, (skygw_log_write(LOGFILE_ERROR, "Could not create kafka connection.\n%s", errbuf)));
+                LOGIF(LM, (skygw_log_write(LOGFILE_ERROR, "Could not create kafka connection. %s", errbuf)));
                 return 1;
         }
 
@@ -349,7 +344,7 @@ static int init_kafka(ACCOUNT_MONITOR *handle) {
         handle->topic = rd_kafka_topic_new(handle->connection, handle->topic_name, topic_configuration);
 
         if(handle->topic == NULL) {
-                LOGIF(LM, (skygw_log_write(LOGFILE_ERROR, "Could not create kafka topic.\n%s", rd_kafka_err2str(rd_kafka_errno2err(errno)))));
+                LOGIF(LM, (skygw_log_write(LOGFILE_ERROR, "Could not create kafka topic. %s", rd_kafka_err2str(rd_kafka_errno2err(errno)))));
                 return 1;
         }
 
@@ -382,9 +377,12 @@ static void monitorMain(void *arg) {
 
                 if(message == NULL) {
                         continue;
+                } else if(message->err != RD_KAFKA_RESP_ERR_NO_ERROR) {
+                        LOGIF(LM, (skygw_log_write(LOGFILE_ERROR, "Error consuming message. %s", rd_kafka_err2str(message->err))));
+                } else {
+                        account_monitor_consume(handle, message);
                 }
 
-                account_monitor_consume(handle, message);
                 rd_kafka_message_destroy(message);
         }
 }
@@ -393,7 +391,7 @@ static void account_monitor_update_partitions(ACCOUNT_MONITOR *handle) {
         const struct rd_kafka_metadata *metadata;
 
         if(rd_kafka_metadata(handle->connection, 0, handle->topic, &metadata, 5000) != RD_KAFKA_RESP_ERR_NO_ERROR) {
-                LOGIF(LM, (skygw_log_write(LOGFILE_ERROR, "Could not fetch topic metadata (partitions).\n%s", rd_kafka_err2str(rd_kafka_errno2err(errno)))));
+                LOGIF(LM, (skygw_log_write(LOGFILE_ERROR, "Could not fetch topic metadata (partitions). %s", rd_kafka_err2str(rd_kafka_errno2err(errno)))));
                 return;
         }
 
@@ -416,25 +414,14 @@ static void account_monitor_update_partitions(ACCOUNT_MONITOR *handle) {
 }
 
 static void account_monitor_consume(ACCOUNT_MONITOR *handle, rd_kafka_message_t *message) {
-        if(message->len == 0) {
-                return;
-        }
-
         char errbuf[1024];
-        char *payload = message->payload;
 
-        // sort of a right-stripping type mechanism
-        // we know json ends with a '}', so just dump everything else
-        for(int i = message->len; payload[i] != '}' && i >= 0; i--) {
-                // We got this far and there's nothing in the string
-                if(i == 0) {
-                        return;
-                }
+        // payloads are not null terminated strings
+        char *json = alloca(sizeof(char) * (message->len + 1));
+        memcpy(json, message->payload, message->len * sizeof(char));
+        json[message->len] = '\0';
 
-                payload[i] = '\0';
-        }
-
-        yajl_val node = yajl_tree_parse(payload, errbuf, sizeof(errbuf));
+        yajl_val node = yajl_tree_parse(json, errbuf, sizeof(errbuf));
 
         if(node == NULL) {
                 LOGIF(LM, (skygw_log_write(LOGFILE_MESSAGE, "failed to parse: %s\n\"%s\"", errbuf, message->payload)));

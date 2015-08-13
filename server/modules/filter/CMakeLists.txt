@@ -34,10 +34,6 @@ add_library(namedserverfilter SHARED namedserverfilter.c)
 target_link_libraries(namedserverfilter log_manager)
 install(TARGETS namedserverfilter DESTINATION ${MAXSCALE_LIBDIR})
 
-add_library(flexmasterfilter SHARED flexmaster_filter.c)
-target_link_libraries(flexmasterfilter log_manager utils)
-install(TARGETS flexmasterfilter DESTINATION ${MAXSCALE_LIBDIR})
-
 if(BUILD_SLAVELAG)
   add_library(slavelag SHARED slavelag.c)
   target_link_libraries(slavelag log_manager query_classifier)

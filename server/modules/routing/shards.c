@@ -69,6 +69,7 @@ static int shards_find_account(char *, int);
 static void shards_free_downstream(SHARD_DOWNSTREAM);
 static void shards_close_downstream_session(SHARD_DOWNSTREAM);
 static void shards_set_downstream(SHARD_SESSION *, SESSION *);
+static int shards_send_error(SHARD_SESSION *, char *);
 
 char *version() {
         return version_str;
@@ -82,13 +83,19 @@ ROUTER_OBJECT *GetModuleObject() {
 }
 
 static ROUTER *createInstance(SERVICE *service, char **options) {
-        SHARD_ROUTER *router = malloc(sizeof(SHARD_ROUTER));
-
         // shard_format = options[0]
         // account_monitor = options[1]
         // unsharded service = options[2]
         // shards = options[3..]
-        // TODO check length
+        int i = 0;
+        while(options[i] != NULL) { i++; }
+
+        if(i < 2) {
+                skygw_log_write(LOGFILE_ERROR, "shards: not enough router_options. expected shard_format,account_monitor,unsharded service,*shards");
+                return NULL;
+        }
+
+        SHARD_ROUTER *router = malloc(sizeof(SHARD_ROUTER));
 
         router->shard_format = strdup(options[0]);
         router->account_monitor = monitor_find(options[1]);
@@ -100,20 +107,27 @@ static ROUTER *createInstance(SERVICE *service, char **options) {
         char *shard;
         SERVICE *shard_service;
 
-        int i = 0;
-        router->downstreams = calloc(1, sizeof(SERVICE *));
+        i = 0;
 
         while((shard = options[i + 2]) != NULL) {
-                skygw_log_write(LOGFILE_DEBUG, "shardfilter: services %s", shard);
+                skygw_log_write(LOGFILE_DEBUG, "shards: services %s", shard);
 
                 shard_service = service_find(shard);
 
-                // TODO
                 if(shard_service == NULL) {
+                        skygw_log_write(LOGFILE_ERROR, "shards: could not find service '%s'", shard);
                 } else {
-                        if(i > 0) {
-                                router->downstreams = realloc(router->downstreams, sizeof(SERVICE *) * (i + 2));
-                                // TODO null
+                        void *new_downstreams = realloc(router->downstreams, sizeof(SERVICE *) * (i + 2));
+
+                        if(new_downstreams == NULL) {
+                                skygw_log_write(LOGFILE_ERROR, "shards: error allocating downstreams");
+
+                                free(router->downstreams);
+                                free(router);
+
+                                return NULL;
+                        } else {
+                                router->downstreams = new_downstreams;
                         }
 
                         router->downstreams[i] = shard_service;
@@ -129,18 +143,28 @@ static ROUTER *createInstance(SERVICE *service, char **options) {
 
 static void *newSession(ROUTER *instance, SESSION *session) {
         SHARD_ROUTER *router = (SHARD_ROUTER *) instance;
-        SHARD_SESSION *shard_session = malloc(sizeof(SHARD_SESSION));
 
-        // Set a default downstream
         DCB *original_dcb = session->client;
         DCB *cloned_dcb = dcb_clone(session->client);
+
+        if(cloned_dcb == NULL) {
+                skygw_log_write(LOGFILE_ERROR, "shards: error allocating new DCB for downstream session");
+                return NULL;
+        }
+
         cloned_dcb->func.write = original_dcb->func.write;
         cloned_dcb->fd = original_dcb->fd;
-        // TODO null
 
+        // Set a default downstream
         SESSION *downstream = session_alloc(router->downstreams[0], cloned_dcb);
-        // TODO null
 
+        if(downstream == NULL) {
+                skygw_log_write(LOGFILE_ERROR, "shards: error allocating default downstream session");
+                dcb_free(cloned_dcb);
+                return NULL;
+        }
+
+        SHARD_SESSION *shard_session = malloc(sizeof(SHARD_SESSION));
         shards_set_downstream(shard_session, downstream);
         shard_session->shard_id = 0;
         shard_session->client_session = session;
@@ -179,19 +203,26 @@ static int routeQuery(ROUTER *instance, void *session, GWBUF *queue) {
                                 snprintf(shard_database_id, MYSQL_DATABASE_MAXLEN, shard_router->shard_format, shard_id);
 
                                 // find downstream
-                                skygw_log_write(LOGFILE_TRACE, "shardfilter: finding %s", shard_database_id);
+                                skygw_log_write(LOGFILE_TRACE, "shards: finding %s", shard_database_id);
                                 SERVICE *service = shards_service_for_shard(shard_router, shard_database_id);
 
                                 if(service == NULL) {
-                                        service = shard_router->downstreams[0];
-                                        shard_database_id = service->name;
+                                        gwbuf_free(queue);
+
+                                        char errmsg[2048];
+                                        snprintf((char *) &errmsg, 2048, "Could not find shard %d for account %d", shard_id, account_id);
+                                        return shards_send_error(shard_session, errmsg);
                                 }
 
                                 if(service != downstream.service) {
                                         SESSION *new_session = session_alloc(service, downstream.session->client);
 
                                         if(new_session == NULL) {
-                                                // TODO
+                                                gwbuf_free(queue);
+
+                                                char errmsg[2048];
+                                                snprintf((char *) &errmsg, 2048, "Error allocating new session for shard %d", shard_id);
+                                                return shards_send_error(shard_session, errmsg);
                                         }
 
                                         CHK_SESSION(new_session);
@@ -241,7 +272,7 @@ static SERVICE *shards_service_for_shard(SHARD_ROUTER *instance, char *name) {
 
         while((downstream = instance->downstreams[i++]) != NULL) {
                 if(strcasecmp(downstream->name, name) == 0) {
-                        skygw_log_write(LOGFILE_TRACE, "shardfilter: found %s", name);
+                        skygw_log_write(LOGFILE_TRACE, "shards: found %s", name);
                         return downstream;
                 }
         }
@@ -276,10 +307,10 @@ static int shards_find_shard(SHARD_ROUTER *instance, long long int account_id) {
         long long int shard_id = (long long int) hashtable_fetch(handle->accounts, (void *) account_id);
 
         if(shard_id == 0) {
-                skygw_log_write(LOGFILE_TRACE, "shardfilter: could not find shard id for account %d", account_id);
+                skygw_log_write(LOGFILE_TRACE, "shards: could not find shard id for account %d", account_id);
                 return 0;
         } else {
-                skygw_log_write(LOGFILE_TRACE, "shardfilter: found shard_id %d for account %d", shard_id, account_id);
+                skygw_log_write(LOGFILE_TRACE, "shards: found shard_id %d for account %d", shard_id, account_id);
                 return shard_id;
         }
 }
@@ -299,4 +330,15 @@ static void shards_set_downstream(SHARD_SESSION *shard_session, SESSION *session
         shard_session->downstream.service = session->service;
         shard_session->downstream.router_session = session->router_session;
         shard_session->downstream.router_instance = (ROUTER *) ((ROUTER_CLIENT_SES *) session->router_session)->router;
+}
+
+static int shards_send_error(SHARD_SESSION *shard_session, char *errmsg) {
+        GWBUF *err = modutil_create_mysql_err_msg(1, 0, 1046, "3D000", errmsg);
+
+        DCB *client = shard_session->client_session->client;
+        int retval = client->func.write(client, err);
+
+        gwbuf_free(err);
+
+        return retval;
 }

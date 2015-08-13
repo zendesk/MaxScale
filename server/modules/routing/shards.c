@@ -354,6 +354,7 @@ static bool shards_switch_session(SHARD_SESSION *shard_session, SERVICE *service
         downstream.session->client = NULL;
         shards_close_downstream_session(downstream);
         shards_free_downstream(downstream);
+        session_free(downstream.session);
 
         shards_set_downstream(shard_session, new_session);
 

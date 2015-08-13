@@ -59,6 +59,7 @@ typedef struct {
 static SERVICE *shards_service_for_shard(SHARD_ROUTER *, char *);
 static int shards_find_shard(SHARD_ROUTER *, long long int);
 static int shards_find_account(char *, int);
+static void shards_free_downstream(SESSION *);
 
 char *version() {
         return version_str;
@@ -148,21 +149,13 @@ static void closeSession(ROUTER *instance, void *session) {
 
         // Make sure the downstream is "STOPPING"
         downstream->state = SESSION_STATE_STOPPING;
-
         downstream_service->router->closeSession(router_instance, (void *) router_session);
 }
 
 static void freeSession(ROUTER *instance, void *session) {
         SHARD_SESSION *shard_session = (SHARD_SESSION *) session;
 
-        SESSION *downstream = shard_session->downstream;
-        SERVICE *downstream_service = downstream->service;
-        ROUTER_CLIENT_SES *router_session = (ROUTER_CLIENT_SES *) downstream->router_session;
-        ROUTER *router_instance = (ROUTER *) router_session->router;
-
-        downstream_service->router->freeSession(router_instance, (void *) router_session);;
-
-        // ? free(downstream);
+        shards_free_downstream(shard_session->downstream);
         free(shard_session);
 }
 
@@ -209,11 +202,7 @@ static int routeQuery(ROUTER *instance, void *session, GWBUF *queue) {
                                         current_downstream->client = NULL;
                                         current_downstream->state = SESSION_STATE_STOPPING;
                                         current_downstream_service->router->closeSession(current_router_instance, (void *) current_router_session);
-
-                                        // TODO memory leak!?
-                                        // readwritesplit closes its underlying backend DCBs, but they're still included in the refcount
-                                        // session_unlink_dcb is never called, so session_free's refcount check fails
-                                        // session_free(current_downstream);
+                                        shards_free_downstream(current_downstream);
 
                                         shard_session->downstream = new_session;
                                         shard_session->shard_id = shard_id;
@@ -299,4 +288,12 @@ static int shards_find_shard(SHARD_ROUTER *instance, long long int account_id) {
                 skygw_log_write(LOGFILE_TRACE, "shardfilter: found shard_id %d for account %d", shard_id, account_id);
                 return shard_id;
         }
+}
+
+static void shards_free_downstream(SESSION *downstream) {
+        SERVICE *downstream_service = downstream->service;
+        ROUTER_CLIENT_SES *router_session = (ROUTER_CLIENT_SES *) downstream->router_session;
+        ROUTER *router_instance = (ROUTER *) router_session->router;
+
+        downstream_service->router->freeSession(router_instance, (void *) router_session);
 }

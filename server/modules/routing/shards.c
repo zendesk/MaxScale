@@ -71,6 +71,7 @@ static void shards_close_downstream_session(SHARD_DOWNSTREAM);
 static void shards_set_downstream(SHARD_SESSION *, SESSION *);
 static int shards_send_error(SHARD_SESSION *, char *);
 static bool shards_switch_session(SHARD_SESSION *, SERVICE *);
+static int shards_dcb_write(DCB *, GWBUF *);
 
 char *version() {
         return version_str;
@@ -153,8 +154,7 @@ static void *newSession(ROUTER *instance, SESSION *session) {
                 return NULL;
         }
 
-        cloned_dcb->func.write = original_dcb->func.write;
-        cloned_dcb->fd = original_dcb->fd;
+        spinlock_acquire(&cloned_dcb->writeqlock);
 
         // Set a default downstream
         SESSION *downstream = session_alloc(router->downstreams[0], cloned_dcb);
@@ -166,20 +166,19 @@ static void *newSession(ROUTER *instance, SESSION *session) {
         }
 
         SHARD_SESSION *shard_session = calloc(1, sizeof(SHARD_SESSION));
-        shards_set_downstream(shard_session, downstream);
-        shard_session->shard_id = 0;
         shard_session->client_session = session;
+
+        shards_set_downstream(shard_session, downstream);
+
+        cloned_dcb->func.write = shards_dcb_write;
+
+        spinlock_release(&cloned_dcb->writeqlock);
 
         return (SESSION *) shard_session;
 }
 
 static void closeSession(ROUTER *instance, void *session) {
         SHARD_SESSION *shard_session = (SHARD_SESSION *) session;
-
-        // The cloned DCB has the same FD so it will get closed twice
-        // Still results in a "epoll_ctl could not remove, not found" error, since that
-        // happens before we ever reach here, but this is deemed non-fatal inside poll_resolve_error
-        shard_session->client_session->client->fd = DCBFD_CLOSED;
 
         shards_close_downstream_session(shard_session->downstream);
 }
@@ -243,13 +242,9 @@ static int routeQuery(ROUTER *instance, void *session, GWBUF *queue) {
                         // but just generically replaces the GWBUF data
                         bufdata[4] = MYSQL_COM_QUERY;
 
-                        GWBUF *modded_buf = modutil_replace_SQL(queue, shard_database_id);
+                        queue = modutil_replace_SQL(queue, shard_database_id);
+                        queue = gwbuf_make_contiguous(queue);
 
-                        if(modded_buf != queue) {
-                                gwbuf_free(queue);
-                        }
-
-                        queue = gwbuf_make_contiguous(modded_buf);
                         ((uint8_t *) queue->start)[4] = MYSQL_COM_INIT_DB;
                 } else if(shard_session->downstream.service != shard_router->downstreams[0]) {
                         if(!shards_switch_session(shard_session, shard_router->downstreams[0])) {
@@ -337,10 +332,14 @@ static void shards_close_downstream_session(SHARD_DOWNSTREAM downstream) {
 }
 
 static void shards_set_downstream(SHARD_SESSION *shard_session, SESSION *session) {
+        session->parent = shard_session->client_session;
+
         shard_session->downstream.session = session;
         shard_session->downstream.service = session->service;
         shard_session->downstream.router_session = session->router_session;
-        shard_session->downstream.router_instance = (ROUTER *) ((ROUTER_CLIENT_SES *) session->router_session)->router;
+
+        ROUTER_CLIENT_SES *router_session = (ROUTER_CLIENT_SES *) session->router_session;
+        shard_session->downstream.router_instance = (ROUTER *) router_session->router;
 }
 
 static int shards_send_error(SHARD_SESSION *shard_session, char *errmsg) {
@@ -367,4 +366,12 @@ static bool shards_switch_session(SHARD_SESSION *shard_session, SERVICE *service
         shards_set_downstream(shard_session, new_session);
 
         return true;
+}
+
+static int shards_dcb_write(DCB *dcb, GWBUF *queue) {
+        SESSION *session = dcb->session;
+        SESSION *parent = session->parent;
+        DCB *actual_dcb = parent->client;
+
+        return actual_dcb->func.write(actual_dcb, queue);
 }

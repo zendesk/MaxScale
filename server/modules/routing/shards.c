@@ -49,9 +49,16 @@ typedef struct {
 } SHARD_ROUTER;
 
 typedef struct {
+        SESSION *session;
+        SERVICE *service;
+        void *router_session;
+        ROUTER *router_instance;
+} SHARD_DOWNSTREAM;
+
+typedef struct {
         SESSION *client_session;
 
-        SESSION *downstream;
+        SHARD_DOWNSTREAM downstream;
 
         int shard_id;
 } SHARD_SESSION;
@@ -59,7 +66,9 @@ typedef struct {
 static SERVICE *shards_service_for_shard(SHARD_ROUTER *, char *);
 static int shards_find_shard(SHARD_ROUTER *, long long int);
 static int shards_find_account(char *, int);
-static void shards_free_downstream(SESSION *);
+static void shards_free_downstream(SHARD_DOWNSTREAM);
+static void shards_close_downstream_session(SHARD_DOWNSTREAM);
+static void shards_set_downstream(SHARD_SESSION *, SESSION *);
 
 char *version() {
         return version_str;
@@ -132,7 +141,7 @@ static void *newSession(ROUTER *instance, SESSION *session) {
         SESSION *downstream = session_alloc(router->downstreams[0], cloned_dcb);
         // TODO null
 
-        shard_session->downstream = downstream;
+        shards_set_downstream(shard_session, downstream);
         shard_session->shard_id = 0;
         shard_session->client_session = session;
 
@@ -141,15 +150,7 @@ static void *newSession(ROUTER *instance, SESSION *session) {
 
 static void closeSession(ROUTER *instance, void *session) {
         SHARD_SESSION *shard_session = (SHARD_SESSION *) session;
-
-        SESSION *downstream = shard_session->downstream;
-        SERVICE *downstream_service = downstream->service;
-        ROUTER_CLIENT_SES *router_session = (ROUTER_CLIENT_SES *) downstream->router_session;
-        ROUTER *router_instance = (ROUTER *) router_session->router;
-
-        // Make sure the downstream is "STOPPING"
-        downstream->state = SESSION_STATE_STOPPING;
-        downstream_service->router->closeSession(router_instance, (void *) router_session);
+        shards_close_downstream_session(shard_session->downstream);
 }
 
 static void freeSession(ROUTER *instance, void *session) {
@@ -162,6 +163,7 @@ static void freeSession(ROUTER *instance, void *session) {
 static int routeQuery(ROUTER *instance, void *session, GWBUF *queue) {
         SHARD_ROUTER *shard_router = (SHARD_ROUTER *) instance;
         SHARD_SESSION *shard_session = (SHARD_SESSION *) session;
+        SHARD_DOWNSTREAM downstream = shard_session->downstream;
 
         uint8_t *bufdata = GWBUF_DATA(queue);
 
@@ -185,13 +187,8 @@ static int routeQuery(ROUTER *instance, void *session, GWBUF *queue) {
                                         shard_database_id = service->name;
                                 }
 
-                                SESSION *current_downstream = shard_session->downstream;
-                                SERVICE *current_downstream_service = current_downstream->service;
-
-                                if(service != current_downstream_service) {
-                                        ROUTER_CLIENT_SES *current_router_session = (ROUTER_CLIENT_SES *) current_downstream->router_session;
-                                        ROUTER *current_router_instance = (ROUTER *) current_router_session->router;
-                                        SESSION *new_session = session_alloc(service, current_downstream->client);
+                                if(service != downstream.service) {
+                                        SESSION *new_session = session_alloc(service, downstream.session->client);
 
                                         if(new_session == NULL) {
                                                 // TODO
@@ -199,12 +196,14 @@ static int routeQuery(ROUTER *instance, void *session, GWBUF *queue) {
 
                                         CHK_SESSION(new_session);
 
-                                        current_downstream->client = NULL;
-                                        current_downstream->state = SESSION_STATE_STOPPING;
-                                        current_downstream_service->router->closeSession(current_router_instance, (void *) current_router_session);
-                                        shards_free_downstream(current_downstream);
+                                        downstream.session->client = NULL;
+                                        shards_close_downstream_session(downstream);
+                                        shards_free_downstream(downstream);
 
-                                        shard_session->downstream = new_session;
+                                        shards_set_downstream(shard_session, new_session);
+                                        // Make sure routeQuery is called on the right downstream
+                                        downstream = shard_session->downstream;
+
                                         shard_session->shard_id = shard_id;
                                 }
 
@@ -220,12 +219,7 @@ static int routeQuery(ROUTER *instance, void *session, GWBUF *queue) {
                 }
         }
 
-        SESSION *downstream = shard_session->downstream;
-        SERVICE *downstream_service = downstream->service;
-        ROUTER_CLIENT_SES *router_session = (ROUTER_CLIENT_SES *) downstream->router_session;
-        ROUTER *router_instance = (ROUTER *) router_session->router;
-
-        return downstream_service->router->routeQuery(router_instance, (void *) router_session, queue);
+        return downstream.service->router->routeQuery(downstream.router_instance, downstream.router_session, queue);
 }
 
 void clientReply(ROUTER *instance, void *session, GWBUF *queue, DCB *backend_dcb) {
@@ -290,10 +284,19 @@ static int shards_find_shard(SHARD_ROUTER *instance, long long int account_id) {
         }
 }
 
-static void shards_free_downstream(SESSION *downstream) {
-        SERVICE *downstream_service = downstream->service;
-        ROUTER_CLIENT_SES *router_session = (ROUTER_CLIENT_SES *) downstream->router_session;
-        ROUTER *router_instance = (ROUTER *) router_session->router;
+static void shards_free_downstream(SHARD_DOWNSTREAM downstream) {
+        downstream.service->router->freeSession(downstream.router_instance, downstream.router_session);
+}
 
-        downstream_service->router->freeSession(router_instance, (void *) router_session);
+static void shards_close_downstream_session(SHARD_DOWNSTREAM downstream) {
+        // Make sure the downstream is "STOPPING"
+        downstream.session->state = SESSION_STATE_STOPPING;
+        downstream.service->router->closeSession(downstream.router_instance, downstream.router_session);
+}
+
+static void shards_set_downstream(SHARD_SESSION *shard_session, SESSION *session) {
+        shard_session->downstream.session = session;
+        shard_session->downstream.service = session->service;
+        shard_session->downstream.router_session = session->router_session;
+        shard_session->downstream.router_instance = (ROUTER *) ((ROUTER_CLIENT_SES *) session->router_session)->router;
 }

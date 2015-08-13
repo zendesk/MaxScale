@@ -471,8 +471,8 @@ static void account_monitor_consume(ACCOUNT_MONITOR *handle, rd_kafka_message_t 
                 return;
         }
 
-        uint32_t id = YAJL_GET_INTEGER(id_node);
-        uint32_t shard_id = YAJL_GET_INTEGER(shard_id_node);
+        uintptr_t id = YAJL_GET_INTEGER(id_node);
+        uintptr_t shard_id = YAJL_GET_INTEGER(shard_id_node);
 
         hashtable_delete(handle->accounts, (void *) id);
         hashtable_add(handle->accounts, (void *) id, (void *) shard_id);
@@ -530,7 +530,7 @@ static int account_monitor_hash(void *key) {
         if(key == NULL)
                 return 0;
 
-        return ((uint32_t) key) % 10000;
+        return ((uintptr_t) key) % 10000;
 }
 
 static int account_monitor_compare(void *v1, void *v2) {
@@ -541,13 +541,13 @@ static int account_monitor_compare(void *v1, void *v2) {
   }
 }
 
-uint32_t account_monitor_find_shard(ACCOUNT_MONITOR *handle, uint32_t account_id) {
+uintptr_t account_monitor_find_shard(ACCOUNT_MONITOR *handle, uintptr_t account_id) {
         if(handle->accounts == NULL)
                 return 0;
 
         int i = 0, *account;
 
-        uint32_t shard_id = (uint32_t) hashtable_fetch(handle->accounts, (void *) account_id);
+        uintptr_t shard_id = (uintptr_t) hashtable_fetch(handle->accounts, (void *) account_id);
 
         if(shard_id == 0) {
                 skygw_log_write(LOGFILE_TRACE, "account_mon: could not find shard id for account %d", account_id);

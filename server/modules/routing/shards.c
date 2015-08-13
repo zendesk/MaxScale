@@ -60,12 +60,12 @@ typedef struct {
 
         SHARD_DOWNSTREAM downstream;
 
-        uint32_t shard_id;
+        uintptr_t shard_id;
 } SHARD_SESSION;
 
 static SERVICE *shards_service_for_shard(SHARD_ROUTER *, char *);
-static uint32_t shards_find_shard(SHARD_ROUTER *, uint32_t);
-static int shards_find_account(char *, int);
+static uintptr_t shards_find_shard(SHARD_ROUTER *, uintptr_t);
+static uintptr_t shards_find_account(char *, int);
 static void shards_free_downstream(SHARD_DOWNSTREAM);
 static void shards_close_downstream_session(SHARD_DOWNSTREAM);
 static void shards_set_downstream(SHARD_SESSION *, SESSION *);
@@ -199,16 +199,16 @@ static int routeQuery(ROUTER *instance, void *session, GWBUF *queue) {
 
         if(MYSQL_GET_COMMAND(bufdata) == MYSQL_COM_INIT_DB) {
                 unsigned int qlen = MYSQL_GET_PACKET_LEN(bufdata);
-                int account_id;
+                uintptr_t account_id;
 
                 if(qlen > 8 && qlen < MYSQL_DATABASE_MAXLEN + 1 && (account_id = shards_find_account((char *) bufdata + 5, qlen)) > 0) {
-                        uint32_t shard_id = shards_find_shard(shard_router, account_id);
+                        uintptr_t shard_id = shards_find_shard(shard_router, account_id);
 
                         if(shard_id < 1) {
                                 gwbuf_free(queue);
 
                                 char errmsg[2048];
-                                snprintf((char *) &errmsg, 2048, "Could not find shard for account %d", account_id);
+                                snprintf((char *) &errmsg, 2048, "Could not find shard for account %" PRIuPTR, account_id);
                                 return shards_send_error(shard_session, errmsg);
                         }
 
@@ -223,7 +223,7 @@ static int routeQuery(ROUTER *instance, void *session, GWBUF *queue) {
                                 gwbuf_free(queue);
 
                                 char errmsg[2048];
-                                snprintf((char *) &errmsg, 2048, "Could not find shard %d for account %d", shard_id, account_id);
+                                snprintf((char *) &errmsg, 2048, "Could not find shard %" PRIuPTR " for account %" PRIuPTR, shard_id, account_id);
                                 return shards_send_error(shard_session, errmsg);
                         }
 
@@ -231,7 +231,7 @@ static int routeQuery(ROUTER *instance, void *session, GWBUF *queue) {
                                 if(!shards_switch_session(shard_session, service)) {
                                         gwbuf_free(queue);
                                         char errmsg[2048];
-                                        snprintf((char *) &errmsg, 2048, "Error allocating new session for shard %d", shard_id);
+                                        snprintf((char *) &errmsg, 2048, "Error allocating new session for shard %" PRIuPTR, shard_id);
                                         return shards_send_error(shard_session, errmsg);
                                 }
 
@@ -289,8 +289,8 @@ static SERVICE *shards_service_for_shard(SHARD_ROUTER *instance, char *name) {
         return NULL;
 }
 
-static int shards_find_account(char *bufdata, int qlen) {
-        int account_id = 0;
+static uintptr_t shards_find_account(char *bufdata, int qlen) {
+        uintptr_t account_id = 0;
         char database_name[qlen];
         strncpy(database_name, bufdata, qlen - 1);
         database_name[qlen - 1] = 0;
@@ -302,7 +302,7 @@ static int shards_find_account(char *bufdata, int qlen) {
         return account_id;
 }
 
-static uint32_t shards_find_shard(SHARD_ROUTER *instance, uint32_t account_id) {
+static uintptr_t shards_find_shard(SHARD_ROUTER *instance, uintptr_t account_id) {
         if(instance->account_monitor == NULL)
                 return 0;
 

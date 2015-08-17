@@ -479,10 +479,12 @@ static void account_monitor_free(ACCOUNT_MONITOR *handle) {
         }
 
         if(handle->topic != NULL) {
-                for(int i = 0; i < handle->metadata->topics[0].partition_cnt; i++) {
-                        int partition = handle->metadata->topics[0].partitions[i].id;
-                        // TODO err?
-                        rd_kafka_consume_stop(handle->topic, partition);
+                if(handle->metadata != NULL) {
+                        for(int i = 0; i < handle->metadata->topics[0].partition_cnt; i++) {
+                                int partition = handle->metadata->topics[0].partitions[i].id;
+                                // TODO err?
+                                rd_kafka_consume_stop(handle->topic, partition);
+                        }
                 }
 
                 rd_kafka_topic_destroy(handle->topic);

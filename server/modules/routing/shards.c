@@ -160,8 +160,8 @@ static void *newSession(ROUTER *instance, SESSION *session) {
         SESSION *downstream = session_alloc(router->downstreams[0], cloned_dcb);
 
         if(downstream == NULL) {
+                // XXX DCB is added to the zombie queue and freed from there?
                 skygw_log_write(LOGFILE_ERROR, "shards: error allocating default downstream session");
-                dcb_free(cloned_dcb);
                 return NULL;
         }
 

@@ -151,6 +151,11 @@ static char *get_kafka_brokerlist(ACCOUNT_MONITOR *handle) {
                         int previous_size = brokers == NULL ? 0 : strlen(brokers);
                         // strlen + , + strlen + \0
                         int len = previous_size + strlen(host_buffer) + 1;
+
+                        // for the comma
+                        if(previous_size > 0)
+                                len++;
+
                         char *new_brokers = malloc(len);
 
                         if(new_brokers == NULL) {

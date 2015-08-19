@@ -194,6 +194,7 @@ static void watcher(zhandle_t *zookeeper, int type, int state, const char *path,
 
                 if(brokers != NULL) {
                         rd_kafka_brokers_add(handle->connection, brokers);
+                        free(brokers);
                 }
         }
 }
@@ -343,6 +344,7 @@ static int init_kafka(ACCOUNT_MONITOR *handle) {
 
         if(brokers != NULL) {
                 rd_kafka_brokers_add(handle->connection, brokers);
+                free(brokers);
         }
 
         rd_kafka_topic_conf_t *topic_configuration = rd_kafka_topic_conf_new();
@@ -478,11 +480,6 @@ static void account_monitor_consume(ACCOUNT_MONITOR *handle, rd_kafka_message_t 
 static void account_monitor_free(ACCOUNT_MONITOR *handle) {
         handle->status = MONITOR_STOPPED;
 
-        if(handle->queue != NULL) {
-                rd_kafka_queue_destroy(handle->queue);
-                handle->queue = NULL;
-        }
-
         if(handle->topic != NULL) {
                 if(handle->metadata != NULL) {
                         for(int i = 0; i < handle->metadata->topics[0].partition_cnt; i++) {
@@ -499,6 +496,11 @@ static void account_monitor_free(ACCOUNT_MONITOR *handle) {
         if(handle->connection != NULL) {
                 rd_kafka_destroy(handle->connection);
                 handle->connection = NULL;
+        }
+
+        if(handle->queue != NULL) {
+                rd_kafka_queue_destroy(handle->queue);
+                handle->queue = NULL;
         }
 
         if(handle->zookeeper != NULL) {

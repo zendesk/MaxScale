@@ -315,10 +315,18 @@ static uintptr_t shards_find_shard(SHARD_ROUTER *instance, uintptr_t account_id)
 
 static void shards_free_downstream(SHARD_DOWNSTREAM downstream) {
         downstream.service->router->freeSession(downstream.router_instance, downstream.router_session);
+
+        session_free(downstream.session);
+
+        // This is in session_free, but ... why?
+        // downstream.session->state = SESSION_STATE_FREE;
+
+        free(downstream.session);
 }
 
 static void shards_close_downstream_session(SHARD_DOWNSTREAM downstream) {
         // Make sure the downstream is "STOPPING"
+        downstream.session->client = NULL;
         downstream.session->state = SESSION_STATE_STOPPING;
         downstream.service->router->closeSession(downstream.router_instance, downstream.router_session);
 }
@@ -351,10 +359,8 @@ static bool shards_switch_session(SHARD_SESSION *shard_session, SERVICE *service
 
         CHK_SESSION(new_session);
 
-        downstream.session->client = NULL;
         shards_close_downstream_session(downstream);
         shards_free_downstream(downstream);
-        session_free(downstream.session);
 
         shards_set_downstream(shard_session, new_session);
 

@@ -210,7 +210,7 @@ static int routeQuery(ROUTER *instance, void *session, GWBUF *queue) {
                                 return shards_send_error(shard_session, errmsg);
                         }
 
-                        char *shard_database_id = alloca(sizeof(char) * (MYSQL_DATABASE_MAXLEN + 1));
+                        char shard_database_id[MYSQL_DATABASE_MAXLEN + 1];
                         snprintf(shard_database_id, MYSQL_DATABASE_MAXLEN, shard_router->shard_format, shard_id);
 
                         // find downstream

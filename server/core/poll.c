@@ -339,7 +339,7 @@ poll_add_dcb(DCB *dcb)
 int
 poll_remove_dcb(DCB *dcb)
 {
-        int                 rc = -1;
+        int                     dcbfd, rc = -1;
         struct	epoll_event	ev;
         CHK_DCB(dcb);
 
@@ -375,8 +375,11 @@ poll_remove_dcb(DCB *dcb)
          * only action for them is already done - the change of state to 
          * DCB_STATE_NOPOLLING.
          */		 
+        /*< Set bit for each maxscale thread */
+        bitmask_copy(&dcb->memdata.bitmask, poll_bitmask());
+        dcbfd = dcb->fd;
         spinlock_release(&dcb->dcb_initlock);
-        if (dcb->fd > 0) 
+        if (dcbfd > 0) 
         {
             rc = epoll_ctl(epoll_fd, EPOLL_CTL_DEL, dcb->fd, &ev);
             /**
@@ -386,8 +389,6 @@ poll_remove_dcb(DCB *dcb)
              */
             if (rc) rc = poll_resolve_error(dcb, errno, false);
             if (rc) raise(SIGABRT);
-            /*< Set bit for each maxscale thread */
-            bitmask_copy(&dcb->memdata.bitmask, poll_bitmask());
         }
         return rc;
 }
@@ -1645,17 +1646,21 @@ RESULT_ROW	*row;
 		resultset_row_set(row, 0, "< 100ms");
 	else if (*rowno == N_QUEUE_TIMES - 1)
 	{
-		sprintf(buf, "> %2d00ms", N_QUEUE_TIMES);
+		snprintf(buf,39, "> %2d00ms", N_QUEUE_TIMES);
+		buf[39] = '\0';
 		resultset_row_set(row, 0, buf);
 	}
 	else
 	{
-		sprintf(buf, "%2d00 - %2d00ms", *rowno, (*rowno) + 1);
+		snprintf(buf,39, "%2d00 - %2d00ms", *rowno, (*rowno) + 1);
+		buf[39] = '\0';
 		resultset_row_set(row, 0, buf);
 	}
-	sprintf(buf, "%d", queueStats.qtimes[*rowno]);
+	snprintf(buf,39, "%d", queueStats.qtimes[*rowno]);
+	buf[39] = '\0';
 	resultset_row_set(row, 1, buf);
-	sprintf(buf, "%d", queueStats.exectimes[*rowno]);
+	snprintf(buf,39, "%d", queueStats.exectimes[*rowno]);
+	buf[39] = '\0';
 	resultset_row_set(row, 2, buf);
 	(*rowno)++;
 	return row;

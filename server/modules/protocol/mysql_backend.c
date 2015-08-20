@@ -1143,7 +1143,6 @@ gw_backend_close(DCB *dcb)
         
         CHK_DCB(dcb);
         session = dcb->session;
-        CHK_SESSION(session);
 
 	LOGIF(LD, (skygw_log_write(LOGFILE_DEBUG,
 			"%lu [gw_backend_close]",
@@ -1164,6 +1163,7 @@ gw_backend_close(DCB *dcb)
 	 */
 	if(session != NULL)
 	{
+                CHK_SESSION(session);
 	    spinlock_acquire(&session->ses_lock);
 	    /**
 	     * If session->state is STOPPING, start closing client session.

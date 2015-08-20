@@ -11,7 +11,7 @@ target_link_libraries(telnetd log_manager utils)
 install(TARGETS telnetd DESTINATION ${MAXSCALE_LIBDIR})
 
 add_library(HTTPD SHARED httpd.c)
-target_link_libraries(HTTPD log_manager utils)
+target_link_libraries(HTTPD log_manager utils http_parser)
 install(TARGETS HTTPD DESTINATION ${MAXSCALE_LIBDIR})
 
 if(BUILD_TESTS)
@@ -23,8 +23,3 @@ endif()
 add_library(maxscaled SHARED maxscaled.c)
 target_link_libraries(maxscaled log_manager utils)
 install(TARGETS maxscaled DESTINATION ${MAXSCALE_LIBDIR})
-
-
-
-
-

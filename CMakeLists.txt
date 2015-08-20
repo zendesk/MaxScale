@@ -232,7 +232,6 @@ if(PACKAGE)
   if(${CMAKE_VERSION} VERSION_LESS 2.8.12)
     message(WARNING "CMake version is ${CMAKE_VERSION}. Building of packages requires version 2.8.12 or greater.")
   else()
-
     # Generic CPack configuration variables
     set(CPACK_STRIP_FILES FALSE)
     set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "MaxScale")

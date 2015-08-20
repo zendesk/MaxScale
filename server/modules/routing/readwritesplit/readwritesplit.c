@@ -1024,6 +1024,8 @@ static void closeSession(
                                 /** decrease server current connection counters */
                                 atomic_add(&bref->bref_backend->backend_server->stats.n_current, -1);
                                 atomic_add(&bref->bref_backend->backend_conn_count, -1);
+                                /** unlink dcb from session */
+                                session_unlink_dcb(dcb->session, dcb);
                         }
                 }
                 /** Unlock */

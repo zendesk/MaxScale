@@ -39,27 +39,36 @@
 #include <poll.h>
 #include <atomic.h>
 #include <gw.h>
+#include <http_parser.h>
 
-#define HTTPD_SMALL_BUFFER 1024
-#define HTTPD_METHOD_MAXLEN 128
-#define HTTPD_USER_MAXLEN 128
-#define HTTPD_HOSTNAME_MAXLEN 512
-#define HTTPD_USERAGENT_MAXLEN 1024
-#define HTTPD_FIELD_MAXLEN 8192
-#define HTTPD_REQUESTLINE_MAXLEN 8192
+#define HTTPD_SMALL_BUFFER 1024 * 80
+#define HTTPD_MAX_HEADER_LINES 2000
+
+struct httpd_header {
+        char *field;
+        size_t field_len;
+        char *value;
+        size_t value_len;
+};
 
 /**
  * HTTPD session specific data
  *
  */
 typedef struct httpd_session {
-        char user[HTTPD_USER_MAXLEN];			/*< username for authentication*/
-        char *cookies;					/*< all input cookies */
-        char hostname[HTTPD_HOSTNAME_MAXLEN];		/*< The hostname */
-        char useragent[HTTPD_USERAGENT_MAXLEN];		/*< The useragent */
-        char method[HTTPD_METHOD_MAXLEN];		/*< The HTTPD Method */
-	char *url;					/*< the URL in the request */
-	char *path_info;				/*< the Pathinfo, starts with /, is the extra path segments after the document name */
-	char *query_string;				/*< the Query string, starts with ?, after path_info and document name */
-	int headers_received;				/*< All the headers has been received, if 1 */
+        http_parser *parser;
+        struct http_parser_url *url_fields;
+
+        int method;
+
+        size_t url_len;
+	char *url;
+
+        size_t body_len;
+        char *body;
+
+        size_t headers_len;
+        struct httpd_header headers[HTTPD_MAX_HEADER_LINES];
 } HTTPD_session;
+
+void httpd_respond_error(DCB *, int, char *);

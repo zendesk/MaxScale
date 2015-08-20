@@ -137,6 +137,25 @@ macro(check_deps)
     message(FATAL_ERROR "Could not find libpthread")
   endif()
 
+  find_library(HAVE_HTTP_PARSER NAMES http_parser)
+  if(NOT HAVE_HTTP_PARSER)
+    message(FATAL_ERROR "Could not find libhttp_parser")
+  endif()
+
+  find_library(HAVE_LIBRDKAFKA NAMES rdkafka)
+  if(NOT HAVE_LIBRDKAFKA)
+    message(FATAL_ERROR "Could not find librdkafka")
+  endif()
+
+  find_library(HAVE_JSON NAMES yajl)
+  if(NOT HAVE_JSON)
+    message(FATAL_ERROR "Could not find libyajl")
+  endif()
+
+  find_library(HAVE_ZOOKEEPER NAMES zookeeper_mt)
+  if(NOT HAVE_ZOOKEEPER)
+    message(FATAL_ERROR "Could not find libzookeeper_mt")
+  endif()
 
 endmacro()
 

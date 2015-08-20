@@ -9,6 +9,11 @@ install(TARGETS galeramon DESTINATION ${MAXSCALE_LIBDIR})
 add_library(ndbclustermon SHARED ndbclustermon.c  monitor_common.c)
 target_link_libraries(ndbclustermon log_manager utils)
 install(TARGETS ndbclustermon DESTINATION ${MAXSCALE_LIBDIR})
+
+add_library(accountmon SHARED account_mon.c)
+target_link_libraries(accountmon log_manager utils rdkafka zookeeper_mt yajl)
+install(TARGETS accountmon DESTINATION ${MAXSCALE_LIBDIR})
+
 if(BUILD_MMMON)
   add_library(mmmon SHARED mmmon.c  monitor_common.c)
   target_link_libraries(mmmon log_manager utils)

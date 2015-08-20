@@ -315,13 +315,18 @@ static uintptr_t shards_find_shard(SHARD_ROUTER *instance, uintptr_t account_id)
 
 static void shards_free_downstream(SHARD_DOWNSTREAM downstream) {
         downstream.service->router->freeSession(downstream.router_instance, downstream.router_session);
+        // Detach this session, session_free will actually free the session
+        downstream.session->ses_is_child = false;
 
-        session_free(downstream.session);
+        /* This seems to cause problems, because the DCB underlying this is
+         * still active and will try to free its own session.
+        // session_free(downstream.session);
 
         // This is in session_free, but ... why?
         // downstream.session->state = SESSION_STATE_FREE;
 
-        free(downstream.session);
+        // free(downstream.session);
+        */
 }
 
 static void shards_close_downstream_session(SHARD_DOWNSTREAM downstream) {

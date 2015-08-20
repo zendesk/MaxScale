@@ -295,9 +295,18 @@ static int httpd_close(DCB *dcb) {
         HTTPD_session *session = dcb->data;
 
         if(session != NULL) {
-                free(session->body);
-                free(session->url);
-                free(session->url_fields);
+                if(session->body != NULL) {
+                        free(session->body);
+                }
+
+                if(session->url != NULL) {
+                        free(session->url);
+                }
+
+                if(session->url_fields != NULL) {
+                        free(session->url_fields);
+                }
+
                 free(session->parser);
 
                 // session is freed by session.c:452

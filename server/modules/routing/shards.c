@@ -261,7 +261,7 @@ static int routeQuery(ROUTER *instance, void *session, GWBUF *queue) {
         return downstream.service->router->routeQuery(downstream.router_instance, downstream.router_session, queue);
 }
 
-void clientReply(ROUTER *instance, void *session, GWBUF *queue, DCB *backend_dcb) {
+static void clientReply(ROUTER *instance, void *session, GWBUF *queue, DCB *backend_dcb) {
 }
 
 static void diagnostic(ROUTER *instance, DCB *dcb) {

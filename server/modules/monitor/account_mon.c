@@ -97,7 +97,8 @@ static char *get_kafka_brokerlist(ACCOUNT_MONITOR *handle) {
 
         char *brokers = NULL;
 
-        for(int i = 0; i < brokerlist.count; i++) {
+        int i;
+        for(i = 0; i < brokerlist.count; i++) {
                 size_t len = sizeof(brokerlist.data[i]);
                 char *path = malloc(sizeof("/brokers/ids/") + len + 1);
 
@@ -402,7 +403,8 @@ static void account_monitor_update_partitions(ACCOUNT_MONITOR *handle) {
                 return;
         }
 
-        for(int i = 0; i < metadata->topics[0].partition_cnt; i++) {
+        int i;
+        for(i = 0; i < metadata->topics[0].partition_cnt; i++) {
                 int partition = metadata->topics[0].partitions[i].id;
                 LOGIF(LM, (skygw_log_write(LOGFILE_MESSAGE, "Listening to partition %d", partition)));
 
@@ -482,7 +484,8 @@ static void account_monitor_free(ACCOUNT_MONITOR *handle) {
 
         if(handle->topic != NULL) {
                 if(handle->metadata != NULL) {
-                        for(int i = 0; i < handle->metadata->topics[0].partition_cnt; i++) {
+                        int i;
+                        for(i = 0; i < handle->metadata->topics[0].partition_cnt; i++) {
                                 int partition = handle->metadata->topics[0].partitions[i].id;
                                 // TODO err?
                                 rd_kafka_consume_stop(handle->topic, partition);

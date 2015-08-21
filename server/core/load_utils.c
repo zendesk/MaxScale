@@ -284,7 +284,7 @@ void	*handle;
 		return;
 	handle = mod->handle;
 	unregister_module(module);
-	dlclose(handle);
+	// dlclose(handle);
 }
 
 /**
@@ -361,7 +361,7 @@ MODULES	*ptr;
 	 * The module is now not in the linked list and all
 	 * memory related to it can be freed
 	 */
-	dlclose(mod->handle);
+	// dlclose(mod->handle);
 	free(mod->module);
 	free(mod->type);
 	free(mod->version);

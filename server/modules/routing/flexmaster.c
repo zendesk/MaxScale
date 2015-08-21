@@ -228,7 +228,7 @@ static void master_cut(FLEXMASTER_INSTANCE *flex_instance, DCB *dcb, HTTPD_sessi
         struct flexmaster_parameters params = {0};
 
         // parse_url_parameters modifies body using strsep
-        char *body = malloc(http_session->body_len);
+        char *body = malloc(http_session->body_len + 1);
         strncpy(body, http_session->body, http_session->body_len);
         parse_url_parameters(body, &params);
 

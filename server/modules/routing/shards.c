@@ -314,6 +314,7 @@ static uintptr_t shards_find_shard(SHARD_ROUTER *instance, uintptr_t account_id)
 }
 
 static void shards_free_downstream(SHARD_DOWNSTREAM downstream) {
+        // Backend DCBs need to be closed and will free the session
 }
 
 static void shards_close_downstream_session(SHARD_DOWNSTREAM downstream) {
@@ -323,6 +324,11 @@ static void shards_close_downstream_session(SHARD_DOWNSTREAM downstream) {
         downstream.session->ses_is_child = false;
         // We continue to pass this client around
         downstream.session->client = NULL;
+        // We don't want session_free removing our MYSQL_session
+        downstream.session->data = NULL;
+        // And we don't want the router session linking to it
+        session_unlink_dcb(downstream.session, NULL);
+
         downstream.service->router->closeSession(downstream.router_instance, downstream.router_session);
 }
 

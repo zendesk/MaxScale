@@ -320,6 +320,8 @@ static void shards_free_downstream(SHARD_DOWNSTREAM downstream) {
 static void shards_close_downstream_session(SHARD_DOWNSTREAM downstream) {
         // Make sure the downstream is "STOPPING"
         downstream.session->state = SESSION_STATE_STOPPING;
+        downstream.service->router->closeSession(downstream.router_instance, downstream.router_session);
+
         // Detach this session, session_free will actually free the session
         downstream.session->ses_is_child = false;
         // We continue to pass this client around
@@ -328,8 +330,6 @@ static void shards_close_downstream_session(SHARD_DOWNSTREAM downstream) {
         downstream.session->data = NULL;
         // And we don't want the router session linking to it
         session_unlink_dcb(downstream.session, NULL);
-
-        downstream.service->router->closeSession(downstream.router_instance, downstream.router_session);
 }
 
 static void shards_set_downstream(SHARD_SESSION *shard_session, SESSION *session) {

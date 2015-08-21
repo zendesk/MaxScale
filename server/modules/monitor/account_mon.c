@@ -384,7 +384,7 @@ static void monitorMain(void *arg) {
 
                 if(message == NULL) {
                         continue;
-                } else if(message->err != RD_KAFKA_RESP_ERR_NO_ERROR) {
+                } else if(message->err != RD_KAFKA_RESP_ERR_NO_ERROR && message->err != RD_KAFKA_RESP_ERR__PARTITION_EOF) {
                         LOGIF(LM, (skygw_log_write(LOGFILE_ERROR, "Error consuming message. %s", rd_kafka_err2str(message->err))));
                 } else {
                         account_monitor_consume(handle, message);

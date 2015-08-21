@@ -314,14 +314,13 @@ static uintptr_t shards_find_shard(SHARD_ROUTER *instance, uintptr_t account_id)
 }
 
 static void shards_free_downstream(SHARD_DOWNSTREAM downstream) {
-        // Detach this session, session_free will actually free the session
-        downstream.session->ses_is_child = false;
 }
 
 static void shards_close_downstream_session(SHARD_DOWNSTREAM downstream) {
         // Make sure the downstream is "STOPPING"
-        downstream.session->client = NULL;
         downstream.session->state = SESSION_STATE_STOPPING;
+        // Detach this session, session_free will actually free the session
+        downstream.session->ses_is_child = false;
         downstream.service->router->closeSession(downstream.router_instance, downstream.router_session);
 }
 

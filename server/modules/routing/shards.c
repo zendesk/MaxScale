@@ -320,16 +320,18 @@ static void shards_free_downstream(SHARD_DOWNSTREAM downstream) {
 static void shards_close_downstream_session(SHARD_DOWNSTREAM downstream) {
         // Make sure the downstream is "STOPPING"
         downstream.session->state = SESSION_STATE_STOPPING;
-        downstream.service->router->closeSession(downstream.router_instance, downstream.router_session);
-
         // Detach this session, session_free will actually free the session
         downstream.session->ses_is_child = false;
         // We continue to pass this client around
         downstream.session->client = NULL;
         // We don't want session_free removing our MYSQL_session
-        downstream.session->data = NULL;
+        MYSQL_session *new_session = calloc(1, sizeof(MYSQL_session));
+        memcpy(new_session, downstream.session->data, sizeof(MYSQL_session));
+        downstream.session->data = new_session;
         // And we don't want the router session linking to it
         session_unlink_dcb(downstream.session, NULL);
+
+        downstream.service->router->closeSession(downstream.router_instance, downstream.router_session);
 }
 
 static void shards_set_downstream(SHARD_SESSION *shard_session, SESSION *session) {
@@ -352,16 +354,18 @@ static int shards_send_error(SHARD_SESSION *shard_session, char *errmsg) {
 
 static bool shards_switch_session(SHARD_SESSION *shard_session, SERVICE *service) {
         SHARD_DOWNSTREAM downstream = shard_session->downstream;
-        SESSION *new_session = session_alloc(service, downstream.session->client);
+        DCB *cloned_dcb = downstream.session->client;
+
+        shards_close_downstream_session(downstream);
+        shards_free_downstream(downstream);
+
+        SESSION *new_session = session_alloc(service, cloned_dcb);
 
         if(new_session == NULL) {
                 return false;
         }
 
         CHK_SESSION(new_session);
-
-        shards_close_downstream_session(downstream);
-        shards_free_downstream(downstream);
 
         shards_set_downstream(shard_session, new_session);
 

@@ -318,18 +318,30 @@ static void shards_free_downstream(SHARD_DOWNSTREAM downstream) {
 }
 
 static void shards_close_downstream_session(SHARD_DOWNSTREAM downstream) {
+        SESSION *session = downstream.session;
+
+        spinlock_acquire(&session->ses_lock);
+
+        if(session->state == SESSION_STATE_STOPPING || session->state == SESSION_STATE_TO_BE_FREED || session->state == SESSION_STATE_FREE) {
+                spinlock_release(&session->ses_lock);
+                return;
+        }
+
         // Make sure the downstream is "STOPPING"
-        downstream.session->state = SESSION_STATE_STOPPING;
+        session->state = SESSION_STATE_STOPPING;
         // Detach this session, session_free will actually free the session
-        downstream.session->ses_is_child = false;
+        session->ses_is_child = false;
         // We continue to pass this client around
-        downstream.session->client = NULL;
+        session->client = NULL;
         // We don't want session_free removing our MYSQL_session
         MYSQL_session *new_session = calloc(1, sizeof(MYSQL_session));
-        memcpy(new_session, downstream.session->data, sizeof(MYSQL_session));
-        downstream.session->data = new_session;
+        memcpy(new_session, session->data, sizeof(MYSQL_session));
+        session->data = new_session;
+
+        spinlock_release(&session->ses_lock);
+
         // And we don't want the router session linking to it
-        session_unlink_dcb(downstream.session, NULL);
+        session_unlink_dcb(session, NULL);
 
         downstream.service->router->closeSession(downstream.router_instance, downstream.router_session);
 }

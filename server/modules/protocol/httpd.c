@@ -420,7 +420,7 @@ static int on_header_field(http_parser *parser, const char *at, size_t length) {
         DCB *dcb = parser->data;
         HTTPD_session *session = dcb->data;
 
-        if(last_header_was_value != 0) {
+        if(last_header_was_value != 0 || CURRENT_HEADER->field == NULL) {
                 session->headers_len++;
 
                 if(session->headers_len == HTTPD_MAX_HEADER_LINES) {
@@ -432,7 +432,6 @@ static int on_header_field(http_parser *parser, const char *at, size_t length) {
                 CURRENT_HEADER->field = malloc(length + 1);
 
                 strncpy(CURRENT_HEADER->field, at, length);
-
         } else {
                 assert(CURRENT_HEADER->value_len == 0);
                 assert(CURRENT_HEADER->value == NULL);
@@ -459,7 +458,6 @@ static int on_header_value(http_parser *parser, const char *at, size_t length) {
                 CURRENT_HEADER->value = malloc(length + 1);
 
                 strncpy(CURRENT_HEADER->value, at, length);
-
         } else {
                 CURRENT_HEADER->value_len += length;
                 CURRENT_HEADER->value = realloc(CURRENT_HEADER->value, CURRENT_HEADER->value_len + 1);

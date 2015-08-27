@@ -233,6 +233,7 @@ static int gw_read_backend_event(DCB *dcb) {
                         } 
                         else
                         {
+                                spinlock_acquire(&dcb->session->ses_lock);
                                 /** 
 				 * Decode password and send the auth credentials
 				 * to backend.
@@ -256,6 +257,7 @@ static int gw_read_backend_event(DCB *dcb) {
                                 {
                                         backend_protocol->protocol_auth_state = MYSQL_AUTH_RECV;
                                 }
+                                spinlock_release(&dcb->session->ses_lock);
                         }
                 }
                 spinlock_release(&dcb->authlock);

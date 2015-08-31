@@ -4191,16 +4191,12 @@ static bool execute_sescmd_in_backend(
 			MYSQL_session* data;
 			unsigned int qlen;
 
-                        spinlock_acquire(&dcb->authlock);
-
 			data = dcb->session->data;
 			tmpbuf = scur->scmd_cur_cmd->my_sescmd_buf;
 			qlen = MYSQL_GET_PACKET_LEN((unsigned char*)tmpbuf->start);
 			memset(data->db,0,MYSQL_DATABASE_MAXLEN+1);
 			if(qlen > 0 && qlen < MYSQL_DATABASE_MAXLEN+1)
 				strncpy(data->db,tmpbuf->start+5,qlen - 1);			
-
-                        spinlock_release(&dcb->authlock);
 		}
 		/** Fallthrough */
 		case MYSQL_COM_QUERY:

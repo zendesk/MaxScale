@@ -4208,6 +4208,9 @@ static bool execute_sescmd_in_backend(
 			/**
 			 * Record database name and store to session.
 			 */
+
+                        spinlock_acquire(&dcb->session->ses_lock);
+
 			GWBUF* tmpbuf;
 			MYSQL_session* data;
 			unsigned int qlen;
@@ -4218,6 +4221,8 @@ static bool execute_sescmd_in_backend(
 			memset(data->db,0,MYSQL_DATABASE_MAXLEN+1);
 			if(qlen > 0 && qlen < MYSQL_DATABASE_MAXLEN+1)
 				strncpy(data->db,tmpbuf->start+5,qlen - 1);			
+
+                        spinlock_release(&dcb->session->ses_lock);
 		}
 		/** Fallthrough */
 		case MYSQL_COM_QUERY:

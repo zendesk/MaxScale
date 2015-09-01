@@ -193,6 +193,29 @@ static int routeQuery(ROUTER *instance, void *session, GWBUF *queue) {
         SHARD_ROUTER *shard_router = (SHARD_ROUTER *) instance;
         SHARD_SESSION *shard_session = (SHARD_SESSION *) session;
 
+        // This is stolen from readwritesplit.c
+        // Packets can come in incomplete, so we need to try
+        // and reconstruct them before processing or pushing off until
+        // more data comes in
+        if(GWBUF_IS_TYPE_UNDEFINED(queue)) {
+                GWBUF *tmpqueue = queue;
+
+                do {
+                        if((queue = modutil_get_next_MySQL_packet(&tmpqueue)) == NULL) {
+                                if (GWBUF_LENGTH(tmpqueue) > 0) {
+                                        DCB *dcb = shard_session->client_session->client;
+                                        dcb->dcb_readqueue = gwbuf_append(dcb->dcb_readqueue, tmpqueue);
+                                }
+
+                                // We haven't read the complete packet, re-append to the readqueue and return
+                                return 1;
+                        }
+
+                        gwbuf_set_type(queue, GWBUF_TYPE_MYSQL);
+                        gwbuf_set_type(queue, GWBUF_TYPE_SINGLE_STMT);
+                } while(tmpqueue != NULL);			
+        }
+
         uint8_t *bufdata = GWBUF_DATA(queue);
 
         if(MYSQL_GET_COMMAND(bufdata) == MYSQL_COM_INIT_DB) {

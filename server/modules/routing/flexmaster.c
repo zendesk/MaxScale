@@ -265,11 +265,11 @@ static void master_cut(FLEXMASTER_INSTANCE *flex_instance, DCB *dcb, HTTPD_sessi
                 if(rehome(&params) != 0) {
                         goto error;
                 }
-        }
 
-        if(params.start_slave) {
-                if(start_slave(&params) != 0) {
-                        goto error;
+                if(params.start_slave) {
+                        if(start_slave(&params) != 0) {
+                                goto error;
+                        }
                 }
         }
 
@@ -643,14 +643,14 @@ static int parse_host_and_port(char *str, char **host, unsigned int *port) {
         *host = strsep(&str, ":");
 
         if(host == NULL || str == NULL) {
-                error("Error: could not grab host and port from old master address");
+                error("Error: could not grab host and port from address");
                 return 1;
         }
 
         *port = strtol(str, NULL, 0);
 
         if(*port == 0) {
-                error("Error: could not grab port from old master address");
+                error("Error: could not grab port from address");
                 return 1;
         }
 

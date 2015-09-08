@@ -386,6 +386,8 @@ static int unlock(FLEXMASTER_INSTANCE *instance, struct flexmaster_parameters *p
                         ROUTER_CLIENT_SES *router_session = dcb->session->router_session;
                         spinlock_acquire(&router_session->rses_lock);
 
+                        // Hack for readwritesplit master failover, we know what the master
+                        // should be, we just need the bref_backend_ref for it
                         int j;
                         for(j = 0; j < router_session->rses_nbackends; j++) {
                                 backend_ref_t* bref = &router_session->rses_backend_ref[j];
@@ -399,6 +401,8 @@ static int unlock(FLEXMASTER_INSTANCE *instance, struct flexmaster_parameters *p
                         spinlock_release(&router_session->rses_lock);
 
                         // vaguely copied from readwritesplit
+                        // run through each full packet and route it
+                        // (client would have to implement async for multiple queries?)
                         GWBUF *querybuf, *tmpbuf;
                         querybuf = tmpbuf = dcb->dcb_readqueue;
 
@@ -410,8 +414,8 @@ static int unlock(FLEXMASTER_INSTANCE *instance, struct flexmaster_parameters *p
                                         }
                                 }
 
+                                // go through the full filter chain too
                                 DOWNSTREAM head = dcb->session->head;
-
                                 head.routeQuery(head.instance, head.session, querybuf);
                         }
                 }

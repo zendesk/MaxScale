@@ -98,6 +98,7 @@ static ROUTER *createInstance(SERVICE *service, char **options) {
         }
 
         SHARD_ROUTER *router = calloc(1, sizeof(SHARD_ROUTER));
+        // TODO: handle null
 
         router->shard_format = strdup(options[0]);
         router->account_monitor = monitor_find(options[1]);
@@ -281,7 +282,9 @@ static int routeQuery(ROUTER *instance, void *session, GWBUF *queue) {
         }
 
         SHARD_DOWNSTREAM downstream = shard_session->downstream;
-        return downstream.service->router->routeQuery(downstream.router_instance, downstream.router_session, queue);
+        DOWNSTREAM head = downstream.session->head;
+
+        return head.routeQuery(head.instance, head.session, queue);
 }
 
 static void clientReply(ROUTER *instance, void *session, GWBUF *queue, DCB *backend_dcb) {

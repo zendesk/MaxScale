@@ -18,7 +18,7 @@ target_link_libraries(cli log_manager)
 install(TARGETS cli DESTINATION ${MAXSCALE_LIBDIR})
 
 add_library(flexmaster SHARED flexmaster.c)
-target_link_libraries(flexmaster log_manager utils HTTPD)
+target_link_libraries(flexmaster fullcore log_manager utils HTTPD)
 install(TARGETS flexmaster DESTINATION ${MAXSCALE_LIBDIR})
 
 add_library(shards SHARED shards.c)

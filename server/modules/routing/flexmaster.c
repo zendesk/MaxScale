@@ -17,6 +17,7 @@
 #include <httpd.h>
 #include <mysql.h>
 #include <flexmaster.h>
+#include <readwritesplit.h>
 
 MODULE_INFO info = {
         MODULE_API_ROUTER,
@@ -76,7 +77,7 @@ static void respond_error(FLEXMASTER_SESSION *, int, char *);
 static void master_cut(void *);
 static int preflight_check(struct flexmaster_parameters *);
 static int lock(FLEXMASTER_INSTANCE *);
-static int unlock(FLEXMASTER_INSTANCE *);
+static int unlock(FLEXMASTER_INSTANCE *, struct flexmaster_parameters *);
 static int swap(struct flexmaster_parameters *);
 static int rehome(struct flexmaster_parameters *);
 static int start_slave(struct flexmaster_parameters *);
@@ -325,7 +326,7 @@ static void master_cut(void *arg) {
                 }
         }
 
-        if(unlock(flex_instance) != 0) {
+        if(unlock(flex_instance, params) != 0) {
                 goto error;
         }
 
@@ -365,13 +366,38 @@ static int lock(FLEXMASTER_INSTANCE *instance) {
         return 0;
 }
 
-static int unlock(FLEXMASTER_INSTANCE *instance) {
-        if(instance->filter != NULL) {
-                spinlock_release(&instance->filter->transaction_lock);
+static int unlock(FLEXMASTER_INSTANCE *instance, struct flexmaster_parameters *params) {
+        // spinlock on new master status
+        // TODO timeout?
+        while(!SERVER_IS_MASTER(params->new_master_server));
 
+        if(instance->filter != NULL) {
                 DCB *dcb;
                 int i = 0;
+
+                // Lock the session?
+                // while((dcb = instance->filter->waiting_clients[i++]) != NULL) {
+                //}
+
+                spinlock_release(&instance->filter->transaction_lock);
+
+                i = 0;
                 while((dcb = instance->filter->waiting_clients[i++]) != NULL) {
+                        ROUTER_CLIENT_SES *router_session = dcb->session->router_session;
+                        spinlock_acquire(&router_session->rses_lock);
+
+                        int j;
+                        for(j = 0; j < router_session->rses_nbackends; j++) {
+                                backend_ref_t* bref = &router_session->rses_backend_ref[j];
+
+                                if(bref->bref_backend->backend_server == params->new_master_server) {
+                                        router_session->rses_master_ref = bref;
+                                        break;
+                                }
+                        }
+
+                        spinlock_release(&router_session->rses_lock);
+
                         // vaguely copied from readwritesplit
                         GWBUF *querybuf, *tmpbuf;
                         querybuf = tmpbuf = dcb->dcb_readqueue;
@@ -385,6 +411,7 @@ static int unlock(FLEXMASTER_INSTANCE *instance) {
                                 }
 
                                 DOWNSTREAM head = dcb->session->head;
+
                                 head.routeQuery(head.instance, head.session, querybuf);
                         }
                 }

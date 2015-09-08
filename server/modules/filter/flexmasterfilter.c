@@ -24,6 +24,7 @@ static void freeSession(FILTER *, void *);
 static void setDownstream(FILTER *, void *, DOWNSTREAM *);
 static int routeQuery(FILTER *, void *, GWBUF *);
 static void diagnostic(FILTER *, void *, DCB *);
+static void add_waiting_client(FLEXMASTER_FILTER_INSTANCE *, DCB *);
 
 static FILTER_OBJECT MyObject = {
         createInstance,
@@ -59,6 +60,7 @@ static FILTER *createInstance(char **options, FILTER_PARAMETER **params) {
 
         if((flex_instance = calloc(1, sizeof(FLEXMASTER_FILTER_INSTANCE))) != NULL) {
                 spinlock_init(&flex_instance->transaction_lock);
+                flex_instance->waiting_clients = calloc(1, sizeof(DCB *));
         }
 
         return (FILTER *) flex_instance;
@@ -96,6 +98,7 @@ static int routeQuery(FILTER *instance, void *session, GWBUF *queue) {
         // We want to hold this query, since a flexmaster swap is in progress
         if(!flex_session->transaction_active && SPINLOCK_IS_LOCKED(&flex_instance->transaction_lock)) {
                 flex_session->client->dcb_readqueue = gwbuf_append(queue, flex_session->client->dcb_readqueue);
+                add_waiting_client(flex_instance, flex_session->client);
 
                 return 1;
         }
@@ -116,4 +119,19 @@ static int routeQuery(FILTER *instance, void *session, GWBUF *queue) {
 }
 
 static void diagnostic(FILTER *instance, void *fsession, DCB *dcb) {
+}
+
+static void add_waiting_client(FLEXMASTER_FILTER_INSTANCE *flex_instance, DCB *client) {
+        DCB *dcb;
+        int i = 0;
+
+        while((dcb = flex_instance->waiting_clients[i++]) != NULL) {
+                if(dcb == client) {
+                        return;
+                }
+        }
+
+        flex_instance->waiting_clients = realloc(flex_instance->waiting_clients, (i + 1) * sizeof(DCB *));
+        flex_instance->waiting_clients[i - 1] = client;
+        flex_instance->waiting_clients[i] = NULL;
 }

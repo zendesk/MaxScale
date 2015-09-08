@@ -8,6 +8,7 @@
 #include <router.h>
 #include <modules.h>
 #include <modinfo.h>
+#include <modutil.h>
 #include <atomic.h>
 #include <dcb.h>
 #include <poll.h>
@@ -261,7 +262,7 @@ static int routeQuery(ROUTER *instance, void *session, GWBUF *queue) {
                                         // We just throw the thread into the ether, there's nothing we can do
                                         flex_instance->running = true;
 
-                                        dcb_printf(dcb, "HTTP/1.1 201 Accepted\nConnection: close\n\n");
+                                        dcb_printf(dcb, "HTTP/1.1 202 Accepted\nConnection: close\n\n");
                                         dcb_close(dcb);
                                 }
                         }
@@ -367,6 +368,26 @@ static int lock(FLEXMASTER_INSTANCE *instance) {
 static int unlock(FLEXMASTER_INSTANCE *instance) {
         if(instance->filter != NULL) {
                 spinlock_release(&instance->filter->transaction_lock);
+
+                DCB *dcb;
+                int i = 0;
+                while((dcb = instance->filter->waiting_clients[i++]) != NULL) {
+                        // vaguely copied from readwritesplit
+                        GWBUF *querybuf, *tmpbuf;
+                        querybuf = tmpbuf = dcb->dcb_readqueue;
+
+                        while(tmpbuf != NULL) {
+                                if((querybuf = modutil_get_next_MySQL_packet(&tmpbuf)) == NULL) {
+                                        if(GWBUF_LENGTH(tmpbuf) > 0) { // TODO?
+                                                dcb->dcb_readqueue = gwbuf_append(dcb->dcb_readqueue, tmpbuf);
+                                                break;
+                                        }
+                                }
+
+                                DOWNSTREAM head = dcb->session->head;
+                                head.routeQuery(head.instance, head.session, querybuf);
+                        }
+                }
         }
 
         return 0;

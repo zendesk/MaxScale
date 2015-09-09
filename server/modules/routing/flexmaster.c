@@ -780,7 +780,7 @@ static int parse_host_and_port(char *str, SERVER **server) {
 
         *server = server_find(host, port);
 
-        if(server == NULL) {
+        if(*server == NULL) {
                 error("Error: could not find maxscale server from address");
                 return 1;
         }

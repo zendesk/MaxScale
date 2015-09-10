@@ -386,15 +386,17 @@ static int unlock(FLEXMASTER_INSTANCE *instance, struct flexmaster_parameters *p
                         ROUTER_CLIENT_SES *router_session = dcb->session->router_session;
                         spinlock_acquire(&router_session->rses_lock);
 
-                        // Hack for readwritesplit master failover, we know what the master
-                        // should be, we just need the bref_backend_ref for it
-                        int j;
-                        for(j = 0; j < router_session->rses_nbackends; j++) {
-                                backend_ref_t* bref = &router_session->rses_backend_ref[j];
+                        if(router_session->rses_master_ref != NULL) {
+                                // Hack for readwritesplit master failover, we know what the master
+                                // should be, we just need the bref_backend_ref for it
+                                int j;
+                                for(j = 0; j < router_session->rses_nbackends; j++) {
+                                        backend_ref_t* bref = &router_session->rses_backend_ref[j];
 
-                                if(bref->bref_backend->backend_server == params->new_master_server) {
-                                        router_session->rses_master_ref = bref;
-                                        break;
+                                        if(bref->bref_backend->backend_server == params->new_master_server) {
+                                                router_session->rses_master_ref = bref;
+                                                break;
+                                        }
                                 }
                         }
 

@@ -2093,7 +2093,6 @@ static bool route_single_stmt(
 	if ((master_dcb = rses->rses_master_ref->bref_dcb) == NULL)
 	{
 		char* query_str = modutil_get_query(querybuf);
-		CHK_DCB(master_dcb);
 		LOGIF(LE, (skygw_log_write_flush(
 			LOGFILE_ERROR,
 			"Error: Can't route %s:%s:\"%s\" to "
@@ -2107,6 +2106,8 @@ static bool route_single_stmt(
 		goto retblock;
 	}
 	
+        CHK_DCB(master_dcb);
+
 	/** If buffer is not contiguous, make it such */
 	if (querybuf->next != NULL)
 	{

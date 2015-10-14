@@ -10,8 +10,6 @@ This section describes the limitations that are common to all configuration of p
 
 Compression is not included in MySQL server handshake
 
-## Limitations with MySQL Master/Slave Replication monitoring
-
 ## Limitations with Galera Cluster Monitoring
 
 Master selection is based only on MIN(wsrep_local_index), no other server parameter.
@@ -35,7 +33,9 @@ In master-slave replication cluster also read-only queries are routed to master 
 * statement includes a stored procedure, or an UDF call
 
 ### Limitations in client session handling
+
 Some of the queries that client sends are routed to all backends instead of sending them just to one of server. These queries include `USE <db name>` and `SET autocommit=0` among many others. Readwritesplit sends a copy of these queries to each backend server and forwards the master's reply to the client. Below is a list of MySQL commands which are classified as session commands :
+
 ```
 COM_INIT_DB (USE <db name> creates this)
 
@@ -75,12 +75,12 @@ There is a possibility for misbehavior; if `USE mytable` was executed in one of 
 The above-mentioned behavior can be partially controller with the `use_sql_variables_in` configuration parameter.
 
 ```
-use_sql_variables_in=[master|all] (master)
+use_sql_variables_in=[master|all] (default: all)
 ```
 
-Server-side session variables are called as SQL variables. If "master" or no value is set, SQL variables are read and written in master only. Autocommit values and prepared statements are routed to all nodes always.
+Server-side session variables are called as SQL variables. If "master" is set, SQL variables are read and written in master only. Autocommit values and prepared statements are routed to all nodes always.
 
-**NOTE**: If variable is written as a part of write query, it is treated like write query and not routed to all servers. For example, `INSERT INTO test.t1 VALUES (@myvar:= 7)` will be routed to the master and an error in the error log will be written.
+**NOTE**: If variable is written as a part of write query, it is treated like write query and not routed to all servers. For example, `INSERT INTO test.t1 VALUES (@myvar:= 7)` will not be routed and an error in the error log will be written. Add the `use_sql_variables_in=master` to the service definition to allow these queries.
 
 #### Examples of session command limitations
 
@@ -90,4 +90,4 @@ Most imaginable reasons are related to replication lag but it could be possible 
 
 ## Authentication Related Limitations
 
-MySQL old passwords are not supported
+MySQL old style passwords are not supported. MySQL versions 4.1 and newer use a new authentication protocol which does not support pre-4.1 style passwords.

@@ -33,7 +33,18 @@ The MaxScale configuration is read from a file which can be located in a number 
 
 An explicit path to a configuration file can be passed by using the `-f` option to MaxScale.
 
-The configuration file itself is based on the ".ini" file format and consists of various sections that are used to build the configuration, these sections define services, servers, listeners, monitors and global settings.
+The configuration file itself is based on the ".ini" file format and consists of various sections that are used to build the configuration, these sections define services, servers, listeners, monitors and global settings. Parameters which expect a comma-separated list of values can be defined on multiple lines. The following is an example of a multi-line definition.
+
+```
+[MyService]
+type=service
+router=readconnroute
+servers=server1,
+        server2,
+        server3
+```
+
+The values of the parameter that are not on the first line need to have at least one whitespace character before them in order for them to be recognized as a part of the multi-line parameter.
 
 Please see the section about [Protocol Modules](#protocol-modules) for more details about MaxScale and the default directories where modules will be searched for.
 
@@ -54,6 +65,18 @@ threads=1
 ```
 
 It should be noted that additional threads will be created to execute other internal services within MaxScale. This setting is used to configure the number of threads that will be used to manage the user connections.
+
+#### `auth_connect_timeout`
+
+The connection timeout in seconds for the MySQL connections to the backend server when user authentication data is fetched. Increasing the value of this parameter will cause MaxScale to wait longer for a response from the backend server before aborting the authentication process.
+
+#### `auth_read_timeout`
+
+The read timeout in seconds for the MySQL connection to the backend database when user authentication data is fetched. Increasing the value of this parameter will cause MaxScale to wait longer for a response from the backend server when user data is being actively fetched. If the authentication is failing and you either have a large number of database users and grants or the connection to the backend servers is slow, it is a good idea to increase this value.
+
+#### `auth_write_timeout`
+
+The write timeout in seconds for the MySQL connection to the backend database when user authentication data is fetched. Currently MaxScale does not write or modify the data in the backend server.
 
 #### `ms_timestamp`
 
@@ -100,6 +123,18 @@ log_debug=1
 ```
 
 To disable the log use the value 0 and to enable it use the value 1.
+
+#### `log_augmentation`
+
+Enable or disable the augmentation of messages. If this is enabled, then each logged message is appended with the name of the function where the message was logged. This is primarily for development purposes and hence is disabled by default.
+
+```
+# Valid options are:
+#       log_augmentation=<0|1>
+log_augmentation=1
+```
+
+To disable the augmentation use the value 0 and to enable it use the value 1.
 
 #### `logdir`
 
@@ -232,10 +267,10 @@ Query OK, 0 rows affected (0.00 sec)
 Additionally, `GRANT SELECT` on the `mysql.db` table and `SHOW DATABASES` privileges are required in order to load databases name and grants suitable for database name authorization.
 
 ```
-MariaDB [(none)]> GRANT SELECT ON mysql.db TO 'username'@'maxscalehost';
+MariaDB [(none)]> GRANT SELECT ON mysql.db TO 'maxscale'@'maxscalehost';
 Query OK, 0 rows affected (0.00 sec)
 
-MariaDB [(none)]> GRANT SHOW DATABASES ON *.* TO 'username'@'maxscalehost';
+MariaDB [(none)]> GRANT SHOW DATABASES ON *.* TO 'maxscale'@'maxscalehost';
 Query OK, 0 rows affected (0.00 sec)
 ```
 
@@ -314,6 +349,10 @@ This parameter takes a boolean value and when enabled, will strip all `\` charac
 #### `optimize_wildcard`
 
 Enabling this feature will transform wildcard grants to individual database grants. This will consume more memory but authentication in MaxScale will be done faster. The parameter takes a boolean value.
+
+#### `retry_on_failure`
+
+The retry_on_failure parameter controls whether MaxScale will try to restart failed services and accepts a boolean value. This functionality is enabled by default to prevent services being permanently disabled if the starting of the service failed due to a network outage. Disabling the restarting of the failed services will cause them to be permanently disabled if the services can't be started when MaxScale is started.
 
 #### `connection_timeout`
 
@@ -701,6 +740,12 @@ Parsing within the router adds overhead to the cost of routing and makes this ty
 
 Currently a small number of query routers are available, these are in different stages of completion and offer different facilities.
 
+* [ReadConnRoute](../Routers/ReadConnRoute.md)
+* [ReadWriteSplit](../Routers/ReadWriteSplit.md)
+* [SchemaRouter](../Routers/SchemaRouter.md)
+
+In addition to these routing modules, the binlogrouter module can act as a binary log proxy between a master and slave servers.
+
 #### Readconnroute
 
 This is a connection based query router that was originally targeted at environments in which the clients already performed splitting of read and write queries into separate connections.
@@ -891,86 +936,7 @@ The router stores all of the executed session commands so that in case of a slav
 
 Read/Write Split router-specific settings are specified in the configuration file of MaxScale in its specific section. The section can be freely named but the name is used later as a reference from listener section.
 
-The configuration consists of mandatory and optional parameters.
-
-###### Mandatory parameters
-
-**`type`** specifies the type of service. For **readwritesplit** module the type is `router`:
-
-    type=router
-
-**`service`** specifies the router module to be used. For **readwritesplit** the value is `readwritesplit`:
-
-    service=readwritesplit
-
-**`servers`** provides a list of servers, which must include one master and available slaves:
-
-    servers=server1,server2,server3
-
-**NOTE: Each server on the list must have its own section in the configuration file where it is defined.**
-
-**`user`** is the username the router session uses for accessing backends in order to load the content of the `mysql.user` table (and `mysql.db` and database names as well) and optionally for creating, and using `maxscale_schema.replication_heartbeat` table.
-
-**`passwd`** specifies corresponding password for the user. Syntax for user and passwd is:
-
-```
-user=<username>
-passwd=<password>
-```
-
-###### Optional parameters
-
-**`max_slave_connections`** sets the maximum number of slaves a router session uses at any moment. Default value is `1`.
-
-	max_slave_connections=<max. number, or % of available slaves>
-
-**`max_slave_replication_lag`** specifies how many seconds a slave is allowed to be behind the master. If the lag is bigger than configured value a slave can't be used for routing.
-
-	max_slave_replication_lag=<allowed lag in seconds>
-
-This applies to Master/Slave replication with MySQL monitor and `detect_replication_lag=1` options set.
-Please note max_slave_replication_lag must be greater than monitor interval.
-
-**`router_options`** may include multiple **readwritesplit**-specific options. Values are either singular or parameter-value pairs. Currently available is a single option which specifies the criteria used in slave selection both in initialization of router session and per each query. Note that due to the current monitor implementation, the value specified here should be *<twice the monitor interval>* + 1.
-
-	options=slave_selection_criteria=<criteria>
-
-where *<criteria>* is one of the following:
-
-* `LEAST_GLOBAL_CONNECTIONS`, the slave with least connections in total
-* `LEAST_ROUTER_CONNECTIONS`, the slave with least connections from this router
-* `LEAST_BEHIND_MASTER`, the slave with smallest replication lag
-* `LEAST_CURRENT_OPERATIONS` (default), the slave with least active operations
-
-**`use_sql_variables_in`** specifies where should queries, which read session variable, be routed. The syntax for `use_sql_variable_in` is:
-
-    use_sql_variables_in=[master|all]
-
-When value all is used, queries reading session variables can be routed to any available slave (depending on selection criteria). Note, that queries modifying session variables are routed to all backend servers by default, excluding write queries with embedded session variable modifications, such as:
-
-    INSERT INTO test.t1 VALUES (@myid:=@myid+1)
-
-In above-mentioned case the user-defined variable would only be updated in the master where query would be routed due to `INSERT` statement.
-
-**`max_sescmd_history`** sets a limit on how many session commands each session can execute before the connection is closed. The default is an unlimited number of session commands.
-
-	max_sescmd_history=1500
-
-When a limitation is set, it effectively creates a cap on the session's memory consumption. This might be useful if connection pooling is used and the sessions use large amounts of session commands.
-
-**`disable_sescmd_history`** disables the session command history. This way nothing is stored and if a slave server fails and a new one is taken in its stead, the session on that server will be in an inconsistent state compared to the master server. Disabling session command history will allow connection pooling without causing a constant growth in the memory consumption.
-
-```
-# Disable the session command history
-disable_sescmd_history=true
-```
-
-**`disable_slave_recovery`** disables the recovery and replacement of slave servers. If this option is enabled and a connection to a slave server in use is lost, no replacement slave will be taken. This allows the safe use of session state modifying statements when the session command history is disabled. This is mostly intended to be used with the `disable_sescmd_history` option enabled.
-
-```
-# Disable the session command history
-disable_slave_recovery=true
-```
+The configuration consists of mandatory and optional parameters. For a complete list of these, please read the [ReadWriteSplit](../Routers/ReadWriteSplit.md) documentation.
 
 An example of Read/Write Split router configuration :
 
@@ -988,6 +954,8 @@ filters=qla|fetch|from
 ```
 
 In addition to this, readwritesplit needs configuration for a listener, for all servers listed, and for each filter. Listener, server - and filter configurations are described in their own sections in this document.
+
+An important parameter is the `max_slave_connections=50%` parameter. This sets the number of slaves each client connection will use. With the default values, client connections will only use a single slave for reads. For example, setting the parameter value to 100% will use all available slaves and read queries will be balanced evenly across all slaves. Changing the `max_slave_conections` parameter and `slave_selection_criteria` router option allows you to change the way MaxScale will balance reads. For more information about the `slave_selection_criteria` router option, please read the ReadWriteSplit documentation.
 
 Below is a listener example for the "RWSplit Service" defined above:
 

@@ -141,25 +141,28 @@ setipaddress(struct in_addr *a, char *p) {
  * Daemonize the process by forking and putting the process into the
  * background.
  */
-void gw_daemonize(void) {
+bool gw_daemonize(void) {
 	pid_t pid;
 
 	pid = fork();
 
 	if (pid < 0) {
-		fprintf(stderr, "fork() error %s\n", strerror(errno));
+                char errbuf[STRERROR_BUFLEN];
+		fprintf(stderr, "fork() error %s\n", strerror_r(errno, errbuf, sizeof(errbuf)));
 		exit(1);
 	}
 
 	if (pid != 0) {
 		/* exit from main */
-		exit(0);
+		return true;
 	}
 
 	if (setsid() < 0) {
-		fprintf(stderr, "setsid() error %s\n", strerror(errno));
+                char errbuf[STRERROR_BUFLEN];
+                fprintf(stderr, "setsid() error %s\n", strerror_r(errno, errbuf, sizeof(errbuf)));
 		exit(1);
 	}
+        return false;
 }
 
 /**

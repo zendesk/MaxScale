@@ -345,8 +345,8 @@ static SERVICE *shards_service_for_shard(SHARD_ROUTER *instance, char *name) {
 
 static uintptr_t shards_find_account(char *bufdata, int qlen) {
         uintptr_t account_id = 0;
-        char database_name[qlen - 1];
-        strncpy(database_name, bufdata, qlen);
+        char database_name[qlen];
+        strncpy(database_name, bufdata, qlen - 1);
         database_name[qlen - 1] = 0;
 
         if(strncmp("account_", database_name, 8) == 0) {

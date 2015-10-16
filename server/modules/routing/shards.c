@@ -156,28 +156,22 @@ static void *newSession(ROUTER *instance, SESSION *session) {
 
         if(mysql_session->db != NULL && strlen(mysql_session->db) > 0) {
                 uintptr_t account_id = shards_find_account(mysql_session->db, strlen(mysql_session->db) + 1);
-                uintptr_t shard_id;
 
                 if(account_id > 0) {
-                        shard_id = shards_find_shard(router, account_id);
-                }
+                        uintptr_t shard_id = shards_find_shard(router, account_id);
 
+                        if(shard_id > 0) {
+                                char shard_database_id[MYSQL_DATABASE_MAXLEN];
+                                snprintf(shard_database_id, MYSQL_DATABASE_MAXLEN, router->shard_format, shard_id);
 
-                if(shard_id == 0) {
-                        shard_id = shards_find_shard(router, account_id);
-                }
+                                skygw_log_write(LOGFILE_TRACE, "shards: finding %s", shard_database_id);
+                                SERVICE *service = shards_service_for_shard(router, shard_database_id);
 
-                if(shard_id > 0) {
-                        char shard_database_id[MYSQL_DATABASE_MAXLEN];
-                        snprintf(shard_database_id, MYSQL_DATABASE_MAXLEN, router->shard_format, shard_id);
-
-                        skygw_log_write(LOGFILE_TRACE, "shards: finding %s", shard_database_id);
-                        SERVICE *service = shards_service_for_shard(router, shard_database_id);
-
-                        if(service != NULL) {
-                                strcpy(mysql_session->db, shard_database_id);
-                                init_downstream = service;
-                                init_shard_id = shard_id;
+                                if(service != NULL) {
+                                        strcpy(mysql_session->db, shard_database_id);
+                                        init_downstream = service;
+                                        init_shard_id = shard_id;
+                                }
                         }
                 }
         }

@@ -155,7 +155,7 @@ static void *newSession(ROUTER *instance, SESSION *session) {
         SERVICE *init_downstream = router->downstreams[0];
 
         if(mysql_session->db != NULL && strlen(mysql_session->db) > 0) {
-                uintptr_t account_id = shards_find_account(mysql_session->db, strlen(mysql_session->db));
+                uintptr_t account_id = shards_find_account(mysql_session->db, strlen(mysql_session->db) + 1);
 
                 if(account_id > 0) {
                         uintptr_t shard_id = shards_find_shard(router, account_id);
@@ -308,7 +308,6 @@ static int routeQuery(ROUTER *instance, void *session, GWBUF *queue) {
 
                         shard_session->shard_id = 0;
                 }
-        } else if(MYSQL_GET_COMMAND(bufdata) == MYSQL_COM_CHANGE_USER) {
         }
 
         SHARD_DOWNSTREAM downstream = shard_session->downstream;
@@ -346,9 +345,9 @@ static SERVICE *shards_service_for_shard(SHARD_ROUTER *instance, char *name) {
 
 static uintptr_t shards_find_account(char *bufdata, int qlen) {
         uintptr_t account_id = 0;
-        char database_name[qlen + 1];
+        char database_name[qlen - 1];
         strncpy(database_name, bufdata, qlen);
-        database_name[qlen] = 0;
+        database_name[qlen - 1] = 0;
 
         if(strncmp("account_", database_name, 8) == 0) {
                 account_id = strtol(database_name + 8, NULL, 0);

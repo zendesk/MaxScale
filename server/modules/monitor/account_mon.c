@@ -540,11 +540,6 @@ static int account_monitor_compare(void *v1, void *v2) {
   }
 }
 
-void account_monitor_refresh(ACCOUNT_MONITOR *handle) {
-        if(handle->service == NULL || handle->accounts == NULL)
-                return;
-}
-
 uintptr_t account_monitor_find_shard(ACCOUNT_MONITOR *handle, uintptr_t account_id) {
         if(handle->accounts == NULL)
                 return 0;

@@ -3,6 +3,8 @@
 #include <string.h>
 #include <monitor.h>
 #include <account_mon.h>
+#include <users.h>
+#include <dbusers.h>
 #include <thread.h>
 #include <mysql.h>
 #include <mysqld_error.h>
@@ -67,7 +69,7 @@ char *version() {
  * is first loaded.
  */
 void ModuleInit() {
-        LOGIF(LM, (skygw_log_write(LOGFILE_MESSAGE, "Initialise the Account Monitor module %s.", version_str)));
+        LOGIF(LM, (skygw_log_write(LOGFILE_MESSAGE, "Initialize the Account Monitor module %s.", version_str)));
 }
 
 /**
@@ -229,6 +231,13 @@ static void *startMonitor(void *arg, void *opt) {
                         }
 
                         strcpy(handle->topic_name, params->value);
+                }
+
+                if(strcasecmp(params->name, "service") == 0) {
+                        handle->service = service_find(params->value);
+                        if(handle->service != NULL) {
+                                LOGIF(LM, (skygw_log_write(LOGFILE_MESSAGE, "found service %s to update", handle->service->name)));
+                        }
                 }
 
                 params = params->next;
@@ -470,7 +479,18 @@ static void account_monitor_consume(ACCOUNT_MONITOR *handle, rd_kafka_message_t 
         uintptr_t shard_id = YAJL_GET_INTEGER(shard_id_node);
 
         hashtable_delete(handle->accounts, (void *) id);
+
         hashtable_add(handle->accounts, (void *) id, (void *) shard_id);
+
+        if(handle->service != NULL) {
+                char *account_database_name = calloc(sizeof(char), MYSQL_DATABASE_MAXLEN);
+
+                if(account_database_name != NULL) {
+                        snprintf(account_database_name, MYSQL_DATABASE_MAXLEN, "account_%" PRIuPTR, shard_id);
+                        // used like resource_add in dbusers.c
+                        hashtable_add(handle->service->resources, account_database_name, "");
+                } // else - we don't really care if db initialization doesn't work
+        }
 
         LOGIF(LM, (skygw_log_write(LOGFILE_MESSAGE, "found shard_id %" PRIuPTR " for account %" PRIuPTR, shard_id, id)));
 

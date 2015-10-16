@@ -233,12 +233,14 @@ static void *startMonitor(void *arg, void *opt) {
                         strcpy(handle->topic_name, params->value);
                 }
 
+                /*
                 if(strcasecmp(params->name, "service") == 0) {
                         handle->service = service_find(params->value);
                         if(handle->service != NULL) {
                                 LOGIF(LM, (skygw_log_write(LOGFILE_MESSAGE, "found service %s to update", handle->service->name)));
                         }
                 }
+                */
 
                 params = params->next;
         }
@@ -479,9 +481,9 @@ static void account_monitor_consume(ACCOUNT_MONITOR *handle, rd_kafka_message_t 
         uintptr_t shard_id = YAJL_GET_INTEGER(shard_id_node);
 
         hashtable_delete(handle->accounts, (void *) id);
-
         hashtable_add(handle->accounts, (void *) id, (void *) shard_id);
 
+        /*
         if(handle->service != NULL) {
                 char *account_database_name = calloc(sizeof(char), MYSQL_DATABASE_MAXLEN);
 
@@ -491,6 +493,7 @@ static void account_monitor_consume(ACCOUNT_MONITOR *handle, rd_kafka_message_t 
                         hashtable_add(handle->service->resources, account_database_name, "");
                 } // else - we don't really care if db initialization doesn't work
         }
+        */
 
         LOGIF(LM, (skygw_log_write(LOGFILE_MESSAGE, "found shard_id %" PRIuPTR " for account %" PRIuPTR, shard_id, id)));
 
@@ -556,6 +559,11 @@ static int account_monitor_compare(void *v1, void *v2) {
   } else {
           return 1;
   }
+}
+
+void account_monitor_refresh(ACCOUNT_MONITOR *handle) {
+        if(handle->service == NULL || handle->accounts == NULL)
+                return;
 }
 
 uintptr_t account_monitor_find_shard(ACCOUNT_MONITOR *handle, uintptr_t account_id) {

@@ -233,15 +233,6 @@ static void *startMonitor(void *arg, void *opt) {
                         strcpy(handle->topic_name, params->value);
                 }
 
-                /*
-                if(strcasecmp(params->name, "service") == 0) {
-                        handle->service = service_find(params->value);
-                        if(handle->service != NULL) {
-                                LOGIF(LM, (skygw_log_write(LOGFILE_MESSAGE, "found service %s to update", handle->service->name)));
-                        }
-                }
-                */
-
                 params = params->next;
         }
 
@@ -482,18 +473,6 @@ static void account_monitor_consume(ACCOUNT_MONITOR *handle, rd_kafka_message_t 
 
         hashtable_delete(handle->accounts, (void *) id);
         hashtable_add(handle->accounts, (void *) id, (void *) shard_id);
-
-        /*
-        if(handle->service != NULL) {
-                char *account_database_name = calloc(sizeof(char), MYSQL_DATABASE_MAXLEN);
-
-                if(account_database_name != NULL) {
-                        snprintf(account_database_name, MYSQL_DATABASE_MAXLEN, "account_%" PRIuPTR, shard_id);
-                        // used like resource_add in dbusers.c
-                        hashtable_add(handle->service->resources, account_database_name, "");
-                } // else - we don't really care if db initialization doesn't work
-        }
-        */
 
         LOGIF(LM, (skygw_log_write(LOGFILE_MESSAGE, "found shard_id %" PRIuPTR " for account %" PRIuPTR, shard_id, id)));
 

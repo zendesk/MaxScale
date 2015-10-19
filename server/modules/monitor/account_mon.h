@@ -1,5 +1,4 @@
 #include <server.h>
-#include <service.h>
 #include <spinlock.h>
 #include <hashtable.h>
 
@@ -27,8 +26,6 @@ typedef struct {
         const struct rd_kafka_metadata *metadata;
 
         char *topic_name;
-
-        SERVICE *service;
 
         bool connected;
 

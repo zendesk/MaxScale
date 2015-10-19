@@ -23,3 +23,6 @@ endif()
 add_library(maxscaled SHARED maxscaled.c)
 target_link_libraries(maxscaled log_manager )
 install(TARGETS maxscaled DESTINATION ${MAXSCALE_LIBDIR})
+
+add_library(check_db_name STATIC check_db_name.c)
+target_link_libraries(MySQLClient check_db_name accountmon "-Xlinker -wrap" "-Xlinker check_db_name_after_auth")

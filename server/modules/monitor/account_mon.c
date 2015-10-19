@@ -3,6 +3,8 @@
 #include <string.h>
 #include <monitor.h>
 #include <account_mon.h>
+#include <users.h>
+#include <dbusers.h>
 #include <thread.h>
 #include <mysql.h>
 #include <mysqld_error.h>
@@ -67,7 +69,7 @@ char *version() {
  * is first loaded.
  */
 void ModuleInit() {
-        LOGIF(LM, (skygw_log_write(LOGFILE_MESSAGE, "Initialise the Account Monitor module %s.", version_str)));
+        LOGIF(LM, (skygw_log_write(LOGFILE_MESSAGE, "Initialize the Account Monitor module %s.", version_str)));
 }
 
 /**

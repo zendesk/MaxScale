@@ -148,6 +148,34 @@ static void *newSession(ROUTER *instance, SESSION *session) {
         SHARD_ROUTER *router = (SHARD_ROUTER *) instance;
 
         DCB *original_dcb = session->client;
+
+        MYSQL_session *mysql_session = original_dcb->data;
+
+        uintptr_t init_shard_id = 0;
+        SERVICE *init_downstream = router->downstreams[0];
+
+        if(mysql_session->db != NULL && strlen(mysql_session->db) > 0) {
+                uintptr_t account_id = shards_find_account(mysql_session->db, strlen(mysql_session->db) + 1);
+
+                if(account_id > 0) {
+                        uintptr_t shard_id = shards_find_shard(router, account_id);
+
+                        if(shard_id > 0) {
+                                char shard_database_id[MYSQL_DATABASE_MAXLEN];
+                                snprintf(shard_database_id, MYSQL_DATABASE_MAXLEN, router->shard_format, shard_id);
+
+                                skygw_log_write(LOGFILE_TRACE, "shards: finding %s", shard_database_id);
+                                SERVICE *service = shards_service_for_shard(router, shard_database_id);
+
+                                if(service != NULL) {
+                                        strcpy(mysql_session->db, shard_database_id);
+                                        init_downstream = service;
+                                        init_shard_id = shard_id;
+                                }
+                        }
+                }
+        }
+
         DCB *cloned_dcb = dcb_clone(session->client);
 
         if(cloned_dcb == NULL) {
@@ -158,7 +186,7 @@ static void *newSession(ROUTER *instance, SESSION *session) {
         spinlock_acquire(&cloned_dcb->writeqlock);
 
         // Set a default downstream
-        SESSION *downstream = session_alloc(router->downstreams[0], cloned_dcb);
+        SESSION *downstream = session_alloc(init_downstream, cloned_dcb);
 
         if(downstream == NULL) {
                 // XXX DCB is added to the zombie queue and freed from there?
@@ -168,6 +196,7 @@ static void *newSession(ROUTER *instance, SESSION *session) {
 
         SHARD_SESSION *shard_session = calloc(1, sizeof(SHARD_SESSION));
         shard_session->client_session = session;
+        shard_session->shard_id = init_shard_id;
 
         shards_set_downstream(shard_session, downstream);
 
@@ -234,7 +263,7 @@ static int routeQuery(ROUTER *instance, void *session, GWBUF *queue) {
                                 return shards_send_error(shard_session, errmsg);
                         }
 
-                        char shard_database_id[MYSQL_DATABASE_MAXLEN + 1];
+                        char shard_database_id[MYSQL_DATABASE_MAXLEN];
                         snprintf(shard_database_id, MYSQL_DATABASE_MAXLEN, shard_router->shard_format, shard_id);
 
                         // find downstream

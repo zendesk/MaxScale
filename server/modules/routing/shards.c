@@ -302,12 +302,13 @@ static int routeQuery(ROUTER *instance, void *session, GWBUF *queue) {
                         }
 
                         REPLACE_DB_NAME(queue, shard_database_id);
-                } else if(shard_session->downstream.service != shard_router->downstreams[0]) {
+                } else {
                         if(qlen >= 7 && strncmp((char *) bufdata + 5, "account", 7) == 0) {
                                 REPLACE_DB_NAME(queue, shard_router->downstreams[0]->name);
                         }
 
-                        if(!shards_switch_session(shard_session, shard_router->downstreams[0])) {
+                        if(shard_session->downstream.service != shard_router->downstreams[0] && !shards_switch_session(shard_session, shard_router->downstreams[0])) {
+                                // TODO close session?
                                 gwbuf_free(queue);
                                 char errmsg[2048];
                                 snprintf((char *) &errmsg, 2048, "Error switching to default shard");

@@ -227,6 +227,9 @@ static int routeQuery(ROUTER *instance, void *session, GWBUF *queue) {
         // Packets can come in incomplete, so we need to try
         // and reconstruct them before processing or pushing off until
         // more data comes in
+        //
+        // TODO: can this be solved by switching to statement based processing?
+        // But will that cause problems with downstream packet based processing?
         if(GWBUF_IS_TYPE_UNDEFINED(queue)) {
                 GWBUF *tmpqueue = queue;
 

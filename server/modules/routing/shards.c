@@ -18,6 +18,14 @@ MODULE_INFO info = {
         "Zendesk's custom shard router"
 };
 
+// XXX: modutil_replace_SQL checks explicitly for COM_QUERY
+// but just generically replaces the GWBUF data
+#define REPLACE_DB_NAME(queue, database_name) \
+        ((uint8_t *) queue->start)[4] = MYSQL_COM_QUERY; \
+        queue = modutil_replace_SQL(queue, database_name); \
+        queue = gwbuf_make_contiguous(queue); \
+        ((uint8_t *) queue->start)[4] = MYSQL_COM_INIT_DB;
+
 static ROUTER *createInstance(SERVICE *, char **);
 static void *newSession(ROUTER *, SESSION *);
 static void closeSession(ROUTER *, void *);
@@ -293,15 +301,12 @@ static int routeQuery(ROUTER *instance, void *session, GWBUF *queue) {
                                 shard_session->shard_id = shard_id;
                         }
 
-                        // XXX: modutil_replace_SQL checks explicitly for COM_QUERY
-                        // but just generically replaces the GWBUF data
-                        bufdata[4] = MYSQL_COM_QUERY;
-
-                        queue = modutil_replace_SQL(queue, shard_database_id);
-                        queue = gwbuf_make_contiguous(queue);
-
-                        ((uint8_t *) queue->start)[4] = MYSQL_COM_INIT_DB;
+                        REPLACE_DB_NAME(queue, shard_database_id);
                 } else if(shard_session->downstream.service != shard_router->downstreams[0]) {
+                        if(qlen >= 7 && strncmp((char *) bufdata + 5, "account", 7) == 0) {
+                                REPLACE_DB_NAME(queue, shard_router->downstreams[0]->name);
+                        }
+
                         if(!shards_switch_session(shard_session, shard_router->downstreams[0])) {
                                 gwbuf_free(queue);
                                 char errmsg[2048];
@@ -350,7 +355,7 @@ static uintptr_t shards_find_account(char *bufdata, int qlen) {
         uintptr_t account_id = 0;
         char database_name[qlen];
         strncpy(database_name, bufdata, qlen - 1);
-        database_name[qlen - 1] = 0;
+        database_name[qlen - 1] = '\0';
 
         if(strncmp("account_", database_name, 8) == 0) {
                 account_id = strtol(database_name + 8, NULL, 0);

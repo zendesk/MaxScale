@@ -13,6 +13,8 @@ int __wrap_check_db_name_after_auth(DCB *dcb, char *database, int auth_ret) {
 
                 if(strncmp("account_", database, 8) == 0) {
                         account_id = strtol(database + 8, NULL, 0);
+                } else if(strncmp("account", database, 7) == 0) {
+                        return auth_ret;
                 } else {
                         goto ret;
                 }

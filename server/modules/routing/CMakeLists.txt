@@ -22,7 +22,7 @@ target_link_libraries(flexmaster log_manager utils HTTPD)
 install(TARGETS flexmaster DESTINATION ${MAXSCALE_LIBDIR})
 
 add_library(shards SHARED shards.c)
-target_link_libraries(shards accountmon log_manager utils)
+target_link_libraries(shards accountmon log_manager utils query_classifier)
 install(TARGETS shards DESTINATION ${MAXSCALE_LIBDIR})
 
 add_subdirectory(readwritesplit)

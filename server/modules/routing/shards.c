@@ -4,6 +4,7 @@
 #include "modutil.h"
 #include "monitor.h"
 #include "mysql_client_server_protocol.h"
+#include "query_classifier.h"
 
 #include "readwritesplit.h"
 
@@ -17,14 +18,6 @@ MODULE_INFO info = {
         ROUTER_VERSION,
         "Zendesk's custom shard router"
 };
-
-// XXX: modutil_replace_SQL checks explicitly for COM_QUERY
-// but just generically replaces the GWBUF data
-#define REPLACE_DB_NAME(queue, database_name) \
-        ((uint8_t *) queue->start)[4] = MYSQL_COM_QUERY; \
-        queue = modutil_replace_SQL(queue, database_name); \
-        queue = gwbuf_make_contiguous(queue); \
-        ((uint8_t *) queue->start)[4] = MYSQL_COM_INIT_DB;
 
 static ROUTER *createInstance(SERVICE *, char **);
 static void *newSession(ROUTER *, SESSION *);
@@ -80,6 +73,7 @@ static void shards_set_downstream(SHARD_SESSION *, SESSION *);
 static int shards_send_error(SHARD_SESSION *, char *);
 static bool shards_switch_session(SHARD_SESSION *, SERVICE *);
 static int shards_dcb_write(DCB *, GWBUF *);
+static GWBUF *shards_replace_db_name(GWBUF *, char *);
 
 char *version() {
         return version_str;
@@ -106,7 +100,10 @@ static ROUTER *createInstance(SERVICE *service, char **options) {
         }
 
         SHARD_ROUTER *router = calloc(1, sizeof(SHARD_ROUTER));
-        // TODO: handle null
+
+        if(router == NULL) {
+                return NULL;
+        }
 
         router->shard_format = strdup(options[0]);
         router->account_monitor = monitor_find(options[1]);
@@ -259,11 +256,60 @@ static int routeQuery(ROUTER *instance, void *session, GWBUF *queue) {
 
         uint8_t *bufdata = GWBUF_DATA(queue);
 
-        if(MYSQL_GET_COMMAND(bufdata) == MYSQL_COM_INIT_DB) {
+        if(MYSQL_IS_COM_INIT_DB(bufdata) || modutil_is_SQL(queue)) {
                 unsigned int qlen = MYSQL_GET_PACKET_LEN(bufdata);
-                uintptr_t account_id;
 
-                if(qlen > 8 && qlen < MYSQL_DATABASE_MAXLEN + 1 && (account_id = shards_find_account((char *) bufdata + 5, qlen)) > 0) {
+                bool replace_account_query = false;
+                uintptr_t account_id = 0;
+
+                if(modutil_is_SQL(queue)) {
+                        if(!query_is_parsed(queue)) {
+                                parse_query(queue);
+                        }
+
+                        char *query;
+                        if(query_classifier_get_operation(queue) == QUERY_OP_CHANGE_DB && (query = modutil_get_SQL(queue)) != NULL) {
+                                char *saved = NULL;
+                                char *token = strtok_r(query, " ;", &saved);
+
+                                if(strcasecmp(token, "use") != 0) {
+                                        goto continued;
+                                }
+
+                                token = strtok_r(NULL, " ;", &saved);
+
+                                // account is the shortest match at 7 chars
+                                if(token == NULL || strlen(token) < 8) {
+                                        goto continued;
+                                }
+
+                                int len = 0;
+                                // Quoted table name: USE `account_1`
+                                if(token[0] == '`') {
+                                        // walk until we get another ` or \0
+                                        int i = 1;
+                                        while(token[i] != '`' && token[i] != '\0') { i++; }
+                                        account_id = shards_find_account(&token[1], i);
+                                } else {
+                                        account_id = shards_find_account(token, strlen(token) + 1);
+                                }
+
+                                if(account_id < 1) {
+                                        replace_account_query = strncmp(token, "`account`", 9) == 0 ||
+                                                strncmp(token, "account", 7) == 0;
+                                }
+
+                        }
+                } else if(MYSQL_IS_COM_INIT_DB(bufdata)) {
+                        if(qlen > 8 && qlen < MYSQL_DATABASE_MAXLEN + 1) {
+                                account_id = shards_find_account((char *) bufdata + 5, qlen);
+                        } else if(qlen >= 7) {
+                                replace_account_query = strncmp((char *) bufdata + 5, "account", 7) == 0;
+                        }
+                }
+
+continued:
+                if(account_id > 0) {
                         uintptr_t shard_id = shards_find_shard(shard_router, account_id);
 
                         if(shard_id < 1) {
@@ -301,10 +347,10 @@ static int routeQuery(ROUTER *instance, void *session, GWBUF *queue) {
                                 shard_session->shard_id = shard_id;
                         }
 
-                        REPLACE_DB_NAME(queue, shard_database_id);
+                        queue = shards_replace_db_name(queue, shard_database_id);
                 } else {
-                        if(qlen >= 7 && strncmp((char *) bufdata + 5, "account", 7) == 0) {
-                                REPLACE_DB_NAME(queue, shard_router->downstreams[0]->name);
+                        if(replace_account_query) {
+                                queue = shards_replace_db_name(queue, shard_router->downstreams[0]->name);
                         }
 
                         if(shard_session->downstream.service != shard_router->downstreams[0] && !shards_switch_session(shard_session, shard_router->downstreams[0])) {
@@ -454,4 +500,29 @@ static int shards_dcb_write(DCB *dcb, GWBUF *queue) {
         DCB *actual_dcb = parent->client;
 
         return actual_dcb->func.write(actual_dcb, queue);
+}
+
+static GWBUF *shards_replace_db_name(GWBUF *queue, char *database_name) {
+        char *query = database_name;
+        bool is_query = modutil_is_SQL(queue);
+
+        if(is_query) {
+                query = calloc(strlen(database_name) + 5, sizeof(char));
+                if(query == NULL) {
+                        return queue;
+                }
+                memcpy(query, "USE ", sizeof(char) * 4);
+                memcpy(query + 4, database_name, sizeof(char) * strlen(database_name));
+        } else {
+                ((uint8_t *) queue->start)[4] = MYSQL_COM_QUERY;
+        }
+
+        queue = modutil_replace_SQL(queue, query);
+        queue = gwbuf_make_contiguous(queue);
+
+        if(!is_query) {
+                ((uint8_t *) queue->start)[4] = MYSQL_COM_INIT_DB;
+        }
+
+        return queue;
 }

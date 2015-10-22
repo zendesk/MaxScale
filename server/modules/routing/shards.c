@@ -481,6 +481,7 @@ static GWBUF *shards_replace_db_name(GWBUF *queue, char *database_name) {
 }
 
 static uintptr_t shards_handle_change_db(SHARD_ROUTER *shard_router, GWBUF **queue) {
+        // Based on sharding_common.c
         char *query = modutil_get_SQL(*queue);
 
         if(query == NULL) {

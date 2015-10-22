@@ -76,6 +76,12 @@ static int shards_dcb_write(DCB *, GWBUF *);
 static GWBUF *shards_replace_db_name(GWBUF *, char *);
 static uintptr_t shards_handle_change_db(SHARD_ROUTER *, GWBUF **);
 
+#define SHARDS_SEND_ERROR(format, ...) \
+        gwbuf_free(queue); \
+        char errmsg[2048]; \
+        snprintf((char *) &errmsg, 2048, format, ##__VA_ARGS__); \
+        return shards_send_error(shard_session, errmsg);
+
 char *version() {
         return version_str;
 }
@@ -256,8 +262,6 @@ static int routeQuery(ROUTER *instance, void *session, GWBUF *queue) {
         }
 
         uint8_t *bufdata = GWBUF_DATA(queue);
-        unsigned int qlen = MYSQL_GET_PACKET_LEN(bufdata);
-
         uintptr_t account_id = 0;
 
         if(modutil_is_SQL(queue)) {
@@ -269,6 +273,8 @@ static int routeQuery(ROUTER *instance, void *session, GWBUF *queue) {
                         account_id = shards_handle_change_db(shard_router, &queue);
                 }
         } else if(MYSQL_IS_COM_INIT_DB(bufdata)) {
+                unsigned int qlen = MYSQL_GET_PACKET_LEN(bufdata);
+
                 if(qlen > 8 && qlen < MYSQL_DATABASE_MAXLEN + 1) {
                         account_id = shards_find_account((char *) bufdata + 5, qlen);
                 } else if(qlen >= 7 && strncmp((char *) bufdata + 5, "account", 7) == 0) {
@@ -280,11 +286,7 @@ static int routeQuery(ROUTER *instance, void *session, GWBUF *queue) {
                 uintptr_t shard_id = shards_find_shard(shard_router, account_id);
 
                 if(shard_id < 1) {
-                        gwbuf_free(queue);
-
-                        char errmsg[2048];
-                        snprintf((char *) &errmsg, 2048, "Could not find shard for account %" PRIuPTR, account_id);
-                        return shards_send_error(shard_session, errmsg);
+                        SHARDS_SEND_ERROR("Could not find shard for account %" PRIuPTR, account_id);
                 }
 
                 char shard_database_id[MYSQL_DATABASE_MAXLEN];
@@ -295,20 +297,12 @@ static int routeQuery(ROUTER *instance, void *session, GWBUF *queue) {
                 SERVICE *service = shards_service_for_shard(shard_router, shard_database_id);
 
                 if(service == NULL) {
-                        gwbuf_free(queue);
-
-                        char errmsg[2048];
-                        snprintf((char *) &errmsg, 2048, "Could not find shard %" PRIuPTR " for account %" PRIuPTR, shard_id, account_id);
-                        return shards_send_error(shard_session, errmsg);
+                        SHARDS_SEND_ERROR("Could not find shard %" PRIuPTR " for account %" PRIuPTR, shard_id, account_id);
                 }
 
                 if(service != shard_session->downstream.service) {
                         if(!shards_switch_session(shard_session, service)) {
-                                gwbuf_free(queue);
-                                char errmsg[2048];
-
-                                snprintf((char *) &errmsg, 2048, "Error allocating new session for shard %" PRIuPTR, shard_id);
-                                return shards_send_error(shard_session, errmsg);
+                                SHARDS_SEND_ERROR("Error allocating new session for shard %" PRIuPTR, shard_id);
                         }
 
                         shard_session->shard_id = shard_id;
@@ -316,15 +310,12 @@ static int routeQuery(ROUTER *instance, void *session, GWBUF *queue) {
 
                 queue = shards_replace_db_name(queue, shard_database_id);
         } else {
-                shard_session->shard_id = 0;
-
                 if(shard_session->downstream.service != shard_router->downstreams[0] && !shards_switch_session(shard_session, shard_router->downstreams[0])) {
                         // TODO close session?
-                        gwbuf_free(queue);
-                        char errmsg[2048];
-                        snprintf((char *) &errmsg, 2048, "Error switching to default shard");
-                        return shards_send_error(shard_session, errmsg);
+                        SHARDS_SEND_ERROR("Error switching to default shard");
                 }
+
+                shard_session->shard_id = 0;
         }
 
 

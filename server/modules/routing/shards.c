@@ -79,7 +79,7 @@ static uintptr_t shards_handle_change_db(SHARD_ROUTER *, GWBUF **);
 #define SHARDS_SEND_ERROR(format, ...) \
         gwbuf_free(queue); \
         char errmsg[2048]; \
-        snprintf((char *) &errmsg, 2048, format, ##__VA_ARGS__); \
+        snprintf(errmsg, 2048, format, ##__VA_ARGS__); \
         return shards_send_error(shard_session, errmsg);
 
 char *version() {

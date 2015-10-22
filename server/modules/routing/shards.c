@@ -74,6 +74,7 @@ static int shards_send_error(SHARD_SESSION *, char *);
 static bool shards_switch_session(SHARD_SESSION *, SERVICE *);
 static int shards_dcb_write(DCB *, GWBUF *);
 static GWBUF *shards_replace_db_name(GWBUF *, char *);
+static uintptr_t shards_handle_change_db(SHARD_ROUTER *, GWBUF **);
 
 char *version() {
         return version_str;
@@ -255,115 +256,77 @@ static int routeQuery(ROUTER *instance, void *session, GWBUF *queue) {
         }
 
         uint8_t *bufdata = GWBUF_DATA(queue);
+        unsigned int qlen = MYSQL_GET_PACKET_LEN(bufdata);
 
-        if(MYSQL_IS_COM_INIT_DB(bufdata) || modutil_is_SQL(queue)) {
-                unsigned int qlen = MYSQL_GET_PACKET_LEN(bufdata);
+        uintptr_t account_id = 0;
 
-                bool replace_account_query = false;
-                uintptr_t account_id = 0;
-
-                if(modutil_is_SQL(queue)) {
-                        if(!query_is_parsed(queue)) {
-                                parse_query(queue);
-                        }
-
-                        char *query;
-                        if(query_classifier_get_operation(queue) == QUERY_OP_CHANGE_DB && (query = modutil_get_SQL(queue)) != NULL) {
-                                char *saved = NULL;
-                                char *token = strtok_r(query, " ;", &saved);
-
-                                if(strcasecmp(token, "use") != 0) {
-                                        goto continued;
-                                }
-
-                                token = strtok_r(NULL, " ;", &saved);
-
-                                // account is the shortest match at 7 chars
-                                if(token == NULL || strlen(token) < 8) {
-                                        goto continued;
-                                }
-
-                                int len = 0;
-                                // Quoted table name: USE `account_1`
-                                if(token[0] == '`') {
-                                        // walk until we get another ` or \0
-                                        int i = 1;
-                                        while(token[i] != '`' && token[i] != '\0') { i++; }
-                                        account_id = shards_find_account(&token[1], i);
-                                } else {
-                                        account_id = shards_find_account(token, strlen(token) + 1);
-                                }
-
-                                if(account_id < 1) {
-                                        replace_account_query = strncmp(token, "`account`", 9) == 0 ||
-                                                strncmp(token, "account", 7) == 0;
-                                }
-
-                        }
-                } else if(MYSQL_IS_COM_INIT_DB(bufdata)) {
-                        if(qlen > 8 && qlen < MYSQL_DATABASE_MAXLEN + 1) {
-                                account_id = shards_find_account((char *) bufdata + 5, qlen);
-                        } else if(qlen >= 7) {
-                                replace_account_query = strncmp((char *) bufdata + 5, "account", 7) == 0;
-                        }
+        if(modutil_is_SQL(queue)) {
+                if(!query_is_parsed(queue)) {
+                        parse_query(queue);
                 }
 
-continued:
-                if(account_id > 0) {
-                        uintptr_t shard_id = shards_find_shard(shard_router, account_id);
-
-                        if(shard_id < 1) {
-                                gwbuf_free(queue);
-
-                                char errmsg[2048];
-                                snprintf((char *) &errmsg, 2048, "Could not find shard for account %" PRIuPTR, account_id);
-                                return shards_send_error(shard_session, errmsg);
-                        }
-
-                        char shard_database_id[MYSQL_DATABASE_MAXLEN];
-                        snprintf(shard_database_id, MYSQL_DATABASE_MAXLEN, shard_router->shard_format, shard_id);
-
-                        // find downstream
-                        skygw_log_write(LOGFILE_TRACE, "shards: finding %s", shard_database_id);
-                        SERVICE *service = shards_service_for_shard(shard_router, shard_database_id);
-
-                        if(service == NULL) {
-                                gwbuf_free(queue);
-
-                                char errmsg[2048];
-                                snprintf((char *) &errmsg, 2048, "Could not find shard %" PRIuPTR " for account %" PRIuPTR, shard_id, account_id);
-                                return shards_send_error(shard_session, errmsg);
-                        }
-
-                        if(service != shard_session->downstream.service) {
-                                if(!shards_switch_session(shard_session, service)) {
-                                        gwbuf_free(queue);
-                                        char errmsg[2048];
-
-                                        snprintf((char *) &errmsg, 2048, "Error allocating new session for shard %" PRIuPTR, shard_id);
-                                        return shards_send_error(shard_session, errmsg);
-                                }
-
-                                shard_session->shard_id = shard_id;
-                        }
-
-                        queue = shards_replace_db_name(queue, shard_database_id);
-                } else {
-                        if(replace_account_query) {
-                                queue = shards_replace_db_name(queue, shard_router->downstreams[0]->name);
-                        }
-
-                        if(shard_session->downstream.service != shard_router->downstreams[0] && !shards_switch_session(shard_session, shard_router->downstreams[0])) {
-                                // TODO close session?
-                                gwbuf_free(queue);
-                                char errmsg[2048];
-                                snprintf((char *) &errmsg, 2048, "Error switching to default shard");
-                                return shards_send_error(shard_session, errmsg);
-                        }
-
-                        shard_session->shard_id = 0;
+                if(query_classifier_get_operation(queue) == QUERY_OP_CHANGE_DB) {
+                        account_id = shards_handle_change_db(shard_router, &queue);
+                }
+        } else if(MYSQL_IS_COM_INIT_DB(bufdata)) {
+                if(qlen > 8 && qlen < MYSQL_DATABASE_MAXLEN + 1) {
+                        account_id = shards_find_account((char *) bufdata + 5, qlen);
+                } else if(qlen >= 7 && strncmp((char *) bufdata + 5, "account", 7) == 0) {
+                        queue = shards_replace_db_name(queue, shard_router->downstreams[0]->name);
                 }
         }
+
+        if(account_id > 0) {
+                uintptr_t shard_id = shards_find_shard(shard_router, account_id);
+
+                if(shard_id < 1) {
+                        gwbuf_free(queue);
+
+                        char errmsg[2048];
+                        snprintf((char *) &errmsg, 2048, "Could not find shard for account %" PRIuPTR, account_id);
+                        return shards_send_error(shard_session, errmsg);
+                }
+
+                char shard_database_id[MYSQL_DATABASE_MAXLEN];
+                snprintf(shard_database_id, MYSQL_DATABASE_MAXLEN, shard_router->shard_format, shard_id);
+
+                // find downstream
+                skygw_log_write(LOGFILE_TRACE, "shards: finding %s", shard_database_id);
+                SERVICE *service = shards_service_for_shard(shard_router, shard_database_id);
+
+                if(service == NULL) {
+                        gwbuf_free(queue);
+
+                        char errmsg[2048];
+                        snprintf((char *) &errmsg, 2048, "Could not find shard %" PRIuPTR " for account %" PRIuPTR, shard_id, account_id);
+                        return shards_send_error(shard_session, errmsg);
+                }
+
+                if(service != shard_session->downstream.service) {
+                        if(!shards_switch_session(shard_session, service)) {
+                                gwbuf_free(queue);
+                                char errmsg[2048];
+
+                                snprintf((char *) &errmsg, 2048, "Error allocating new session for shard %" PRIuPTR, shard_id);
+                                return shards_send_error(shard_session, errmsg);
+                        }
+
+                        shard_session->shard_id = shard_id;
+                }
+
+                queue = shards_replace_db_name(queue, shard_database_id);
+        } else {
+                shard_session->shard_id = 0;
+
+                if(shard_session->downstream.service != shard_router->downstreams[0] && !shards_switch_session(shard_session, shard_router->downstreams[0])) {
+                        // TODO close session?
+                        gwbuf_free(queue);
+                        char errmsg[2048];
+                        snprintf((char *) &errmsg, 2048, "Error switching to default shard");
+                        return shards_send_error(shard_session, errmsg);
+                }
+        }
+
 
         SHARD_DOWNSTREAM downstream = shard_session->downstream;
         DOWNSTREAM head = downstream.session->head;
@@ -525,4 +488,42 @@ static GWBUF *shards_replace_db_name(GWBUF *queue, char *database_name) {
         }
 
         return queue;
+}
+
+static uintptr_t shards_handle_change_db(SHARD_ROUTER *shard_router, GWBUF **queue) {
+        char *query = modutil_get_SQL(*queue);
+
+        if(query == NULL) {
+                return 0;
+        }
+
+        char *saved = NULL;
+        char *token = strtok_r(query, " ;", &saved);
+
+        if(strcasecmp(token, "use") != 0) {
+                return 0;
+        }
+
+        token = strtok_r(NULL, " ;", &saved);
+
+        // account is the shortest match at 7 chars
+        if(token == NULL || strlen(token) < 8) {
+                return 0;
+        }
+
+        if(strncmp(token, "`account`", 9) == 0 || strncmp(token, "account", 7) == 0) {
+                *queue = shards_replace_db_name(*queue, shard_router->downstreams[0]->name);
+                return 0;
+        }
+
+        int len = 0;
+        // Quoted table name: USE `account_1`
+        if(token[0] == '`') {
+                // walk until we get another ` or \0
+                int i = 1;
+                while(token[i] != '`' && token[i] != '\0') { i++; }
+                return shards_find_account(&token[1], i);
+        } else {
+                return shards_find_account(token, strlen(token) + 1);
+        }
 }

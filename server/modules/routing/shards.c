@@ -300,14 +300,11 @@ static int routeQuery(ROUTER *instance, void *session, GWBUF *queue) {
                         SHARDS_SEND_ERROR("Could not find shard %" PRIuPTR " for account %" PRIuPTR, shard_id, account_id);
                 }
 
-                if(service != shard_session->downstream.service) {
-                        if(!shards_switch_session(shard_session, service)) {
-                                SHARDS_SEND_ERROR("Error allocating new session for shard %" PRIuPTR, shard_id);
-                        }
-
-                        shard_session->shard_id = shard_id;
+                if(service != shard_session->downstream.service && !shards_switch_session(shard_session, service)) {
+                        SHARDS_SEND_ERROR("Error allocating new session for shard %" PRIuPTR, shard_id);
                 }
 
+                shard_session->shard_id = shard_id;
                 queue = shards_replace_db_name(queue, shard_database_id);
         } else {
                 if(shard_session->downstream.service != shard_router->downstreams[0] && !shards_switch_session(shard_session, shard_router->downstreams[0])) {
@@ -462,6 +459,8 @@ static GWBUF *shards_replace_db_name(GWBUF *queue, char *database_name) {
 
         if(is_query) {
                 query = calloc(strlen(database_name) + 5, sizeof(char));
+                // TODO: in this case should we do anything for the error handling?
+                // the replace will fail, but so will the database selection
                 if(query == NULL) {
                         return queue;
                 }

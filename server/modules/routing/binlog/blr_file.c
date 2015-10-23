@@ -176,6 +176,7 @@ blr_file_add_magic(ROUTER_INSTANCE *router, int fd)
 {
 unsigned char	magic[] = BINLOG_MAGIC;
 
+#pragma GCC diagnostic ignored "-Wunused-result"
 	write(fd, magic, 4);
 	router->binlog_position = 4;			/* Initial position after the magic number */
 }
@@ -288,6 +289,7 @@ int	n;
 			router->binlog_name,
 			strerror(errno))));
 		/* Remove any partual event that was written */
+#pragma GCC diagnostic ignored "-Wunused-result"
 		ftruncate(router->binlog_fd, hdr->next_pos - hdr->event_size);
 		return 0;
 	}
@@ -672,6 +674,7 @@ int	fd;
 
 	if ((fd = open(path, O_WRONLY|O_CREAT|O_TRUNC, 0666)) == -1)
 		return;
+#pragma GCC diagnostic ignored "-Wunused-result"
 	write(fd, GWBUF_DATA(buf), GWBUF_LENGTH(buf));
 	close(fd);
 }
@@ -712,6 +715,7 @@ GWBUF	*buf;
 		close(fd);
 		return NULL;
 	}
+#pragma GCC diagnostic ignored "-Wunused-result"
 	read(fd, GWBUF_DATA(buf), statb.st_size);
 	close(fd);
 	return buf;
@@ -846,6 +850,7 @@ double average_bytes = 0;
                                 case -1:
 					{
 					char err_msg[BLRM_STRERROR_R_MSG_SIZE+1] = "";
+#pragma GCC diagnostic ignored "-Wunused-result"
 					strerror_r(errno, err_msg, BLRM_STRERROR_R_MSG_SIZE);
                                         LOGIF(LE, (skygw_log_write_flush(LOGFILE_ERROR,
                                                 "ERROR: Failed to read binlog file %s at position %llu"
@@ -1038,6 +1043,7 @@ double average_bytes = 0;
                         if (n == -1)
                         {
 				char err_msg[BLRM_STRERROR_R_MSG_SIZE+1] = "";
+#pragma GCC diagnostic ignored "-Wunused-result"
 				strerror_r(errno, err_msg, BLRM_STRERROR_R_MSG_SIZE);
                                 LOGIF(LE, (skygw_log_write_flush(LOGFILE_ERROR,
                                         "Error reading the event at %llu in %s. "

@@ -1,8 +1,6 @@
 .git
-COPYRIGHT
 doxygate.in
-LICENSE
-README*
+README.md
 script
 support
 Vagrantfile

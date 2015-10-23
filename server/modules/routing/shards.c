@@ -74,7 +74,7 @@ static int shards_send_error(SHARD_SESSION *, char *);
 static bool shards_switch_session(SHARD_SESSION *, SERVICE *);
 static int shards_dcb_write(DCB *, GWBUF *);
 static GWBUF *shards_replace_db_name(GWBUF *, char *);
-static uintptr_t shards_handle_change_db(SHARD_ROUTER *, GWBUF **);
+static uintptr_t shards_handle_change_db(SHARD_ROUTER *, SHARD_SESSION *, GWBUF **);
 
 #define SHARDS_SEND_ERROR(format, ...) \
         gwbuf_free(queue); \
@@ -270,7 +270,7 @@ static int routeQuery(ROUTER *instance, void *session, GWBUF *queue) {
                 }
 
                 if(query_classifier_get_operation(queue) == QUERY_OP_CHANGE_DB) {
-                        account_id = shards_handle_change_db(shard_router, &queue);
+                        account_id = shards_handle_change_db(shard_router, shard_session, &queue);
                 }
         } else if(MYSQL_IS_COM_INIT_DB(bufdata)) {
                 unsigned int qlen = MYSQL_GET_PACKET_LEN(bufdata);
@@ -279,6 +279,7 @@ static int routeQuery(ROUTER *instance, void *session, GWBUF *queue) {
                         account_id = shards_find_account((char *) bufdata + 5, qlen);
                 } else if(qlen >= 7 && strncmp((char *) bufdata + 5, "account", 7) == 0) {
                         queue = shards_replace_db_name(queue, shard_router->downstreams[0]->name);
+                        shard_session->shard_id = 0;
                 }
         }
 
@@ -306,13 +307,11 @@ static int routeQuery(ROUTER *instance, void *session, GWBUF *queue) {
 
                 shard_session->shard_id = shard_id;
                 queue = shards_replace_db_name(queue, shard_database_id);
-        } else {
+        } else if(shard_session->shard_id == 0) {
                 if(shard_session->downstream.service != shard_router->downstreams[0] && !shards_switch_session(shard_session, shard_router->downstreams[0])) {
                         // TODO close session?
                         SHARDS_SEND_ERROR("Error switching to default shard");
                 }
-
-                shard_session->shard_id = 0;
         }
 
 
@@ -480,7 +479,7 @@ static GWBUF *shards_replace_db_name(GWBUF *queue, char *database_name) {
         return queue;
 }
 
-static uintptr_t shards_handle_change_db(SHARD_ROUTER *shard_router, GWBUF **queue) {
+static uintptr_t shards_handle_change_db(SHARD_ROUTER *shard_router, SHARD_SESSION *shard_session, GWBUF **queue) {
         // Based on sharding_common.c
         char *query = modutil_get_SQL(*queue);
 
@@ -504,6 +503,8 @@ static uintptr_t shards_handle_change_db(SHARD_ROUTER *shard_router, GWBUF **que
 
         if(strncmp(token, "`account`", 9) == 0 || strncmp(token, "account", 7) == 0) {
                 *queue = shards_replace_db_name(*queue, shard_router->downstreams[0]->name);
+                shard_session->shard_id = 0;
+
                 return 0;
         }
 

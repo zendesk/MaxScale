@@ -2567,7 +2567,12 @@ static int set_user(char* user)
 void write_child_exit_code(int fd, int code)
 {
     /** Notify the parent process that an error has occurred */
-    write(fd, &code, sizeof (int));
+    if(write(fd, &code, sizeof (int)) < 0) {
+            char errbuf[STRERROR_BUFLEN];
+            printf("Failed to notify parent process: %d %s\n",
+                        errno, strerror_r(errno, errbuf, sizeof(errbuf)));
+    }
+
     close(fd);
 }
 

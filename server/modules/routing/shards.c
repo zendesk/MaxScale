@@ -167,9 +167,11 @@ static void *newSession(ROUTER *instance, SESSION *session) {
         SERVICE *init_downstream = router->downstreams[0];
 
         if(mysql_session->db != NULL && strlen(mysql_session->db) > 0) {
-                uintptr_t account_id = shards_find_account(mysql_session->db, strlen(mysql_session->db) + 1);
+                uintptr_t account_id = 0;
 
-                if(account_id > 0) {
+                if(strncmp(mysql_session->db, "account", 7) == 0) {
+                        strcpy(mysql_session->db, init_downstream->name);
+                } else if((account_id = shards_find_account(mysql_session->db, strlen(mysql_session->db) + 1)) > 0) {
                         uintptr_t shard_id = shards_find_shard(router, account_id);
 
                         if(shard_id > 0) {

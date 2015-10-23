@@ -172,6 +172,7 @@ char            c;
 
 		printf("Password: ");
 		passwd = malloc(80);
+#pragma GCC diagnostic ignored "-Wunused-result"
 		fgets(passwd, 80, stdin);
 
 		tty_attr.c_lflag = c_lflag;
@@ -430,9 +431,11 @@ char	buf[20];
 
 	if (read(so, buf, 4) != 4)
 		return 0;
+#pragma GCC diagnostic ignored "-Wunused-result"
 	write(so, user, strlen(user));
 	if (read(so, buf, 8) != 8)
 		return 0;
+#pragma GCC diagnostic ignored "-Wunused-result"
 	write(so, password, strlen(password));
 	if (read(so, buf, 6) != 6)
 		return 0;

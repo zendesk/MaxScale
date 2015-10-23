@@ -319,7 +319,9 @@ char* admin_remove_user(
                                 "Error : Unable to set stream position. ")));
 
 					}
-                        fgets(line, LINELEN, fp);
+
+#pragma GCC diagnostic ignored "-Wunused-result"
+                        fgets(line, LINELEN, fp); // this should probably actually compare...
                         fputs(line, fp_tmp);
                 }
             

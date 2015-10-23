@@ -421,16 +421,16 @@ BACKEND *master_host = NULL;
 	 */
 	for (i = 0; inst->servers[i]; i++) {
 		if(inst->servers[i]) {
-			LOGIF(LD, (skygw_log_write(
-				LOGFILE_DEBUG,
-				"%lu [newSession] Examine server in port %d with "
-                                "%d connections. Status is %s, "
-				"inst->bitvalue is %d",
-                                pthread_self(),
-				inst->servers[i]->server->port,
-				inst->servers[i]->current_connection_count,
-				STRSRVSTATUS(inst->servers[i]->server),
-				inst->bitmask)));
+			//LOGIF(LD, (skygw_log_write(
+			//	LOGFILE_DEBUG,
+			//	"%lu [newSession] Examine server in port %d with "
+                        //        "%d connections. Status is %s, "
+			//	"inst->bitvalue is %d",
+                        //        pthread_self(),
+			//	inst->servers[i]->server->port,
+			//	inst->servers[i]->current_connection_count,
+			//	STRSRVSTATUS(inst->servers[i]->server),
+			//	inst->bitmask)));
 		}
 
 		if (SERVER_IN_MAINT(inst->servers[i]->server))

@@ -1658,6 +1658,7 @@ bool rule_matches(FW_INSTANCE* my_instance, FW_SESSION* my_session, GWBUF *queue
 
 	matches = false;
 	is_sql = modutil_is_SQL(queue) || modutil_is_SQL_prepare(queue);
+        is_real = false;
 	
 	if(is_sql){
 		if(!query_is_parsed(queue)){

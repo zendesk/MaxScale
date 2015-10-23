@@ -73,7 +73,7 @@ __thread log_info_t tls_log_info = {0, 0};
  * Global counter for each log file type. It indicates for how many sessions
  * each log type is currently enabled.
  */
-ssize_t log_ses_count[LOGFILE_LAST] = {0};
+ssize_t log_ses_count[LOGFILE_LAST + 1] = {0};
 
 /**
  * BUFSIZ comes from the system. It equals with block size or
@@ -678,7 +678,7 @@ static int logmanager_write_log(logfile_id_t         id,
     logfile_t*   lf;
     char*        wp;
     int          err = 0;
-    blockbuf_t*  bb;
+    blockbuf_t*  bb = NULL;
     blockbuf_t*  bb_c;
     size_t       timestamp_len;
     int          i;
@@ -882,7 +882,8 @@ static int logmanager_write_log(logfile_id_t         id,
 
         if (do_maxscalelog)
         {
-            blockbuf_unregister(bb);
+            if(bb != NULL)
+              blockbuf_unregister(bb);
         }
         else
         {

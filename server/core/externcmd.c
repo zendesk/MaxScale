@@ -18,7 +18,7 @@ int tokenize_arguments(char* args, char** argv)
     bool read = false;
     bool escaped = false;
     char *ptr,*start;
-    char qc;
+    char qc = '\0';
 
     start = args;
     ptr = start;

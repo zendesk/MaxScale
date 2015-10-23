@@ -401,6 +401,7 @@ HINT_MODE	mode = HM_EXECUTE;
 			break;
 		case HS_PVALUE:
 			/* Action: pname = tok->value */
+#pragma GCC diagnostic ignored "-Wmaybe-uninitialized"
 			rval = hint_create_parameter(rval, pname, tok->value);
 			state = HS_INIT;
 			break;

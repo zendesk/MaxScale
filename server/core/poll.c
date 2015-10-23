@@ -1342,16 +1342,18 @@ double	qavg1 = 0.0, qavg5 = 0.0, qavg15 = 0.0;
 		case THREAD_ZPROCESSING:
 			state = "Collecting";
 			break;
+                default:
+                        state = "Unknown";
 		}
 		if (thread_data[i].state != THREAD_PROCESSING)
 			dcb_printf(dcb,
 				" %2d | %-10s |        |                  |          |\n",
 				i, state);
-		else if (thread_data[i].cur_dcb == NULL)
+                else if (thread_data[i].cur_dcb == NULL)
 			dcb_printf(dcb,
 				" %2d | %-10s | %6d |                  |          |\n",
 				i, state, thread_data[i].n_fds);
-		else
+                else
 		{
 			char *event_string
 				= event_to_string(thread_data[i].event);

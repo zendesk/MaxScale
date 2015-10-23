@@ -3813,7 +3813,7 @@ static bool route_session_write(
         unsigned char      packet_type,
         skygw_query_type_t qtype)
 {
-        bool              succp;
+        bool              succp = false;
         rses_property_t*  prop;
         backend_ref_t*    backend_ref;
         int               i;

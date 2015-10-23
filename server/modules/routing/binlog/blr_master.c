@@ -1285,7 +1285,9 @@ int		action;
 		{
 			/* Slave is in catchup mode */
 			action = 3;
-		}
+		} else
+                        continue;
+
 		slave->stats.n_actions[action-1]++;
 		spinlock_release(&slave->catch_lock);
 

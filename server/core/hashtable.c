@@ -687,6 +687,7 @@ void		*key, *value;
 		close(fd);
 		return -1;
 	}
+#pragma GCC diagnostic ignored "-Wunused-result"
 	write(fd, &rval, sizeof(rval));	// Write zero counter, will be overrwriten at end
 	if ((iter = hashtable_iterator(table)) != NULL)
 	{
@@ -712,6 +713,7 @@ void		*key, *value;
 	/* Now go back and write the count of entries */
 	if(lseek(fd, 7L, SEEK_SET) != -1)
         {
+#pragma GCC diagnostic ignored "-Wunused-result"
             write(fd, &rval, sizeof(rval));
         }
 	

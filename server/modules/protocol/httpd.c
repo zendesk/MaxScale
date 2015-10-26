@@ -237,7 +237,7 @@ int	n_connect = 0;
 	{
 		int			so = -1;
 		struct sockaddr_in	addr;
-		socklen_t		addrlen;
+		socklen_t		addrlen = sizeof(addr);
 		DCB			*client = NULL;
 
 		if ((so = accept(dcb->fd, (struct sockaddr *)&addr, &addrlen)) == -1)

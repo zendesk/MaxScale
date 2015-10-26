@@ -169,9 +169,7 @@ static void *newSession(ROUTER *instance, SESSION *session) {
         if(mysql_session->db != NULL && strlen(mysql_session->db) > 0) {
                 uintptr_t account_id = 0;
 
-                if(strncmp(mysql_session->db, "account", 7) == 0) {
-                        strcpy(mysql_session->db, init_downstream->name);
-                } else if((account_id = shards_find_account(mysql_session->db, strlen(mysql_session->db) + 1)) > 0) {
+                if((account_id = shards_find_account(mysql_session->db, strlen(mysql_session->db) + 1)) > 0) {
                         uintptr_t shard_id = shards_find_shard(router, account_id);
 
                         if(shard_id > 0) {
@@ -187,6 +185,8 @@ static void *newSession(ROUTER *instance, SESSION *session) {
                                         init_shard_id = shard_id;
                                 }
                         }
+                } else if(strncmp(mysql_session->db, "account", 7) == 0) {
+                        strcpy(mysql_session->db, init_downstream->name);
                 }
         }
 

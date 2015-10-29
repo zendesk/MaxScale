@@ -352,6 +352,22 @@ int			syseno = 0;
                                       errno, strerror_r(errno, errbuf, sizeof(errbuf)));
 		return 0;
 	}
+
+        /* socket options */
+	syseno = setsockopt(listener->fd,
+                   SOL_SOCKET,
+                   SO_REUSEPORT,
+                   (char *)&one,
+                   sizeof(one));
+
+	if(syseno != 0){
+                char errbuf[STRERROR_BUFLEN];
+		skygw_log_write_flush(LOGFILE_ERROR,
+                                      "Error: Failed to set socket options. Error %d: %s",
+                                      errno, strerror_r(errno, errbuf, sizeof(errbuf)));
+		return 0;
+	}
+
         /* set NONBLOCKING mode */
         setnonblocking(listener->fd);
 

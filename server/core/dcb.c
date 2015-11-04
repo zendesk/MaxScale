@@ -1516,10 +1516,10 @@ int	above_water;
 
 	above_water = (dcb->low_water && dcb->writeqlen > dcb->low_water) ? 1 : 0;
 
-	spinlock_acquire(&dcb->writeqlock);
-
         if (dcb->writeq)
 	{
+                spinlock_acquire(&dcb->writeqlock);
+
 		int	len;
 		/*
 		 * Loop over the buffer chain in the pending writeq
@@ -1574,20 +1574,21 @@ int	above_water;
                                 dcb->fd)));
 			n += w;
 		}
+
+                spinlock_release(&dcb->writeqlock);
+                atomic_add(&dcb->writeqlen, -n);
+
+                /* The write queue has drained, potentially need to call a callback function */
+                if (dcb->writeq == NULL)
+                        dcb_call_callback(dcb, DCB_REASON_DRAINED);
+
+                if (above_water && dcb->writeqlen < dcb->low_water)
+                {
+                        atomic_add(&dcb->stats.n_low_water, 1);
+                        dcb_call_callback(dcb, DCB_REASON_LOW_WATER);
+                }
 	}
-	spinlock_release(&dcb->writeqlock);
-	atomic_add(&dcb->writeqlen, -n);
 	
-        /* The write queue has drained, potentially need to call a callback function */
-	if (dcb->writeq == NULL)
-		dcb_call_callback(dcb, DCB_REASON_DRAINED);
-
-        if (above_water && dcb->writeqlen < dcb->low_water)
-	{
-		atomic_add(&dcb->stats.n_low_water, 1);
-		dcb_call_callback(dcb, DCB_REASON_LOW_WATER);
-	}
-
 	return n;
 }
 

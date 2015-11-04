@@ -1032,10 +1032,11 @@ int	below_water;
     // The following guarantees that queue is not NULL
     if (!dcb_write_parameter_check(dcb, queue)) return 0;
     
-    spinlock_acquire(&dcb->writeqlock);
     if (dcb->writeq) 
     {
+            spinlock_acquire(&dcb->writeqlock);
         dcb_write_when_already_queued(dcb, queue);
+            spinlock_release(&dcb->writeqlock);
     }
     else
     {
@@ -1059,6 +1060,7 @@ int	below_water;
             {
 		int saved_errno = errno;
                 dcb_log_write_failure(dcb, queue, saved_errno);
+                spinlock_acquire(&dcb->writeqlock);
 
                 /*<
                  * What wasn't successfully written is stored to write queue
@@ -1309,8 +1311,6 @@ dcb_log_write_failure(DCB *dcb, GWBUF *queue, int eno)
 static inline void
 dcb_write_tidy_up (DCB *dcb, bool below_water)
 {
-    spinlock_release(&dcb->writeqlock);
-
     if (dcb->high_water && dcb->writeqlen > dcb->high_water && below_water)
     {
         atomic_add(&dcb->stats.n_high_water, 1);
@@ -1337,11 +1337,11 @@ dcb_write_SSL(DCB *dcb, GWBUF *queue)
     // The following guarantees that queue is not NULL
     if (!dcb_write_parameter_check(dcb, queue)) return 0;
 
-    spinlock_acquire(&dcb->writeqlock);
-
     if (dcb->writeq)
     {
+            spinlock_acquire(&dcb->writeqlock);
         dcb_write_when_already_queued(dcb, queue);
+            spinlock_release(&dcb->writeqlock);
     }
     else
     {

@@ -71,6 +71,9 @@ macro(set_variables)
   # Use tcmalloc as the memory allocator
   set(WITH_TCMALLOC FALSE CACHE BOOL "Use tcmalloc as the memory allocator")
 
+  # Use tcmalloc as the memory allocator
+  set(WITH_TCMALLOC_MINIMAL FALSE CACHE BOOL "Use tcmalloc_minimal as the memory allocator")
+
   # Use jemalloc as the memory allocator
   set(WITH_JEMALLOC FALSE CACHE BOOL "Use jemalloc as the memory allocator")
 

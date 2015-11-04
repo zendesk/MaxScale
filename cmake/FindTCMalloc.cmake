@@ -11,7 +11,7 @@ else()
 endif()
 
 find_library(TCMALLOC_MINIMAL_LIBRARIES NAMES tcmalloc_minimal libtcmalloc_minimal.so.4 libtcmalloc_minimal.so.4.2.2)
-if(TCMALLOC_MINIMALLIBRARIES)
+if(TCMALLOC_MINIMAL_LIBRARIES)
     set(TCMALLOC_MINIMAL_FOUND TRUE CACHE INTERNAL "")
     message(STATUS "Found libtcmalloc_minimal: ${TCMALLOC_MINIMAL_LIBRARIES}")
 else()

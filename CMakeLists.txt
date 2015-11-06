@@ -96,8 +96,11 @@ configure_file(${CMAKE_SOURCE_DIR}/etc/postinst.in ${CMAKE_BINARY_DIR}/postinst 
 configure_file(${CMAKE_SOURCE_DIR}/etc/postrm.in ${CMAKE_BINARY_DIR}/postrm @ONLY)
 configure_file(${CMAKE_SOURCE_DIR}/server/test/maxscale_test.cnf ${CMAKE_BINARY_DIR}/maxscale.cnf @ONLY)
 
-set(FLAGS "-Wall -Wno-unused-variable -Wno-unused-function -Werror -fPIC" CACHE STRING "Compilation flags")
-set(DEBUG_FLAGS "-ggdb -pthread -pipe -Wformat -fstack-protector --param=ssp-buffer-size=4" CACHE STRING "Debug compilation flags")
+set(FLAGS "-Wall -Wno-unused-variable -Wno-unused-function -Werror -fPIE -mcmodel=large" CACHE STRING "Compilation flags")
+set(DEBUG_FLAGS "-fsanitize=thread -ggdb -pthread -fno-stack-protector -pipe -Wformat" CACHE STRING "Debug compilation flags")
+
+set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -rdynamic -shared")
+set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -pie")
 
 if(CMAKE_VERSION VERSION_GREATER 2.6)
   if((CMAKE_C_COMPILER_ID STREQUAL "GNU") AND (NOT (CMAKE_C_COMPILER_VERSION VERSION_LESS 4.2)))

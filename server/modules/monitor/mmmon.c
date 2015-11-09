@@ -503,7 +503,7 @@ char 		  *server_string;
 	}
 
 	/* get variable 'read_only' set by an external component */
-	if (mysql_query(database->con, "SHOW GLOBAL VARIABLES LIKE 'read_only'") == 0
+	if (mysql_query(database->con, "SHOW GLOBAL VARIABLES LIKE 'innodb_read_only'") == 0
 		&& (result = mysql_store_result(database->con)) != NULL)
 	{
 		if(mysql_field_count(database->con) < 2)

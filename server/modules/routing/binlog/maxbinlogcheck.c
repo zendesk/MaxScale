@@ -63,9 +63,6 @@
 #include <version.h>
 #include <gwdirs.h>
 
-extern int lm_enabled_logfiles_bitmask;
-extern size_t         log_ses_count[];
-extern __thread log_info_t tls_log_info;
 extern int blr_read_events_all_events(ROUTER_INSTANCE *router, int fix, int debug);
 extern uint32_t extract_field(uint8_t *src, int bits);
 static void printVersion(const char *progname);
@@ -80,11 +77,15 @@ static struct option long_options[] = {
   {0, 0, 0, 0}
 };
 
-char *binlog_check_version = "1.0.0";
+char *binlog_check_version = "1.1.0";
+
+int
+MaxScaleUptime()
+{
+return 1;
+}
 
 int main(int argc, char **argv) {
-	char** arg_vector;
-	int arg_count = 4;
 	ROUTER_INSTANCE *inst;
 	int fd;
 	int ret;
@@ -123,36 +124,15 @@ int main(int argc, char **argv) {
 
 	num_args = optind;
 
-	arg_vector = malloc(sizeof(char*)*(arg_count + 1));
-
-	if(arg_vector == NULL)
-	{
-		fprintf(stderr,"Error: Memory allocation failed for log manager arg_vector.\n");
-		return 1;
-	}
-
-	arg_vector[0] = "logmanager";
-	arg_vector[1] = "-j";
-	arg_vector[2] = "/tmp/maxbinlogcheck";
-	arg_vector[3] = "-o";
-	arg_vector[4] = NULL;
-	skygw_logmanager_init(arg_count,arg_vector);
-
-	skygw_log_set_augmentation(0);
-
-	free(arg_vector);
-
-	if (!debug_out)
-		skygw_log_disable(LOGFILE_DEBUG);
-	else
-		skygw_log_enable(LOGFILE_DEBUG);
+	mxs_log_init(NULL, NULL, LOG_TARGET_DEFAULT);
+	mxs_log_set_augmentation(0);
+	mxs_log_set_priority_enabled(LOG_DEBUG, debug_out);
 
 	if ((inst = calloc(1, sizeof(ROUTER_INSTANCE))) == NULL) {
-		LOGIF(LE, (skygw_log_write_flush(LOGFILE_ERROR,
-			"Error: Memory allocation failed for ROUTER_INSTANCE")));
+		MXS_ERROR("Memory allocation failed for ROUTER_INSTANCE");
 
-		skygw_log_sync_all();
-      		skygw_logmanager_done();
+		mxs_log_flush_sync();
+      		mxs_log_finish();
 
 		return 1;
 	}
@@ -171,12 +151,11 @@ int main(int argc, char **argv) {
 
 	if (fd == -1)
 	{
-		LOGIF(LE, (skygw_log_write(LOGFILE_ERROR,
-			"Failed to open binlog file %s: %s",
-			path, strerror(errno))));
+		MXS_ERROR("Failed to open binlog file %s: %s",
+                          path, strerror(errno));
         
-		skygw_log_sync_all();
-		skygw_logmanager_done();
+		mxs_log_flush_sync();
+		mxs_log_finish();
 
 		free(inst);
 
@@ -194,27 +173,24 @@ int main(int argc, char **argv) {
 	else
 		strncpy(inst->binlog_name, path, BINLOG_FNAMELEN);
 
-	LOGIF(LM, (skygw_log_write_flush(LOGFILE_MESSAGE,
-		"maxbinlogcheck %s", binlog_check_version)));
+	MXS_NOTICE("maxbinlogcheck %s", binlog_check_version);
 
 	if (fstat(inst->binlog_fd, &statb) == 0)
 		filelen = statb.st_size;
 
-	LOGIF(LM, (skygw_log_write_flush(LOGFILE_MESSAGE,
-		"Checking %s (%s), size %lu bytes", path, inst->binlog_name, filelen)));
+	MXS_NOTICE("Checking %s (%s), size %lu bytes", path, inst->binlog_name, filelen);
 
 	/* read binary log */
 	ret = blr_read_events_all_events(inst, fix_file, debug_out);
 
 	close(inst->binlog_fd);
 
-	skygw_log_sync_all();
+	mxs_log_flush_sync();
 
-	LOGIF(LM, (skygw_log_write_flush(LOGFILE_MESSAGE,
-		"Check retcode: %i, Binlog Pos = %llu", ret, inst->binlog_position)));
+	MXS_NOTICE("Check retcode: %i, Binlog Pos = %lu", ret, inst->binlog_position);
 
-	skygw_log_sync_all();
-	skygw_logmanager_done();
+	mxs_log_flush_sync();
+	mxs_log_finish();
 
 	free(inst);
 

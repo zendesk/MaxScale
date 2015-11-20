@@ -21,10 +21,10 @@ then
 fi
 
 # Change the owner of the directories to maxscale:maxscale
-chown maxscale:maxscale @MAXSCALE_VARDIR@/log/maxscale
-chown maxscale:maxscale @MAXSCALE_VARDIR@/lib/maxscale
-chown maxscale:maxscale @MAXSCALE_VARDIR@/cache/maxscale
-chown maxscale:maxscale @MAXSCALE_VARDIR@/run/maxscale
+chown -R maxscale:maxscale @MAXSCALE_VARDIR@/log/maxscale
+chown -R maxscale:maxscale @MAXSCALE_VARDIR@/lib/maxscale
+chown -R maxscale:maxscale @MAXSCALE_VARDIR@/cache/maxscale
+chown -R maxscale:maxscale @MAXSCALE_VARDIR@/run/maxscale
 chmod 0755 @MAXSCALE_VARDIR@/log/maxscale
 chmod 0755 @MAXSCALE_VARDIR@/lib/maxscale
 chmod 0755 @MAXSCALE_VARDIR@/cache/maxscale
@@ -46,6 +46,13 @@ then
     cp @CMAKE_INSTALL_PREFIX@/@MAXSCALE_SHAREDIR@/maxscale.service /usr/lib/systemd/system
     systemctl daemon-reload
 fi
+
+# If no maxscale.cnf file is found in /etc, copy the template file there
+if [ ! -f "@MAXSCALE_CONFDIR@/maxscale.cnf" ]
+then
+    cp -n @MAXSCALE_CONFDIR@/maxscale.cnf.template @MAXSCALE_CONFDIR@/maxscale.cnf
+fi
+
 /sbin/ldconfig
 
 cat <<EOF >& 2

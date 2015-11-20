@@ -329,7 +329,7 @@ static void master_cut(void *arg) {
         goto free;
 
 error:
-        MXS_ERROR(errmsg);
+        MXS_ERROR("%s", errmsg);
         free(errmsg);
 
 free:

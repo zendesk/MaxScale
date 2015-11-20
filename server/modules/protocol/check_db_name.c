@@ -7,29 +7,37 @@
 
 extern int __real_check_db_name_after_auth(DCB *, char *, int);
 
-int __wrap_check_db_name_after_auth(DCB *dcb, char *database, int auth_ret) {
-    if(database != NULL && strlen(database) > 0) {
+int __wrap_check_db_name_after_auth(DCB *dcb, char *database, int auth_ret)
+{
+    if (database != NULL && strlen(database) > 0)
+    {
         uintptr_t account_id = 0;
 
-        if(strncmp("account_", database, 8) == 0) {
+        if (strncmp("account_", database, 8) == 0)
+        {
             account_id = strtol(database + 8, NULL, 0);
-        } else if(strncmp("account", database, 7) == 0) {
+        }
+        else if (strncmp("account", database, 7) == 0)
+        {
             return auth_ret;
-        } else {
+        }
+        else
+        {
             goto ret;
         }
 
         MONITOR *monitor = monitor_find("account monitor");
 
-        if(monitor == NULL)
+        if (monitor == NULL)
             goto ret;
 
         ACCOUNT_MONITOR *handle = (ACCOUNT_MONITOR *) monitor->handle;
 
-        if(handle == NULL)
+        if (handle == NULL)
             goto ret;
 
-        if(account_monitor_find_shard(handle, account_id) > 0) {
+        if (account_monitor_find_shard(handle, account_id) > 0)
+        {
             return auth_ret;
         }
     }

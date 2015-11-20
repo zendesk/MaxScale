@@ -43,7 +43,8 @@
 #include <log_manager.h>
 #include <resultset.h>
 
-MODULE_INFO info = {
+MODULE_INFO info =
+{
     MODULE_API_PROTOCOL,
     MODULE_IN_DEVELOPMENT,
     GWPROTOCOL_VERSION,
@@ -70,7 +71,8 @@ static int on_header_value(http_parser *, const char *, size_t);
 static int on_body(http_parser *, const char *, size_t);
 static int on_message_complete(http_parser *);
 
-static http_parser_settings http_settings = {
+static http_parser_settings http_settings =
+{
     .on_url = on_url,
     .on_header_field = on_header_field,
     .on_header_value = on_header_value,
@@ -100,8 +102,7 @@ static GWPROTOCOL MyObject = {
  *
  * @return version string of the module
  */
-    char *
-version()
+char *version()
 {
     return version_str;
 }
@@ -110,8 +111,7 @@ version()
  * The module initialisation routine, called when the module
  * is first loaded.
  */
-    void
-ModuleInit()
+void ModuleInit()
 {
 }
 
@@ -123,8 +123,7 @@ ModuleInit()
  *
  * @return The module object
  */
-    GWPROTOCOL *
-GetModuleObject()
+GWPROTOCOL *GetModuleObject()
 {
     return &MyObject;
 }
@@ -135,8 +134,7 @@ GetModuleObject()
  * @param dcb	The descriptor control block
  * @return
  */
-    static int
-httpd_read_event(DCB* dcb)
+static int httpd_read_event(DCB* dcb)
 {
     SESSION		*session = dcb->session;
     ROUTER_OBJECT	*router = session->service->router;
@@ -148,7 +146,8 @@ httpd_read_event(DCB* dcb)
     char buf[HTTPD_SMALL_BUFFER];
     ssize_t recved = recv(dcb->fd, buf, HTTPD_SMALL_BUFFER, 0);
 
-    if (recved < 0) {
+    if (recved < 0)
+    {
         /* Handle error. */
         dcb_close(dcb);
     }
@@ -158,7 +157,8 @@ httpd_read_event(DCB* dcb)
      *   */
     size_t nparsed = http_parser_execute(parser, &http_settings, buf, recved);
 
-    if (parser->upgrade || nparsed != recved) {
+    if (parser->upgrade || nparsed != recved)
+    {
         // Error or upgrade request, just close it
         dcb_close(dcb);
     }
@@ -172,8 +172,7 @@ httpd_read_event(DCB* dcb)
  * @param dcb	The descriptor control block
  * @return
  */
-    static int
-httpd_write_event(DCB *dcb)
+static int httpd_write_event(DCB *dcb)
 {
     return dcb_drain_writeq(dcb);
 }
@@ -187,8 +186,7 @@ httpd_write_event(DCB *dcb)
  * @param dcb	Descriptor Control Block for the socket
  * @param queue	Linked list of buffes to write
  */
-    static int
-httpd_write(DCB *dcb, GWBUF *queue)
+static int httpd_write(DCB *dcb, GWBUF *queue)
 {
     return dcb_write(dcb, queue);
 }
@@ -198,8 +196,7 @@ httpd_write(DCB *dcb, GWBUF *queue)
  *
  * @param dcb	The descriptor control block
  */
-    static int
-httpd_error(DCB *dcb)
+static int httpd_error(DCB *dcb)
 {
     dcb_close(dcb);
     return 0;
@@ -210,8 +207,7 @@ httpd_error(DCB *dcb)
  *
  * @param dcb	The descriptor control block
  */
-    static int
-httpd_hangup(DCB *dcb)
+static int httpd_hangup(DCB *dcb)
 {
     dcb_close(dcb);
     return 0;
@@ -223,37 +219,38 @@ httpd_hangup(DCB *dcb)
  *
  * @param dcb	The descriptor control block
  */
-    static int
-httpd_accept(DCB *dcb)
+static int httpd_accept(DCB *dcb)
 {
     int	n_connect = 0;
 
     while (1)
+
     {
         int			so = -1;
         struct sockaddr_in	addr;
         socklen_t		addrlen = sizeof(addr);
         DCB			*client = NULL;
 
-        if ((so = accept(dcb->fd, (struct sockaddr *)&addr, &addrlen)) == -1)
+        if ((so = accept(dcb->fd, (struct sockaddr *)&addr, &addrlen)) == -1) {
             return n_connect;
+        }
         else
         {
             atomic_add(&dcb->stats.n_accepts, 1);
 
-            if((client = dcb_alloc(DCB_ROLE_REQUEST_HANDLER))){
+            if ((client = dcb_alloc(DCB_ROLE_REQUEST_HANDLER))){
                 client->fd = so;
                 client->remote = strdup(inet_ntoa(addr.sin_addr));
                 memcpy(&client->func, &MyObject, sizeof(GWPROTOCOL));
 
                 HTTPD_session *session = calloc(1, sizeof(HTTPD_session));
 
-                if(session == NULL) { // todo
+                if (session == NULL) { // todo
                 }
 
                 session->parser = malloc(sizeof(http_parser));
 
-                if(session->parser == NULL) { // todo
+                if (session->parser == NULL) { // todo
                 }
 
                 http_parser_init(session->parser, HTTP_REQUEST);
@@ -267,6 +264,7 @@ httpd_accept(DCB *dcb)
                 client->session = session_alloc(dcb->session->service, client);
 
                 if (poll_add_dcb(client) == -1)
+
                 {
                     close(so);
                     return n_connect;
@@ -286,19 +284,24 @@ httpd_accept(DCB *dcb)
  * @param dcb	The descriptor control block
  */
 
-static int httpd_close(DCB *dcb) {
+static int httpd_close(DCB *dcb)
+{
     HTTPD_session *session = dcb->data;
 
-    if(session != NULL) {
-        if(session->body != NULL) {
+    if (session != NULL)
+    {
+        if (session->body != NULL)
+        {
             free(session->body);
         }
 
-        if(session->url != NULL) {
+        if (session->url != NULL)
+        {
             free(session->url);
         }
 
-        if(session->url_fields != NULL) {
+        if (session->url_fields != NULL)
+        {
             free(session->url_fields);
         }
 
@@ -329,6 +332,7 @@ httpd_listen(DCB *listener, char *config)
         return 0;
 
     if ((listener->fd = socket(AF_INET, SOCK_STREAM, 0)) < 0)
+
     {
         return 0;
     }
@@ -340,7 +344,7 @@ httpd_listen(DCB *listener, char *config)
             (char *)&one,
             sizeof(one));
 
-    if(syseno != 0){
+    if (syseno != 0){
         char errbuf[STRERROR_BUFLEN];
         MXS_ERROR("Error: Failed to set socket options. Error %d: %s",
                 errno, strerror_r(errno, errbuf, sizeof(errbuf)));
@@ -354,7 +358,7 @@ httpd_listen(DCB *listener, char *config)
             (char *)&one,
             sizeof(one));
 
-    if(syseno != 0){
+    if (syseno != 0){
         char errbuf[STRERROR_BUFLEN];
         MXS_ERROR("Error: Failed to set socket options. Error %d: %s",
                 errno, strerror_r(errno, errbuf, sizeof(errbuf)));
@@ -366,15 +370,19 @@ httpd_listen(DCB *listener, char *config)
 
     /* bind address and port */
     if (bind(listener->fd, (struct sockaddr *)&addr, sizeof(addr)) < 0)
+
     {
         return 0;
     }
 
     rc = listen(listener->fd, SOMAXCONN);
 
-    if (rc == 0) {
+    if (rc == 0)
+    {
         MXS_INFO("Listening httpd connections at %s", config);
-    } else {
+    }
+    else
+    {
         int eno = errno;
         errno = 0;
         char errbuf[STRERROR_BUFLEN];
@@ -387,6 +395,7 @@ httpd_listen(DCB *listener, char *config)
 
 
     if (poll_add_dcb(listener) == -1)
+
     {
         return 0;
     }
@@ -394,14 +403,16 @@ httpd_listen(DCB *listener, char *config)
     return 1;
 }
 
-static int on_message_complete(http_parser *parser) {
+static int on_message_complete(http_parser *parser)
+{
     DCB *dcb = parser->data;
     HTTPD_session *session = dcb->data;
 
     session->method = parser->method;
     session->url_fields = malloc(sizeof(struct http_parser_url));
 
-    if(session->url_fields == NULL) {
+    if (session->url_fields == NULL)
+    {
         httpd_respond_error(dcb, 500, "Could not parse request.");
         return 1;
     }
@@ -414,11 +425,13 @@ static int on_message_complete(http_parser *parser) {
     return 0;
 }
 
-static int on_url(http_parser *parser, const char *at, size_t length) {
+static int on_url(http_parser *parser, const char *at, size_t length)
+{
     DCB *dcb = parser->data;
     HTTPD_session *session = dcb->data;
 
-    if(append(&session->url, &session->url_len, at, length) != 0) {
+    if (append(&session->url, &session->url_len, at, length) != 0)
+    {
         httpd_respond_error(dcb, 500, "Could not parse request.");
         return 1;
     }
@@ -429,14 +442,17 @@ static int on_url(http_parser *parser, const char *at, size_t length) {
 static int last_header_was_value = 0;
 #define CURRENT_HEADER (&session->headers[session->headers_len])
 
-static int on_header_field(http_parser *parser, const char *at, size_t length) {
+static int on_header_field(http_parser *parser, const char *at, size_t length)
+{
     DCB *dcb = parser->data;
     HTTPD_session *session = dcb->data;
 
-    if(last_header_was_value != 0 || CURRENT_HEADER->field == NULL) {
+    if (last_header_was_value != 0 || CURRENT_HEADER->field == NULL)
+    {
         session->headers_len++;
 
-        if(session->headers_len == HTTPD_MAX_HEADER_LINES) {
+        if (session->headers_len == HTTPD_MAX_HEADER_LINES)
+        {
             httpd_respond_error(dcb, 500, "Could not parse request.");
             return 1;
         }
@@ -445,7 +461,9 @@ static int on_header_field(http_parser *parser, const char *at, size_t length) {
         CURRENT_HEADER->field = malloc(length + 1);
 
         strncpy(CURRENT_HEADER->field, at, length);
-    } else {
+    }
+    else
+    {
         assert(CURRENT_HEADER->value_len == 0);
         assert(CURRENT_HEADER->value == NULL);
 
@@ -462,16 +480,20 @@ static int on_header_field(http_parser *parser, const char *at, size_t length) {
     return 0;
 }
 
-static int on_header_value(http_parser *parser, const char *at, size_t length) {
+static int on_header_value(http_parser *parser, const char *at, size_t length)
+{
     DCB *dcb = parser->data;
     HTTPD_session *session = dcb->data;
 
-    if(last_header_was_value == 0) {
+    if (last_header_was_value == 0)
+    {
         CURRENT_HEADER->value_len = length;
         CURRENT_HEADER->value = malloc(length + 1);
 
         strncpy(CURRENT_HEADER->value, at, length);
-    } else {
+    }
+    else
+    {
         CURRENT_HEADER->value_len += length;
         CURRENT_HEADER->value = realloc(CURRENT_HEADER->value, CURRENT_HEADER->value_len + 1);
         strncat(CURRENT_HEADER->value, at, length);
@@ -484,11 +506,13 @@ static int on_header_value(http_parser *parser, const char *at, size_t length) {
     return 0;
 }
 
-static int on_body(http_parser *parser, const char *at, size_t length) {
+static int on_body(http_parser *parser, const char *at, size_t length)
+{
     DCB *dcb = parser->data;
     HTTPD_session *session = dcb->data;
 
-    if(append(&session->body, &session->body_len, at, length) != 0) {
+    if (append(&session->body, &session->body_len, at, length) != 0)
+    {
         httpd_respond_error(dcb, 500, "Could not parse request.");
         return 1;
     }
@@ -496,21 +520,27 @@ static int on_body(http_parser *parser, const char *at, size_t length) {
     return 0;
 }
 
-static int append(char **ptr, size_t *len, const char *at, size_t length) {
-    if(*len == 0) {
+static int append(char **ptr, size_t *len, const char *at, size_t length)
+{
+    if (*len == 0)
+    {
         *len = length;
         *ptr = malloc(length + 1);
 
-        if(*ptr == NULL) {
+        if (*ptr == NULL)
+        {
             return 1;
         }
 
         strncpy(*ptr, at, length);
-    } else {
+    }
+    else
+    {
         *len += length;
         *ptr = realloc(*ptr, *len + 1);
 
-        if(*ptr == NULL) {
+        if (*ptr == NULL)
+        {
             return 1;
         }
 
@@ -522,7 +552,8 @@ static int append(char **ptr, size_t *len, const char *at, size_t length) {
     return 0;
 }
 
-void httpd_respond_error(DCB *dcb, int err, char *msg) {
+void httpd_respond_error(DCB *dcb, int err, char *msg)
+{
     // TODO
 
     dcb_printf(dcb, "HTTP/1.1 %d\n", err);

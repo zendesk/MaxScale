@@ -19,24 +19,28 @@
 #include <flexmaster.h>
 #include <readwritesplit.h>
 
-MODULE_INFO info = {
+MODULE_INFO info =
+{
     MODULE_API_ROUTER,
     MODULE_GA,
     ROUTER_VERSION,
     "The flexmaster admin interface"
 };
 
-typedef struct {
+typedef struct
+{
     SERVICE *service;
     FLEXMASTER_FILTER_INSTANCE *filter;
     bool running;
 } FLEXMASTER_INSTANCE;
 
-typedef struct {
+typedef struct
+{
     SESSION *session;
 } FLEXMASTER_SESSION;
 
-struct flexmaster_parameters {
+struct flexmaster_parameters
+{
     // Set by parse_url_parameters
     char *old_master, *new_master;
     bool rehome, start_slave;
@@ -89,7 +93,8 @@ static void parse_url_parameters(struct flexmaster_parameters *);
 static int parse_host_and_port(char *, SERVER **);
 
 /** The module object definition */
-static ROUTER_OBJECT MyObject = {
+static ROUTER_OBJECT MyObject =
+{
     createInstance,
     newSession,
     closeSession,
@@ -106,7 +111,8 @@ static ROUTER_OBJECT MyObject = {
  *
  * @return version string of the module
  */
-char *version() {
+char *version()
+{
     return version_str;
 }
 
@@ -114,7 +120,8 @@ char *version() {
  * The module initialisation routine, called when the module
  * is first loaded.
  */
-void ModuleInit() {
+void ModuleInit()
+{
     MXS_INFO("flexmaster router startup %s.\n", version_str);
 }
 
@@ -126,7 +133,8 @@ void ModuleInit() {
  *
  * @return The module object
  */
-ROUTER_OBJECT *GetModuleObject() {
+ROUTER_OBJECT *GetModuleObject()
+{
     return &MyObject;
 }
 
@@ -139,28 +147,36 @@ ROUTER_OBJECT *GetModuleObject() {
  *
  * @return The instance data for this new instance
  */
-static ROUTER *createInstance(SERVICE *service, char **options) {
-    if(options == NULL) {
+static ROUTER *createInstance(SERVICE *service, char **options)
+{
+    if (options == NULL)
+    {
         MXS_ERROR("flexmaster: not enough router_options. expected flexmaster_filter");
         return NULL;
     }
 
     FLEXMASTER_INSTANCE *instance;
 
-    if((instance = calloc(1, sizeof(FLEXMASTER_INSTANCE))) != NULL) {
+    if ((instance = calloc(1, sizeof(FLEXMASTER_INSTANCE))) != NULL)
+    {
         instance->service = service;
         instance->running = false;
 
         FILTER_DEF *filter_def;
-        if((filter_def = filter_find(options[0])) == NULL) {
+        if ((filter_def = filter_find(options[0])) == NULL)
+        {
             MXS_ERROR("flexmaster: could not find flexmaster_filter \"%s\"", options[0]);
-        } else {
+        }
+        else
+        {
             // Filter instance is lazy-created on filterApply, so we generally need this
-            if(filter_def->obj == NULL) {
+            if (filter_def->obj == NULL)
+            {
                 filter_def->obj = load_module(filter_def->module, MODULE_FILTER);
             }
 
-            if(filter_def->obj != NULL && filter_def->filter == NULL) {
+            if (filter_def->obj != NULL && filter_def->filter == NULL)
+            {
                 filter_def->filter = (filter_def->obj->createInstance)(filter_def->options, filter_def->parameters);
             }
 
@@ -179,10 +195,11 @@ static ROUTER *createInstance(SERVICE *service, char **options) {
  * @param session The session itself
  * @return Session specific data for this session
  */
-static void *newSession(ROUTER *instance, SESSION *session) {
+static void *newSession(ROUTER *instance, SESSION *session)
+{
     FLEXMASTER_SESSION *flex_session = (FLEXMASTER_SESSION *) malloc(sizeof(FLEXMASTER_SESSION));
 
-    if(flex_session == NULL)
+    if (flex_session == NULL)
         return NULL;
 
     flex_session->session = session;
@@ -196,7 +213,8 @@ static void *newSession(ROUTER *instance, SESSION *session) {
  * @param instance  The router instance data
  * @param router_session The session being closed
  */
-static void closeSession(ROUTER *instance, void *session) {
+static void closeSession(ROUTER *instance, void *session)
+{
     free(session);
 }
 
@@ -206,7 +224,8 @@ static void closeSession(ROUTER *instance, void *session) {
  * @param router_instance The router session
  * @param router_client_session The router session as returned from newSession
  */
-static void freeSession(ROUTER* router_instance, void *router_client_session) {
+static void freeSession(ROUTER* router_instance, void *router_client_session)
+{
     return;
 }
 
@@ -220,7 +239,8 @@ static void freeSession(ROUTER* router_instance, void *router_client_session) {
  * @param queue   The queue of data buffers to route
  * @return The number of bytes sent
  */
-static int routeQuery(ROUTER *instance, void *session, GWBUF *queue) {
+static int routeQuery(ROUTER *instance, void *session, GWBUF *queue)
+{
     FLEXMASTER_INSTANCE *flex_instance = (FLEXMASTER_INSTANCE *) instance;
     FLEXMASTER_SESSION *flex_session = session;
     DCB *dcb = flex_session->session->client;
@@ -228,18 +248,25 @@ static int routeQuery(ROUTER *instance, void *session, GWBUF *queue) {
 
     int path = 1 << UF_PATH;
 
-    if((http_session->url_fields->field_set & path) == path) {
+    if ((http_session->url_fields->field_set & path) == path)
+    {
         int offset = http_session->url_fields->field_data[UF_PATH].off;
         int len = http_session->url_fields->field_data[UF_PATH].len;
 
         char *path = http_session->url + offset;
 
-        if(strncmp(path, "/", len) == 0 && http_session->method == HTTP_GET) {
+        if (strncmp(path, "/", len) == 0 && http_session->method == HTTP_GET)
+        {
             diagnostics(instance, dcb);
-        } else if(strncmp(path, "/master_cut", len) == 0 && http_session->method == HTTP_POST) {
-            if(flex_instance->running) {
+        }
+        else if (strncmp(path, "/master_cut", len) == 0 && http_session->method == HTTP_POST)
+        {
+            if (flex_instance->running)
+            {
                 httpd_respond_error(dcb, 400, "There is already a master cut in progress.");
-            } else {
+            }
+            else
+            {
                 struct flexmaster_parameters *params = calloc(1, sizeof(struct flexmaster_parameters));
                 // TODO NULL
 
@@ -252,9 +279,12 @@ static int routeQuery(ROUTER *instance, void *session, GWBUF *queue) {
 
                 parse_url_parameters(params); // TODO errors
 
-                if(thread_start(master_cut, params) == NULL) {
+                if (thread_start(master_cut, params) == NULL)
+                {
                     httpd_respond_error(dcb, 400, "There was an error starting a new master cut thread.");
-                } else {
+                }
+                else
+                {
                     // We just throw the thread into the ether, there's nothing we can do
                     flex_instance->running = true;
 
@@ -262,66 +292,84 @@ static int routeQuery(ROUTER *instance, void *session, GWBUF *queue) {
                     dcb_close(dcb);
                 }
             }
-        } else {
+        }
+        else
+        {
             httpd_respond_error(dcb, 404, "Could not find path to route.");
         }
-    } else {
+    }
+    else
+    {
         httpd_respond_error(dcb, 404, "Could not find path to route.");
     }
 
     return 0;
 }
 
-static void master_cut(void *arg) {
+static void master_cut(void *arg)
+{
     struct flexmaster_parameters *params = (struct flexmaster_parameters *) arg;
     FLEXMASTER_INSTANCE *flex_instance = params->instance;
 
-    if(params->old_master == NULL || params->new_master == NULL) {
+    if (params->old_master == NULL || params->new_master == NULL)
+    {
         error("Missing required parameters old_master and new_master");
         goto error;
     }
 
-    if(parse_host_and_port(params->old_master, &params->old_master_server) != 0) {
+    if (parse_host_and_port(params->old_master, &params->old_master_server) != 0)
+    {
         goto error;
     }
 
-    if(parse_host_and_port(params->new_master, &params->new_master_server) != 0) {
+    if (parse_host_and_port(params->new_master, &params->new_master_server) != 0)
+    {
         goto error;
     }
 
-    if((params->old_master_connection = mysql_connect(flex_instance->service, params->old_master_server->name, params->old_master_server->port)) == NULL) {
+    if ((params->old_master_connection = mysql_connect(flex_instance->service, params->old_master_server->name, params->old_master_server->port)) == NULL)
+    {
         goto error;
     }
 
-    if((params->new_master_connection = mysql_connect(flex_instance->service, params->new_master_server->name, params->new_master_server->port)) == NULL) {
+    if ((params->new_master_connection = mysql_connect(flex_instance->service, params->new_master_server->name, params->new_master_server->port)) == NULL)
+    {
         goto error;
     }
 
-    if(preflight_check(params) != 0) {
+    if (preflight_check(params) != 0)
+    {
         goto error;
     }
 
-    if(lock(flex_instance) != 0) {
+    if (lock(flex_instance) != 0)
+    {
         goto error;
     }
 
-    if(swap(params) != 0) {
+    if (swap(params) != 0)
+    {
         goto error;
     }
 
-    if(params->rehome) {
-        if(rehome(params) != 0) {
+    if (params->rehome)
+    {
+        if (rehome(params) != 0)
+        {
             goto error;
         }
 
-        if(params->start_slave) {
-            if(start_slave(params) != 0) {
+        if (params->start_slave)
+        {
+            if (start_slave(params) != 0)
+            {
                 goto error;
             }
         }
     }
 
-    if(unlock(flex_instance, params) != 0) {
+    if (unlock(flex_instance, params) != 0)
+    {
         goto error;
     }
 
@@ -333,15 +381,18 @@ error:
     free(errmsg);
 
 free:
-    if(params->new_master_master_host != NULL) {
+    if (params->new_master_master_host != NULL)
+    {
         free(params->new_master_master_host);
     }
 
-    if(params->old_master_connection != NULL) {
+    if (params->old_master_connection != NULL)
+    {
         mysql_close(params->old_master_connection);
     }
 
-    if(params->new_master_connection != NULL) {
+    if (params->new_master_connection != NULL)
+    {
         mysql_close(params->new_master_connection);
     }
 
@@ -349,46 +400,54 @@ free:
     free(params);
 }
 
-static int lock(FLEXMASTER_INSTANCE *instance) {
-    if(instance->filter != NULL) {
+static int lock(FLEXMASTER_INSTANCE *instance)
+{
+    if (instance->filter != NULL)
+    {
         spinlock_acquire(&instance->filter->transaction_lock);
 
         // spinlock on the num of open transactions
         // TODO timeout?
-        while(instance->filter->transactions_open > 0);
+        while (instance->filter->transactions_open > 0);
     }
 
     return 0;
 }
 
-static int unlock(FLEXMASTER_INSTANCE *instance, struct flexmaster_parameters *params) {
+static int unlock(FLEXMASTER_INSTANCE *instance, struct flexmaster_parameters *params)
+{
     // spinlock on new master status
     // TODO timeout?
-    while(!SERVER_IS_MASTER(params->new_master_server));
+    while (!SERVER_IS_MASTER(params->new_master_server));
 
-    if(instance->filter != NULL) {
+    if (instance->filter != NULL)
+    {
         DCB *dcb;
         int i = 0;
 
         // Lock the session?
-        // while((dcb = instance->filter->waiting_clients[i++]) != NULL) {
+        // while ((dcb = instance->filter->waiting_clients[i++]) != NULL) {
         //}
 
         spinlock_release(&instance->filter->transaction_lock);
 
         i = 0;
-        while((dcb = instance->filter->waiting_clients[i++]) != NULL) {
+        while ((dcb = instance->filter->waiting_clients[i++]) != NULL)
+        {
             ROUTER_CLIENT_SES *router_session = dcb->session->router_session;
             spinlock_acquire(&router_session->rses_lock);
 
-            if(router_session->rses_master_ref != NULL) {
+            if (router_session->rses_master_ref != NULL)
+            {
                 // Hack for readwritesplit master failover, we know what the master
                 // should be, we just need the bref_backend_ref for it
                 int j;
-                for(j = 0; j < router_session->rses_nbackends; j++) {
+                for (j = 0; j < router_session->rses_nbackends; j++)
+                {
                     backend_ref_t* bref = &router_session->rses_backend_ref[j];
 
-                    if(bref->bref_backend->backend_server == params->new_master_server) {
+                    if (bref->bref_backend->backend_server == params->new_master_server)
+                    {
                         router_session->rses_master_ref = bref;
                         break;
                     }
@@ -403,9 +462,11 @@ static int unlock(FLEXMASTER_INSTANCE *instance, struct flexmaster_parameters *p
             GWBUF *querybuf, *tmpbuf;
             querybuf = tmpbuf = dcb->dcb_readqueue;
 
-            while(tmpbuf != NULL) {
-                if((querybuf = modutil_get_next_MySQL_packet(&tmpbuf)) == NULL) {
-                    if(GWBUF_LENGTH(tmpbuf) > 0) { // TODO?
+            while (tmpbuf != NULL)
+            {
+                if ((querybuf = modutil_get_next_MySQL_packet(&tmpbuf)) == NULL)
+                {
+                    if (GWBUF_LENGTH(tmpbuf) > 0) { // TODO?
                         dcb->dcb_readqueue = gwbuf_append(dcb->dcb_readqueue, tmpbuf);
                         break;
                     }
@@ -421,15 +482,18 @@ static int unlock(FLEXMASTER_INSTANCE *instance, struct flexmaster_parameters *p
     return 0;
 }
 
-static int swap(struct flexmaster_parameters *params) {
+static int swap(struct flexmaster_parameters *params)
+{
     // Set the old master RO
-    if(mysql_query(params->old_master_connection, "SET GLOBAL READ_ONLY=1") != 0) {
+    if (mysql_query(params->old_master_connection, "SET GLOBAL READ_ONLY=1") != 0)
+    {
         error("Error: could not set old master read only");
         return 1;
     }
 
     // Stop replication on the new master
-    if(mysql_query(params->new_master_connection, "STOP SLAVE") != 0) {
+    if (mysql_query(params->new_master_connection, "STOP SLAVE") != 0)
+    {
         error("Error: could not stop slave on new master");
         return 1;
     }
@@ -440,14 +504,16 @@ static int swap(struct flexmaster_parameters *params) {
      * but it also serves as a final check before setting the new master read-write.
      * TODO: confirm this can't be moved
      */
-    if(mysql_query(params->new_master_connection, "SHOW MASTER STATUS") != 0) {
+    if (mysql_query(params->new_master_connection, "SHOW MASTER STATUS") != 0)
+    {
         error("Error: could not query old master status");
         return 1;
     }
 
     MYSQL_RES *result = mysql_store_result(params->new_master_connection);
 
-    if(result == NULL) {
+    if (result == NULL)
+    {
         error("Error: could not query old master status");
         return 1;
     }
@@ -455,13 +521,15 @@ static int swap(struct flexmaster_parameters *params) {
     params->new_master_info = mysql_fetch_row(result);
     mysql_free_result(result);
 
-    if(params->new_master_info == NULL) {
+    if (params->new_master_info == NULL)
+    {
         error("Error: could not query old master status");
         return 1;
     }
 
     // Set the new master RW
-    if(mysql_query(params->new_master_connection, "SET GLOBAL READ_ONLY=0") != 0) {
+    if (mysql_query(params->new_master_connection, "SET GLOBAL READ_ONLY=0") != 0)
+    {
         error("Error: could not set new master not readonly");
         return 1;
     }
@@ -469,7 +537,8 @@ static int swap(struct flexmaster_parameters *params) {
     return 0;
 }
 
-static int rehome(struct flexmaster_parameters *params) {
+static int rehome(struct flexmaster_parameters *params)
+{
     char *master_log_file = params->new_master_info[0];
     unsigned int master_log_pos = strtol(params->new_master_info[1], NULL, 0);
 
@@ -480,12 +549,14 @@ static int rehome(struct flexmaster_parameters *params) {
             params->new_master_server->name, params->new_master_server->port, master_log_file, master_log_pos
             );
 
-    if(res == 1023 || res < 0) {
+    if (res == 1023 || res < 0)
+    {
         error("Error: could not compose change master query");
         return 1;
     }
 
-    if(mysql_query(params->old_master_connection, query) != 0) {
+    if (mysql_query(params->old_master_connection, query) != 0)
+    {
         error("Error: could not change master");
         return 1;
     }
@@ -493,8 +564,10 @@ static int rehome(struct flexmaster_parameters *params) {
     return 0;
 }
 
-static int start_slave(struct flexmaster_parameters *params) {
-    if(mysql_query(params->old_master_connection, "START SLAVE") != 0) {
+static int start_slave(struct flexmaster_parameters *params)
+{
+    if (mysql_query(params->old_master_connection, "START SLAVE") != 0)
+    {
         error("Error: could not start slave on old master");
         return 1;
     }
@@ -502,14 +575,16 @@ static int start_slave(struct flexmaster_parameters *params) {
     return 0;
 }
 
-static int preflight_check(struct flexmaster_parameters *params) {
+static int preflight_check(struct flexmaster_parameters *params)
+{
     // NB: order is important.
     // check_addresses must come after new_master_slave check
-    if(preflight_check_old_master_rehome(params) != 0 ||
+    if (preflight_check_old_master_rehome(params) != 0 ||
             preflight_check_new_master_slave(params) != 0 ||
             preflight_check_new_master_ro(params) != 0 ||
             preflight_check_old_master_rw(params) != 0 ||
             preflight_check_addresses(params) != 0)
+
     {
 
         return 1;
@@ -518,16 +593,19 @@ static int preflight_check(struct flexmaster_parameters *params) {
     return 0;
 }
 
-static int preflight_check_old_master_rw(struct flexmaster_parameters *params) {
+static int preflight_check_old_master_rw(struct flexmaster_parameters *params)
+{
     // old master is not readonly
-    if(mysql_query(params->old_master_connection, "SELECT @@read_only") != 0) {
+    if (mysql_query(params->old_master_connection, "SELECT @@read_only") != 0)
+    {
         error("Error: could not query old master @@read_only");
         return 1;
     }
 
     MYSQL_RES *result = mysql_store_result(params->old_master_connection);
 
-    if(result == NULL) {
+    if (result == NULL)
+    {
         error("Error: could not query old master @@read_only");
         return 1;
     }
@@ -535,12 +613,14 @@ static int preflight_check_old_master_rw(struct flexmaster_parameters *params) {
     MYSQL_ROW row = mysql_fetch_row(result);
     mysql_free_result(result);
 
-    if(row == NULL) {
+    if (row == NULL)
+    {
         error("Error: could not query old master @@read_only");
         return 1;
     }
 
-    if(strcmp(row[0], "0") != 0) {
+    if (strcmp(row[0], "0") != 0)
+    {
         error("Error: old master is read only!");
         return 1;
     }
@@ -548,16 +628,19 @@ static int preflight_check_old_master_rw(struct flexmaster_parameters *params) {
     return 0;
 }
 
-static int preflight_check_new_master_ro(struct flexmaster_parameters *params) {
+static int preflight_check_new_master_ro(struct flexmaster_parameters *params)
+{
     // new master is readonly
-    if(mysql_query(params->new_master_connection, "SELECT @@read_only") != 0) {
+    if (mysql_query(params->new_master_connection, "SELECT @@read_only") != 0)
+    {
         error("Error: could not query new master @@read_only");
         return 1;
     }
 
     MYSQL_RES *result = mysql_store_result(params->new_master_connection);
 
-    if(result == NULL) {
+    if (result == NULL)
+    {
         error("Error: could not query new master @@read_only");
         return 1;
     }
@@ -565,12 +648,14 @@ static int preflight_check_new_master_ro(struct flexmaster_parameters *params) {
     MYSQL_ROW row = mysql_fetch_row(result);
     mysql_free_result(result);
 
-    if(row == NULL) {
+    if (row == NULL)
+    {
         error("Error: could not query new master @@read_only");
         return 1;
     }
 
-    if(strcmp(row[0], "1") != 0) {
+    if (strcmp(row[0], "1") != 0)
+    {
         error("Error: new master is not read only!");
         return 1;
     }
@@ -578,16 +663,19 @@ static int preflight_check_new_master_ro(struct flexmaster_parameters *params) {
     return 0;
 }
 
-static int preflight_check_new_master_slave(struct flexmaster_parameters *params) {
+static int preflight_check_new_master_slave(struct flexmaster_parameters *params)
+{
     // new master is (a slave, running (IO, SQL), not delayed)
-    if(mysql_query(params->new_master_connection, "SHOW SLAVE STATUS") != 0) {
+    if (mysql_query(params->new_master_connection, "SHOW SLAVE STATUS") != 0)
+    {
         error("Error: could not query new master slave status");
         return 1;
     }
 
     MYSQL_RES *result = mysql_store_result(params->new_master_connection);
 
-    if(result == NULL) {
+    if (result == NULL)
+    {
         error("Error: could not query new master slave status");
         return 1;
     }
@@ -595,7 +683,8 @@ static int preflight_check_new_master_slave(struct flexmaster_parameters *params
     MYSQL_ROW row = mysql_fetch_row(result);
     mysql_free_result(result);
 
-    if(row == NULL) {
+    if (row == NULL)
+    {
         error("Error: could not query new master slave status");
         return 1;
     }
@@ -607,24 +696,28 @@ static int preflight_check_new_master_slave(struct flexmaster_parameters *params
     // Used by preflight_check_addresses
     params->new_master_master_host = malloc(strlen(row[1]) + 1);
 
-    if(params->new_master_master_host == NULL) {
+    if (params->new_master_master_host == NULL)
+    {
         error("Error: could not alloc new_master_master_host");
         return 1;
     }
 
     strcpy(params->new_master_master_host, row[1]);
 
-    if(strcmp(slave_io, "Yes") != 0) {
+    if (strcmp(slave_io, "Yes") != 0)
+    {
         error("Error: new master IO is not running");
         return 1;
     }
 
-    if(strcmp(slave_sql, "Yes") != 0) {
+    if (strcmp(slave_sql, "Yes") != 0)
+    {
         error("Error: new master SQL is not running");
         return 1;
     }
 
-    if(strcmp(seconds_behind, "0") != 0) {
+    if (strcmp(seconds_behind, "0") != 0)
+    {
         error("Error: new master is not up-to-date");
         return 1;
     }
@@ -632,20 +725,24 @@ static int preflight_check_new_master_slave(struct flexmaster_parameters *params
     return 0;
 }
 
-static int preflight_check_old_master_rehome(struct flexmaster_parameters *params) {
-    if(!params->rehome) {
+static int preflight_check_old_master_rehome(struct flexmaster_parameters *params)
+{
+    if (!params->rehome)
+    {
         return 0;
     }
 
     // old master has proper credentials for rehome
-    if(mysql_query(params->old_master_connection, "SHOW SLAVE STATUS") != 0) {
+    if (mysql_query(params->old_master_connection, "SHOW SLAVE STATUS") != 0)
+    {
         error("Error: could not query old master slave status");
         return 1;
     }
 
     MYSQL_RES *result = mysql_store_result(params->old_master_connection);
 
-    if(result == NULL) {
+    if (result == NULL)
+    {
         error("Error: could not query old master slave status");
         return 1;
     }
@@ -653,14 +750,16 @@ static int preflight_check_old_master_rehome(struct flexmaster_parameters *param
     MYSQL_ROW row = mysql_fetch_row(result);
     mysql_free_result(result);
 
-    if(row == NULL) {
+    if (row == NULL)
+    {
         error("Error: could not query old master slave status");
         return 1;
     }
 
     char *master_user = row[2];
 
-    if(strlen(master_user) == 0 || strcmp(master_user, "test") == 0) {
+    if (strlen(master_user) == 0 || strcmp(master_user, "test") == 0)
+    {
         error("Error: old master does not have proper credentials, cannot rehome");
         return 1;
     }
@@ -668,21 +767,25 @@ static int preflight_check_old_master_rehome(struct flexmaster_parameters *param
     return 0;
 }
 
-static int preflight_check_addresses(struct flexmaster_parameters *params) {
+static int preflight_check_addresses(struct flexmaster_parameters *params)
+{
     // slave master ip = master ip
     struct addrinfo *old_master_addrinfo, *new_master_addrinfo;
 
-    if(getaddrinfo(params->old_master_server->name, NULL, NULL, &old_master_addrinfo) != 0) {
+    if (getaddrinfo(params->old_master_server->name, NULL, NULL, &old_master_addrinfo) != 0)
+    {
         error("Error: could not obtain IP for old master address");
         return 1;
     }
 
-    if(getaddrinfo(params->new_master_master_host, NULL, NULL, &new_master_addrinfo) != 0) {
+    if (getaddrinfo(params->new_master_master_host, NULL, NULL, &new_master_addrinfo) != 0)
+    {
         error("Error: could not obtain IP for new master's Master_Host address");
         return 1;
     }
 
-    if(strcmp(old_master_addrinfo->ai_addr->sa_data, new_master_addrinfo->ai_addr->sa_data) != 0) {
+    if (strcmp(old_master_addrinfo->ai_addr->sa_data, new_master_addrinfo->ai_addr->sa_data) != 0)
+    {
         error("Error: new master is not a slave to the old master!");
         return 1;
     }
@@ -693,46 +796,54 @@ static int preflight_check_addresses(struct flexmaster_parameters *params) {
     return 0;
 }
 
-static void error(char *msg) {
+static void error(char *msg)
+{
     errmsg = malloc(strlen(msg) + 1);
     strcpy(errmsg, msg);
 }
 
-static MYSQL *mysql_connect(SERVICE *service, char *host, unsigned short port) {
+static MYSQL *mysql_connect(SERVICE *service, char *host, unsigned short port)
+{
     MYSQL *connection = mysql_init(NULL);
 
-    if(connection == NULL) {
+    if (connection == NULL)
+    {
         error("Error: could not initialize mysql connection");
         return NULL;
     }
 
     int timeout = 3;
 
-    if(mysql_options(connection, MYSQL_OPT_READ_TIMEOUT, (void *) &timeout) != 0) {
+    if (mysql_options(connection, MYSQL_OPT_READ_TIMEOUT, (void *) &timeout) != 0)
+    {
         error("Error: failed to set read timeout value for backend connection.");
         mysql_close(connection);
         return NULL;
     }
 
-    if(mysql_options(connection, MYSQL_OPT_CONNECT_TIMEOUT, (void *) &timeout) != 0) {
+    if (mysql_options(connection, MYSQL_OPT_CONNECT_TIMEOUT, (void *) &timeout) != 0)
+    {
         error("Error: failed to set connect timeout value for backend connection.");
         mysql_close(connection);
         return NULL;
     }
 
-    if(mysql_options(connection, MYSQL_OPT_WRITE_TIMEOUT, (void *) &timeout) != 0) {
+    if (mysql_options(connection, MYSQL_OPT_WRITE_TIMEOUT, (void *) &timeout) != 0)
+    {
         error("Error: failed to set connect timeout value for backend connection.");
         mysql_close(connection);
         return NULL;
     }
 
-    if(mysql_options(connection, MYSQL_OPT_USE_REMOTE_CONNECTION, NULL) != 0) {
+    if (mysql_options(connection, MYSQL_OPT_USE_REMOTE_CONNECTION, NULL) != 0)
+    {
         error("Error: failed to set external connection. It is needed for backend server connections.");
         mysql_close(connection);
         return NULL;
     }
 
-    if(mysql_real_connect(connection, host, service->credentials.name, service->credentials.authdata, NULL, port, NULL, 0) == NULL) {
+    if (mysql_real_connect(connection, host, service->credentials.name, service->credentials.authdata, NULL, port, NULL, 0) == NULL)
+    {
         error("Error: could not connect to server.");
         mysql_close(connection);
         return NULL;
@@ -741,43 +852,56 @@ static MYSQL *mysql_connect(SERVICE *service, char *host, unsigned short port) {
     return connection;
 }
 
-static void parse_url_parameters(struct flexmaster_parameters *params) {
+static void parse_url_parameters(struct flexmaster_parameters *params)
+{
     char *token, *field, *value;
 
-    while((token = strsep(&params->body, "&")) != NULL) {
+    while ((token = strsep(&params->body, "&")) != NULL)
+    {
         field = strsep(&token, "=");
         value = token;
 
-        if(strcmp(field, "old_master") == 0) {
+        if (strcmp(field, "old_master") == 0)
+        {
             params->old_master = value;
-        } else if(strcmp(field, "new_master") == 0) {
+        }
+        else if (strcmp(field, "new_master") == 0)
+        {
             params->new_master = value;
-        } else if(strcmp(field, "rehome") == 0) {
+        }
+        else if (strcmp(field, "rehome") == 0)
+        {
             params->rehome = true;
-        } else if(strcmp(field, "start_slave") == 0) {
+        }
+        else if (strcmp(field, "start_slave") == 0)
+        {
             params->start_slave = true;
         }
     }
 }
 
-static int parse_host_and_port(char *str, SERVER **server) {
+static int parse_host_and_port(char *str, SERVER **server)
+{
     char *host = strsep(&str, ":");
 
-    if(host == NULL || str == NULL) {
+    if (host == NULL || str == NULL)
+    {
         error("Error: could not grab host and port from address");
         return 1;
     }
 
     unsigned short port = strtoul(str, NULL, 0);
 
-    if(port == 0) {
+    if (port == 0)
+    {
         error("Error: could not grab port from address");
         return 1;
     }
 
     *server = server_find(host, port);
 
-    if(*server == NULL) {
+    if (*server == NULL)
+    {
         error("Error: could not find maxscale server from address");
         return 1;
     }
@@ -791,7 +915,8 @@ static int parse_host_and_port(char *str, SERVER **server) {
  * @param instance Instance of the router
  * @param dcb DCB to send diagnostics to
  */
-static void diagnostics(ROUTER *instance, DCB *dcb) {
+static void diagnostics(ROUTER *instance, DCB *dcb)
+{
     char date[64] = "";
     const char *fmt = "%a, %d %b %Y %H:%M:%S GMT";
     time_t httpd_current_time = time(NULL);

@@ -137,7 +137,7 @@ typedef struct session {
 	struct session	*next;		  /*< Linked list of all sessions */
 	int		refcount;	  /*< Reference count on the session */
 	bool            ses_is_child;	  /*< this is a child session */
-        struct session  *parent;          /*< the parent if this is the child */
+    struct session  *parent;          /*< the parent if this is the child */
 #if defined(SS_DEBUG)
         skygw_chk_t     ses_chk_tail;
 #endif

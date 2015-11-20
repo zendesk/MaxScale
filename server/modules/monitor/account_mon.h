@@ -7,31 +7,31 @@
 #include <zookeeper/zookeeper.jute.h>
 
 typedef struct {
-        SPINLOCK lock;
-        pthread_t tid;
+    SPINLOCK lock;
+    pthread_t tid;
 
-        int shutdown;
-        int status;
+    int shutdown;
+    int status;
 
-        unsigned long id;
+    unsigned long id;
 
-        // accounts storage
-        HASHTABLE *accounts;
+    // accounts storage
+    HASHTABLE *accounts;
 
-        // kafka config
-        rd_kafka_t *connection;
-        rd_kafka_conf_t *configuration;
-        rd_kafka_topic_t *topic;
-        rd_kafka_queue_t *queue;
-        const struct rd_kafka_metadata *metadata;
+    // kafka config
+    rd_kafka_t *connection;
+    rd_kafka_conf_t *configuration;
+    rd_kafka_topic_t *topic;
+    rd_kafka_queue_t *queue;
+    const struct rd_kafka_metadata *metadata;
 
-        char *topic_name;
+    char *topic_name;
 
-        bool connected;
+    bool connected;
 
-        zhandle_t *zookeeper;
+    zhandle_t *zookeeper;
 
-        char **brokerlist;
+    char **brokerlist;
 } ACCOUNT_MONITOR;
 
 #define MONITOR_RUNNING		1

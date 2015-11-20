@@ -45,10 +45,10 @@
 #define HTTPD_MAX_HEADER_LINES 2000
 
 struct httpd_header {
-        char *field;
-        size_t field_len;
-        char *value;
-        size_t value_len;
+    char *field;
+    size_t field_len;
+    char *value;
+    size_t value_len;
 };
 
 /**
@@ -56,19 +56,19 @@ struct httpd_header {
  *
  */
 typedef struct httpd_session {
-        http_parser *parser;
-        struct http_parser_url *url_fields;
+    http_parser *parser;
+    struct http_parser_url *url_fields;
 
-        int method;
+    int method;
 
-        size_t url_len;
-	char *url;
+    size_t url_len;
+    char *url;
 
-        size_t body_len;
-        char *body;
+    size_t body_len;
+    char *body;
 
-        size_t headers_len;
-        struct httpd_header headers[HTTPD_MAX_HEADER_LINES];
+    size_t headers_len;
+    struct httpd_header headers[HTTPD_MAX_HEADER_LINES];
 } HTTPD_session;
 
 void httpd_respond_error(DCB *, int, char *);

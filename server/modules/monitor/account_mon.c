@@ -21,10 +21,10 @@ static void monitorMain(void *);
 static char *version_str = "V1.0.0";
 
 MODULE_INFO info = {
-        MODULE_API_MONITOR,
-        MODULE_GA,
-        MONITOR_VERSION,
-        "A Zendesk-specific account shard monitor"
+    MODULE_API_MONITOR,
+    MODULE_GA,
+    MONITOR_VERSION,
+    "A Zendesk-specific account shard monitor"
 };
 
 static void *startMonitor(void *,void*);
@@ -32,9 +32,9 @@ static void stopMonitor(void *);
 static void diagnostics(DCB *, void *);
 
 static MONITOR_OBJECT MyObject = {
-	startMonitor,
-	stopMonitor,
-        diagnostics
+    startMonitor,
+    stopMonitor,
+    diagnostics
 };
 
 static void account_monitor_free(ACCOUNT_MONITOR *);
@@ -56,7 +56,7 @@ static void account_monitor_update_partitions(ACCOUNT_MONITOR *);
  * @return version string of the module
  */
 char *version() {
-        return version_str;
+    return version_str;
 }
 
 /**
@@ -64,7 +64,7 @@ char *version() {
  * is first loaded.
  */
 void ModuleInit() {
-        MXS_INFO("Initialize the Account Monitor module %s.", version_str);
+    MXS_INFO("Initialize the Account Monitor module %s.", version_str);
 }
 
 /**
@@ -76,65 +76,65 @@ void ModuleInit() {
  * @return The module object
  */
 MONITOR_OBJECT *GetModuleObject() {
-	return &MyObject;
+    return &MyObject;
 }
 
 static char *get_kafka_brokerlist(ACCOUNT_MONITOR *handle) {
-        struct String_vector brokerlist;
+    struct String_vector brokerlist;
 
-        if(zoo_get_children(handle->zookeeper, BROKER_PATH, 1, &brokerlist) != ZOK) {
-                return NULL;
+    if(zoo_get_children(handle->zookeeper, BROKER_PATH, 1, &brokerlist) != ZOK) {
+        return NULL;
+    }
+
+    if(brokerlist.count == 0) {
+        return NULL;
+    }
+
+    char *brokers = NULL;
+
+    for(int i = 0; i < brokerlist.count; i++) {
+        size_t len = sizeof(brokerlist.data[i]);
+        char *path = malloc(sizeof("/brokers/ids/") + len + 1);
+
+        if(path == NULL) {
+            return NULL;
         }
 
-        if(brokerlist.count == 0) {
-                return NULL;
-        }
+        sprintf(path, "/brokers/ids/%s", brokerlist.data[i]);
 
-        char *brokers = NULL;
+        int buffer_length = 1024;
+        char buffer[buffer_length];
 
-        for(int i = 0; i < brokerlist.count; i++) {
-                size_t len = sizeof(brokerlist.data[i]);
-                char *path = malloc(sizeof("/brokers/ids/") + len + 1);
+        zoo_get(handle->zookeeper, path, 0, buffer, &buffer_length, NULL);
 
-                if(path == NULL) {
-                        return NULL;
-                }
+        free(path);
 
-                sprintf(path, "/brokers/ids/%s", brokerlist.data[i]);
+        if(buffer_length > 0) {
+            buffer[buffer_length] = '\0';
 
-                int buffer_length = 1024;
-                char buffer[buffer_length];
+            char errbuf[1024];
+            yajl_val node = yajl_tree_parse(buffer, errbuf, sizeof(errbuf));
 
-                zoo_get(handle->zookeeper, path, 0, buffer, &buffer_length, NULL);
+            if(node == NULL) {
+                MXS_ERROR("failed to parse: %s\n\"%s\"", errbuf, buffer);
+                continue;
+            }
 
-                free(path);
+            const char *host_path[] = { "host", (const char *) 0 };
+            yajl_val host = yajl_tree_get(node, host_path, yajl_t_string);
 
-                if(buffer_length > 0) {
-                        buffer[buffer_length] = '\0';
+            if(host == NULL)  {
+                MXS_ERROR("failed to fetch host: \"%s\"", buffer);
+                yajl_tree_free(node);
+                continue;
+            }
 
-                        char errbuf[1024];
-                        yajl_val node = yajl_tree_parse(buffer, errbuf, sizeof(errbuf));
+            const char *port_path[] = { "port", (const char *) 0 };
+            yajl_val port = yajl_tree_get(node, port_path, yajl_t_number);
 
-                        if(node == NULL) {
-                                MXS_ERROR("failed to parse: %s\n\"%s\"", errbuf, buffer);
-                                continue;
-                        }
-
-                        const char *host_path[] = { "host", (const char *) 0 };
-                        yajl_val host = yajl_tree_get(node, host_path, yajl_t_string);
-
-                        if(host == NULL)  {
-                                MXS_ERROR("failed to fetch host: \"%s\"", buffer);
-                                yajl_tree_free(node);
-                                continue;
-                        }
-
-                        const char *port_path[] = { "port", (const char *) 0 };
-                        yajl_val port = yajl_tree_get(node, port_path, yajl_t_number);
-
-                        if(port == NULL)  {
-                                MXS_ERROR("failed to fetch port: \"%s\"", buffer);
-                                yajl_tree_free(node);
+            if(port == NULL)  {
+                MXS_ERROR("failed to fetch port: \"%s\"", buffer);
+                yajl_tree_free(node);
                                 continue;
                         }
 

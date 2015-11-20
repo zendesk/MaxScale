@@ -16,11 +16,6 @@
 #include <maxconfig.h>
 #include <yajl/yajl_tree.h>
 
-/** Defined in log_manager.cc */
-extern int            lm_enabled_logfiles_bitmask;
-extern size_t         log_ses_count[];
-extern __thread log_info_t tls_log_info;
-
 static void monitorMain(void *);
 
 static char *version_str = "V1.0.0";
@@ -69,7 +64,7 @@ char *version() {
  * is first loaded.
  */
 void ModuleInit() {
-        LOGIF(LM, (skygw_log_write(LOGFILE_MESSAGE, "Initialize the Account Monitor module %s.", version_str)));
+        MXS_INFO("Initialize the Account Monitor module %s.", version_str);
 }
 
 /**
@@ -121,7 +116,7 @@ static char *get_kafka_brokerlist(ACCOUNT_MONITOR *handle) {
                         yajl_val node = yajl_tree_parse(buffer, errbuf, sizeof(errbuf));
 
                         if(node == NULL) {
-                                LOGIF(LM, (skygw_log_write(LOGFILE_MESSAGE, "failed to parse: %s\n\"%s\"", errbuf, buffer)));
+                                MXS_ERROR("failed to parse: %s\n\"%s\"", errbuf, buffer);
                                 continue;
                         }
 
@@ -129,7 +124,7 @@ static char *get_kafka_brokerlist(ACCOUNT_MONITOR *handle) {
                         yajl_val host = yajl_tree_get(node, host_path, yajl_t_string);
 
                         if(host == NULL)  {
-                                LOGIF(LM, (skygw_log_write(LOGFILE_MESSAGE, "failed to fetch host: \"%s\"", buffer)));
+                                MXS_ERROR("failed to fetch host: \"%s\"", buffer);
                                 yajl_tree_free(node);
                                 continue;
                         }
@@ -138,7 +133,7 @@ static char *get_kafka_brokerlist(ACCOUNT_MONITOR *handle) {
                         yajl_val port = yajl_tree_get(node, port_path, yajl_t_number);
 
                         if(port == NULL)  {
-                                LOGIF(LM, (skygw_log_write(LOGFILE_MESSAGE, "failed to fetch port: \"%s\"", buffer)));
+                                MXS_ERROR("failed to fetch port: \"%s\"", buffer);
                                 yajl_tree_free(node);
                                 continue;
                         }
@@ -237,13 +232,13 @@ static void *startMonitor(void *arg, void *opt) {
         }
 
         if(zookeeper == NULL) {
-                LOGIF(LM, (skygw_log_write(LOGFILE_MESSAGE, "missing required parameter: zookeeper")));
+                MXS_ERROR("missing required parameter: zookeeper");
                 account_monitor_free(handle);
                 return NULL;
         }
 
         if(handle->topic_name == NULL) {
-                LOGIF(LM, (skygw_log_write(LOGFILE_MESSAGE, "missing required parameter: topic")));
+                MXS_ERROR("missing required parameter: topic");
                 account_monitor_free(handle);
                 return NULL;
         }
@@ -312,7 +307,7 @@ static void diagnostics(DCB *dcb, void *arg) {
 }
 
 static void logger(const rd_kafka_t *rk, int level, const char *fac, const char *buf) {
-        LOGIF(LM, (skygw_log_write(LOGFILE_MESSAGE, "rdkafka: %s", buf)));
+        MXS_INFO("rdkafka: %s", buf);
 }
 
 static int wait_for_zookeeper(ACCOUNT_MONITOR *handle) {
@@ -336,7 +331,7 @@ static int init_kafka(ACCOUNT_MONITOR *handle) {
         handle->connection = rd_kafka_new(RD_KAFKA_CONSUMER, handle->configuration, errbuf, sizeof(errbuf));
 
         if(handle->connection == NULL) {
-                LOGIF(LM, (skygw_log_write(LOGFILE_ERROR, "Could not create kafka connection. %s", errbuf)));
+                MXS_ERROR("Could not create kafka connection. %s", errbuf);
                 return 1;
         }
 
@@ -351,7 +346,7 @@ static int init_kafka(ACCOUNT_MONITOR *handle) {
         handle->topic = rd_kafka_topic_new(handle->connection, handle->topic_name, topic_configuration);
 
         if(handle->topic == NULL) {
-                LOGIF(LM, (skygw_log_write(LOGFILE_ERROR, "Could not create kafka topic. %s", rd_kafka_err2str(rd_kafka_errno2err(errno)))));
+                MXS_ERROR("Could not create kafka topic. %s", rd_kafka_err2str(rd_kafka_errno2err(errno)));
                 return 1;
         }
 
@@ -367,7 +362,7 @@ static void monitorMain(void *arg) {
         handle->status = MONITOR_RUNNING;
 
         if(wait_for_zookeeper(handle) != 0) {
-                LOGIF(LM, (skygw_log_write(LOGFILE_ERROR, "Could not obtain zookeeper connection.", version_str)));
+                MXS_ERROR("Could not obtain zookeeper connection.");
                 account_monitor_free(handle);
                 return;
         }
@@ -386,7 +381,7 @@ static void monitorMain(void *arg) {
                         continue;
                 } else if(message->err != RD_KAFKA_RESP_ERR_NO_ERROR) {
                         if(message->err != RD_KAFKA_RESP_ERR__PARTITION_EOF) {
-                                LOGIF(LM, (skygw_log_write(LOGFILE_ERROR, "Error consuming message. %s", rd_kafka_err2str(message->err))));
+                                MXS_ERROR("Error consuming message. %s", rd_kafka_err2str(message->err));
                         }
                 } else {
                         account_monitor_consume(handle, message);
@@ -400,16 +395,16 @@ static void account_monitor_update_partitions(ACCOUNT_MONITOR *handle) {
         const struct rd_kafka_metadata *metadata;
 
         if(rd_kafka_metadata(handle->connection, 0, handle->topic, &metadata, 5000) != RD_KAFKA_RESP_ERR_NO_ERROR) {
-                LOGIF(LM, (skygw_log_write(LOGFILE_ERROR, "Could not fetch topic metadata (partitions). %s", rd_kafka_err2str(rd_kafka_errno2err(errno)))));
+                MXS_ERROR("Could not fetch topic metadata (partitions). %s", rd_kafka_err2str(rd_kafka_errno2err(errno)));
                 return;
         }
 
         for(int i = 0; i < metadata->topics[0].partition_cnt; i++) {
                 int partition = metadata->topics[0].partitions[i].id;
-                LOGIF(LM, (skygw_log_write(LOGFILE_MESSAGE, "Listening to partition %d", partition)));
+                MXS_INFO("Listening to partition %d", partition);
 
                 if(rd_kafka_consume_start_queue(handle->topic, partition, RD_KAFKA_OFFSET_BEGINNING, handle->queue) == -1) {
-                        LOGIF(LM, (skygw_log_write(LOGFILE_ERROR, "Failed to start consuming partition %i: %s", partition, rd_kafka_err2str(rd_kafka_errno2err(errno)))));
+                        MXS_ERROR("Failed to start consuming partition %i: %s", partition, rd_kafka_err2str(rd_kafka_errno2err(errno)));
                         return;
                 }
         }
@@ -434,7 +429,7 @@ static void account_monitor_consume(ACCOUNT_MONITOR *handle, rd_kafka_message_t 
         free(json);
 
         if(node == NULL) {
-                LOGIF(LM, (skygw_log_write(LOGFILE_MESSAGE, "failed to parse: %s\n", errbuf, message->payload)));
+                MXS_ERROR("failed to parse: %s\n", errbuf);
                 return;
         }
 
@@ -474,7 +469,7 @@ static void account_monitor_consume(ACCOUNT_MONITOR *handle, rd_kafka_message_t 
         hashtable_delete(handle->accounts, (void *) id);
         hashtable_add(handle->accounts, (void *) id, (void *) shard_id);
 
-        LOGIF(LM, (skygw_log_write(LOGFILE_MESSAGE, "found shard_id %" PRIuPTR " for account %" PRIuPTR, shard_id, id)));
+        MXS_INFO("found shard_id %" PRIuPTR " for account %" PRIuPTR, shard_id, id);
 
         yajl_tree_free(node);
 }
@@ -549,10 +544,10 @@ uintptr_t account_monitor_find_shard(ACCOUNT_MONITOR *handle, uintptr_t account_
         uintptr_t shard_id = (uintptr_t) hashtable_fetch(handle->accounts, (void *) account_id);
 
         if(shard_id == 0) {
-                skygw_log_write(LOGFILE_TRACE, "account_mon: could not find shard id for account %d", account_id);
+                MXS_DEBUG("account_mon: could not find shard id for account %" PRIuPTR, account_id);
                 return 0;
         } else {
-                skygw_log_write(LOGFILE_TRACE, "account_mon: found shard_id %d for account %d", shard_id, account_id);
+                MXS_DEBUG("account_mon: found shard_id %" PRIuPTR " for account %" PRIuPTR, shard_id, account_id);
                 return shard_id;
         }
 }

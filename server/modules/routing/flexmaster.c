@@ -56,11 +56,6 @@ struct flexmaster_parameters {
         char *body;
 };
 
-/** Defined in log_manager.cc */
-extern int lm_enabled_logfiles_bitmask;
-extern size_t log_ses_count[];
-extern __thread log_info_t tls_log_info;
-
 static char *version_str = "V1.0.0";
 
 char *errmsg = NULL;
@@ -120,7 +115,7 @@ char *version() {
  * is first loaded.
  */
 void ModuleInit() {
-        LOGIF(LM, (skygw_log_write(LOGFILE_MESSAGE, "flexmaster router startup %s.\n", version_str)));
+        MXS_INFO("flexmaster router startup %s.\n", version_str);
 }
 
 /**
@@ -146,7 +141,7 @@ ROUTER_OBJECT *GetModuleObject() {
  */
 static ROUTER *createInstance(SERVICE *service, char **options) {
         if(options == NULL) {
-                skygw_log_write(LOGFILE_ERROR, "flexmaster: not enough router_options. expected flexmaster_filter");
+                MXS_ERROR("flexmaster: not enough router_options. expected flexmaster_filter");
                 return NULL;
         }
 
@@ -158,7 +153,7 @@ static ROUTER *createInstance(SERVICE *service, char **options) {
 
                 FILTER_DEF *filter_def;
                 if((filter_def = filter_find(options[0])) == NULL) {
-                        skygw_log_write(LOGFILE_ERROR, "flexmaster: could not find flexmaster_filter \"%s\"", options[0]);
+                        MXS_ERROR("flexmaster: could not find flexmaster_filter \"%s\"", options[0]);
                 } else {
                         // Filter instance is lazy-created on filterApply, so we generally need this
                         if(filter_def->obj == NULL) {
@@ -334,7 +329,7 @@ static void master_cut(void *arg) {
         goto free;
 
 error:
-        LOGIF(LE, (skygw_log_write_flush(LOGFILE_ERROR, errmsg)));
+        MXS_ERROR(errmsg);
         free(errmsg);
 
 free:

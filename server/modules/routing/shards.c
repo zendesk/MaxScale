@@ -26,7 +26,7 @@ static void freeSession(ROUTER *, void *);
 static int routeQuery(ROUTER *, void *, GWBUF *);
 static void clientReply(ROUTER *, void *, GWBUF *, DCB *);
 static void diagnostic(ROUTER *, DCB *);
-static uint8_t getCapabilities(ROUTER *, void *);
+static int getCapabilities(ROUTER *, void *);
 static void handleError(ROUTER *, void *, GWBUF *, DCB *, error_action_t, bool *);
 
 static ROUTER_OBJECT MyObject = {
@@ -102,7 +102,7 @@ static ROUTER *createInstance(SERVICE *service, char **options) {
         while(options[i] != NULL) { i++; }
 
         if(i < 2) {
-                skygw_log_write(LOGFILE_ERROR, "shards: not enough router_options. expected shard_format,account_monitor,unsharded service,*shards");
+                MXS_ERROR("shards: not enough router_options. expected shard_format,account_monitor,unsharded service,*shards");
                 return NULL;
         }
 
@@ -116,7 +116,7 @@ static ROUTER *createInstance(SERVICE *service, char **options) {
         router->account_monitor = monitor_find(options[1]);
 
         if(router->account_monitor == NULL) {
-                skygw_log_write(LOGFILE_ERROR, "shards: could not find account monitor '%s'", options[1]);
+                MXS_ERROR( "shards: could not find account monitor '%s'", options[1]);
         }
 
         char *shard;
@@ -125,17 +125,17 @@ static ROUTER *createInstance(SERVICE *service, char **options) {
         i = 0;
 
         while((shard = options[i + 2]) != NULL) {
-                skygw_log_write(LOGFILE_DEBUG, "shards: services %s", shard);
+                MXS_DEBUG("shards: services %s", shard);
 
                 shard_service = service_find(shard);
 
                 if(shard_service == NULL) {
-                        skygw_log_write(LOGFILE_ERROR, "shards: could not find service '%s'", shard);
+                        MXS_ERROR("shards: could not find service '%s'", shard);
                 } else {
                         void *new_downstreams = realloc(router->downstreams, sizeof(SERVICE *) * (i + 2));
 
                         if(new_downstreams == NULL) {
-                                skygw_log_write(LOGFILE_ERROR, "shards: error allocating downstreams");
+                                MXS_ERROR("shards: error allocating downstreams");
 
                                 free(router->downstreams);
                                 free(router);
@@ -176,7 +176,7 @@ static void *newSession(ROUTER *instance, SESSION *session) {
                                 char shard_database_id[MYSQL_DATABASE_MAXLEN];
                                 snprintf(shard_database_id, MYSQL_DATABASE_MAXLEN, router->shard_format, shard_id);
 
-                                skygw_log_write(LOGFILE_TRACE, "shards: finding %s", shard_database_id);
+                                MXS_DEBUG("shards: finding %s", shard_database_id);
                                 SERVICE *service = shards_service_for_shard(router, shard_database_id);
 
                                 if(service != NULL) {
@@ -193,7 +193,7 @@ static void *newSession(ROUTER *instance, SESSION *session) {
         DCB *cloned_dcb = dcb_clone(session->client);
 
         if(cloned_dcb == NULL) {
-                skygw_log_write(LOGFILE_ERROR, "shards: error allocating new DCB for downstream session");
+                MXS_ERROR("shards: error allocating new DCB for downstream session");
                 return NULL;
         }
 
@@ -204,7 +204,7 @@ static void *newSession(ROUTER *instance, SESSION *session) {
 
         if(downstream == NULL) {
                 // XXX DCB is added to the zombie queue and freed from there?
-                skygw_log_write(LOGFILE_ERROR, "shards: error allocating default downstream session");
+                MXS_ERROR("shards: error allocating default downstream session");
                 return NULL;
         }
 
@@ -296,7 +296,7 @@ static int routeQuery(ROUTER *instance, void *session, GWBUF *queue) {
                 snprintf(shard_database_id, MYSQL_DATABASE_MAXLEN, shard_router->shard_format, shard_id);
 
                 // find downstream
-                skygw_log_write(LOGFILE_TRACE, "shards: finding %s", shard_database_id);
+                MXS_DEBUG("shards: finding %s", shard_database_id);
                 SERVICE *service = shards_service_for_shard(shard_router, shard_database_id);
 
                 if(service == NULL) {
@@ -329,7 +329,7 @@ static void clientReply(ROUTER *instance, void *session, GWBUF *queue, DCB *back
 static void diagnostic(ROUTER *instance, DCB *dcb) {
 }
 
-static uint8_t getCapabilities(ROUTER *inst, void *router_session) {
+static int getCapabilities(ROUTER *inst, void *router_session) {
         return 0;
 }
 
@@ -342,7 +342,7 @@ static SERVICE *shards_service_for_shard(SHARD_ROUTER *instance, char *name) {
 
         while((downstream = instance->downstreams[i++]) != NULL) {
                 if(strcasecmp(downstream->name, name) == 0) {
-                        skygw_log_write(LOGFILE_TRACE, "shards: found %s", name);
+                        MXS_DEBUG("shards: found %s", name);
                         return downstream;
                 }
         }

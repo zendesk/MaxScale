@@ -1368,12 +1368,10 @@ int gw_MySQLListener(DCB *listen_dcb,
     if (setsockopt(l_so, SOL_SOCKET, SO_REUSEPORT, (char *) &one, sizeof(one)) != 0)
     {
         char errbuf[STRERROR_BUFLEN];
-        LOGIF(LE, (skygw_log_write_flush(LOGFILE_ERROR,
-                                         "Error: Failed to set socket options. Error %d: %s",
-                                         errno,
-                                         strerror_r(errno, errbuf, sizeof(errbuf)))));
+        MXS_ERROR("Failed to set socket options. Error %d: %s",
+                        errno,
+                        strerror_r(errno, errbuf, sizeof(errbuf)));
     }
-
 
     if (is_tcp)
     {

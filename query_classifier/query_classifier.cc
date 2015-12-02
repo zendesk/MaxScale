@@ -261,13 +261,10 @@ static THD* get_or_create_thd_for_parsing(void **handle, char *query_str)
     }
 
     MYSQL *mysql = thd_data->mysql;
-
-    if (!create_thd_for_parsing(mysql))
-    {
-        return NULL;
-    }
-
     THD *thd = (THD *) mysql->thd;
+
+    thd->reset_globals();
+    thd->clear_data_list();
 
     /** Check that we are calling the client functions in right order */
     if (mysql->status != MYSQL_STATUS_READY)
@@ -278,6 +275,16 @@ static THD* get_or_create_thd_for_parsing(void **handle, char *query_str)
         // TODO
         return NULL;
     }
+
+    /** Clear result variables */
+    free_old_query(mysql);
+
+    thd->end_statement();
+    thd->cleanup_after_query();
+    thd->reset_for_next_command();
+    thd->store_globals();
+
+    lex_start(thd);
 
     size_t query_len = strlen(query_str);
 
@@ -1774,6 +1781,13 @@ static THD_DATA *init_thread_data()
         // return;
     }
 
+    if (!create_thd_for_parsing(thread_data->mysql))
+    {
+        // TODO
+        assert(false);
+        // return;
+    }
+
     if (pthread_mutex_init(&thread_data->mutex, NULL) != 0)
     {
         // TODO
@@ -1869,7 +1883,6 @@ static void parsing_pool_release_thread(void *handle)
     {
         if(thread_data[i]->mysql == handle)
         {
-            free_thd_data(thread_data[i]);
             pthread_mutex_unlock(&thread_data[i]->mutex);
             break;
         }
@@ -1886,4 +1899,8 @@ void free_thd_data(THD_DATA *thd_data)
     thd->end_statement();
     (*mysql->methods->free_embedded_thd)(mysql);
     mysql->thd = NULL;
+    mysql_close(mysql);
+    thd_data->mysql = NULL;
+    pthread_mutex_destroy(&thd_data->mutex);
+    free(thd_data);
 }

@@ -256,7 +256,7 @@ static THD* get_or_create_thd_for_parsing(void **ptr, char *query_str)
         thd_data = parsing_pool_init_thread();
     }
 
-    if (thd_data == NULL || !pthread_mutex_trylock(&thd_data->mutex))
+    if (thd_data == NULL || pthread_mutex_trylock(&thd_data->mutex) != 0)
     {
         thd_data = init_thread_data();
     }
@@ -351,6 +351,7 @@ static bool create_parse_tree(
                 goto return_here;
         }
 	mysql_reset_thd_for_next_command(thd);
+    lex_start(thd);
 
         /** 
 	 * Set some database to thd so that parsing won't fail because of

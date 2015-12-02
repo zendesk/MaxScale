@@ -69,6 +69,7 @@ typedef struct {
 } THD_DATA;
 
 static THD_DATA **thread_data = NULL;
+static pthread_mutex_t thread_data_lock;
 
 static THD_DATA *parsing_pool_get_thread();
 static THD_DATA *parsing_pool_init_thread();
@@ -1731,8 +1732,14 @@ static THD_DATA *parsing_pool_init_thread()
 
     if (thread_data != NULL)
     {
+        pthread_mutex_lock(&thread_data_lock);
+        // TODO
+
         for (; thread_data[i]; i++)
             ;
+    } else {
+        pthread_mutex_init(&thread_data_lock, NULL);
+        // TODO
     }
 
     thread_data = (THD_DATA **) realloc(thread_data, sizeof(THD_DATA *) * (i + 2));
@@ -1741,6 +1748,9 @@ static THD_DATA *parsing_pool_init_thread()
 
     thread_data[i + 1] = NULL;
     thread_data[i] = init_thread_data();
+
+    pthread_mutex_unlock(&thread_data_lock);
+    // TODO
 
     return thread_data[i];
 }

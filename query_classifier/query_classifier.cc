@@ -1889,7 +1889,7 @@ static void parsing_pool_release_thread(void *handle)
     }
 
         // TODO
-    pthread_mutex_lock(&thread_data_lock);
+    pthread_mutex_unlock(&thread_data_lock);
 }
 
 void free_thd_data(THD_DATA *thd_data)

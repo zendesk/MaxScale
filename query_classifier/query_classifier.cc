@@ -968,8 +968,9 @@ LEX* get_lex(GWBUF* querybuf)
         return NULL;
     }
 
-    if ((mysql = (MYSQL *) pi->pi_handle) == NULL ||
-        (thd = (THD *) mysql->thd) == NULL)
+	if (pi->pi_handle == NULL ||
+        (mysql = ((THD_DATA *) pi->pi_handle)->mysql) == NULL ||
+		(thd = ((THD *) mysql->thd)) == NULL)
     {
         ss_dassert(mysql != NULL && thd != NULL);
         return NULL;
@@ -1377,7 +1378,8 @@ char* skygw_get_canonical(GWBUF* querybuf)
     }
 
     if (pi->pi_query_plain_str == NULL ||
-        (mysql = (MYSQL *) pi->pi_handle) == NULL ||
+        pi->pi_handle == NULL ||
+        (mysql = ((THD_DATA *) pi->pi_handle)->mysql) == NULL ||
         (thd = (THD *) mysql->thd) == NULL ||
         (lex = thd->lex) == NULL)
     {

@@ -72,13 +72,14 @@ static THD_DATA **thread_data = NULL;
 
 static THD_DATA *parsing_pool_get_thread();
 static THD_DATA *parsing_pool_init_thread();
+static void parsing_pool_release_thread(void *);
 static THD_DATA *init_thread_data();
 void free_thd_data(THD_DATA *);
 
 static MYSQL *create_server_handle();
 static bool create_thd_for_parsing(MYSQL *);
 
-static THD* get_or_create_thd_for_parsing(void **ptr, char *query_str);
+static THD* get_or_create_thd_for_parsing(void **handle, char* query_str);
 static unsigned long set_client_flags(MYSQL* mysql);
 static bool create_parse_tree(THD* thd);
 static skygw_query_type_t resolve_query_type(THD* thd);
@@ -98,6 +99,7 @@ static void* skygw_get_affected_tables(void* lexptr);
  */
 skygw_query_type_t query_classifier_get_type(GWBUF* querybuf)
 {
+    MYSQL* mysql;
     skygw_query_type_t qtype = QUERY_TYPE_UNKNOWN;
     bool succp;
 
@@ -127,10 +129,12 @@ skygw_query_type_t query_classifier_get_type(GWBUF* querybuf)
 
         if (pi != NULL)
         {
-            MYSQL *mysql;
+            mysql = (MYSQL *) pi->pi_handle;
 
-            if (pi->pi_handle != NULL && (mysql = ((THD_DATA *) pi->pi_handle)->mysql))
+            /** Find out the query type */
+            if (mysql != NULL)
             {
+                qtype = resolve_query_type((THD *) mysql->thd);
                 qtype = resolve_query_type((THD *) mysql->thd);
             }
         }
@@ -245,7 +249,7 @@ bool query_is_parsed(GWBUF* buf)
  * @return Thread context pointer
  *
  */
-static THD* get_or_create_thd_for_parsing(void **ptr, char *query_str)
+static THD* get_or_create_thd_for_parsing(void **handle, char *query_str)
 {
     THD_DATA *thd_data = NULL;
 
@@ -258,6 +262,7 @@ static THD* get_or_create_thd_for_parsing(void **ptr, char *query_str)
     MYSQL *mysql = thd_data->mysql;
     THD *thd = (THD *) mysql->thd;
 
+    thd->reset_globals();
     thd->clear_data_list();
 
     /** Check that we are calling the client functions in right order */
@@ -271,10 +276,14 @@ static THD* get_or_create_thd_for_parsing(void **ptr, char *query_str)
     }
 
     /** Clear result variables */
-    thd->current_stmt = NULL;
+    free_old_query(mysql);
+
+    thd->end_statement();
+    thd->cleanup_after_query();
+    thd->reset_for_next_command();
     thd->store_globals();
 
-    free_old_query(mysql);
+    lex_start(thd);
 
     size_t query_len = strlen(query_str);
 
@@ -283,19 +292,20 @@ static THD* get_or_create_thd_for_parsing(void **ptr, char *query_str)
 
     alloc_query(thd, query_str, query_len);
 
-    *ptr = (void *) thd_data;
+    *handle = (void *) mysql;
 
     return thd;
 }
 
 /**
- * @node  Set client flags. This is copied from libmysqld.c:mysql_real_connect 
+ * @node  Set client flags. This is copied from libmysqld.c:mysql_real_connect
  *
  * Parameters:
  * @param mysql - <usage>
  *          <description>
  *
  * @return
+ *
  *
  * @details (write detailed description here)
  *
@@ -339,11 +349,6 @@ static bool create_parse_tree(THD* thd)
         failp = TRUE;
         goto return_here;
     }
-
-    thd->end_statement();
-    thd->cleanup_after_query();
-    thd->reset_for_next_command();
-    lex_start(thd);
 
     /**
      * Set some database to thd so that parsing won't fail because of
@@ -968,9 +973,8 @@ LEX* get_lex(GWBUF* querybuf)
         return NULL;
     }
 
-	if (pi->pi_handle == NULL ||
-        (mysql = ((THD_DATA *) pi->pi_handle)->mysql) == NULL ||
-		(thd = ((THD *) mysql->thd)) == NULL)
+    if ((mysql = (MYSQL *) pi->pi_handle) == NULL ||
+        (thd = (THD *) mysql->thd) == NULL)
     {
         ss_dassert(mysql != NULL && thd != NULL);
         return NULL;
@@ -1378,8 +1382,7 @@ char* skygw_get_canonical(GWBUF* querybuf)
     }
 
     if (pi->pi_query_plain_str == NULL ||
-        pi->pi_handle == NULL ||
-        (mysql = ((THD_DATA *) pi->pi_handle)->mysql) == NULL ||
+        (mysql = (MYSQL *) pi->pi_handle) == NULL ||
         (thd = (THD *) mysql->thd) == NULL ||
         (lex = thd->lex) == NULL)
     {
@@ -1490,12 +1493,11 @@ void parsing_info_done(void* ptr)
 
     if (ptr)
     {
-        pi = (parsing_info_t *)ptr;
+        pi = (parsing_info_t *) ptr;
 
         if (pi->pi_handle != NULL)
         {
-            THD_DATA* thd_data = (THD_DATA *) pi->pi_handle;
-            pthread_mutex_unlock(&thd_data->mutex);
+            parsing_pool_release_thread(pi->pi_handle);
         }
 
         /** Free plain text query string */
@@ -1510,20 +1512,18 @@ void parsing_info_done(void* ptr)
 
 /**
  * Add plain text query string to parsing info.
- * 
+ *
  * @param ptr   Pointer to parsing info struct, cast required
  * @param str   String to be added
- * 
+ *
  * @return void
  */
-static void parsing_info_set_plain_str(
-        void* ptr,
-        char* str)
+static void parsing_info_set_plain_str(void* ptr, char* str)
 {
-        parsing_info_t* pi = (parsing_info_t *)ptr;
-        CHK_PARSING_INFO(pi);
-        
-        pi->pi_query_plain_str = str;
+    parsing_info_t* pi = (parsing_info_t *) ptr;
+    CHK_PARSING_INFO(pi);
+
+    pi->pi_query_plain_str = str;
 }
 
 /**
@@ -1711,14 +1711,14 @@ skygw_query_op_t query_classifier_get_operation(GWBUF* querybuf)
 
 static THD_DATA *parsing_pool_get_thread()
 {
-    if (thread_data == NULL)
-        return NULL;
-
-    for (int i = 0; thread_data[i]; i++)
+    if (thread_data != NULL)
     {
-        if (pthread_mutex_trylock(&thread_data[i]->mutex) == 0)
+        for (int i = 0; thread_data[i]; i++)
         {
-            return thread_data[i];
+            if (pthread_mutex_trylock(&thread_data[i]->mutex) == 0)
+            {
+                return thread_data[i];
+            }
         }
     }
 
@@ -1844,6 +1844,18 @@ err:
     mysql->thd = NULL;
 
     return false;
+}
+
+static void parsing_pool_release_thread(void *handle)
+{
+    for (int i = 0; thread_data[i]; i++)
+    {
+        if(thread_data[i]->mysql == handle)
+        {
+            pthread_mutex_unlock(&thread_data[i]->mutex);
+            break;
+        }
+    }
 }
 
 void free_thd_data(THD_DATA *thd_data)

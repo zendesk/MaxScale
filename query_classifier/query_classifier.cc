@@ -1727,15 +1727,11 @@ static THD_DATA *parsing_pool_get_thread()
 
 static THD_DATA *parsing_pool_init_thread()
 {
-    int i;
+    int i = 0;
 
-    if (thread_data == NULL)
+    if (thread_data != NULL)
     {
-        i = 0;
-    }
-    else
-    {
-        for (i = 0; thread_data[i]; i++)
+        for (; thread_data[i]; i++)
             ;
     }
 
@@ -1768,6 +1764,13 @@ static THD_DATA *init_thread_data()
     }
 
     if (pthread_mutex_init(&thread_data->mutex, NULL) != 0)
+    {
+        // TODO
+        assert(false);
+        // return;
+    }
+
+    if (pthread_mutex_lock(&thread_data->mutex) != 0)
     {
         // TODO
         assert(false);

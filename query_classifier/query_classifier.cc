@@ -279,8 +279,11 @@ static THD* get_or_create_thd_for_parsing(void **handle, char *query_str)
     /** Clear result variables */
     free_old_query(mysql);
 
+    thd->lex->unit.cleanup();
+
     thd->end_statement();
     thd->cleanup_after_query();
+
     thd->reset_for_next_command();
     thd->store_globals();
 

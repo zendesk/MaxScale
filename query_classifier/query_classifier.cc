@@ -279,10 +279,15 @@ static THD* get_or_create_thd_for_parsing(void **handle, char *query_str)
     /** Clear result variables */
     free_old_query(mysql);
 
-    thd->lex->unit.cleanup();
+//    thd->lex->unit.cleanup();
 
     thd->end_statement();
     thd->cleanup_after_query();
+    thd->reset_query();
+
+    thd_proc_info(thd, 0);
+    thd->packet.shrink(thd->variables.net_buffer_length); // Reclaim some memory
+    free_root(thd->mem_root,MYF(MY_KEEP_PREALLOC));
 
     thd->reset_for_next_command();
     thd->store_globals();

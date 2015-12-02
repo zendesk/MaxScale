@@ -1753,6 +1753,7 @@ static THD_DATA *parsing_pool_init_thread()
             ;
     } else {
         pthread_mutex_init(&thread_data_lock, NULL);
+        pthread_mutex_lock(&thread_data_lock);
         // TODO
     }
 

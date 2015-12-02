@@ -1684,7 +1684,7 @@ static THD_DATA *init_thread_data()
 {
     THD_DATA *thread_data = (THD_DATA *) calloc(1, sizeof(THD_DATA));
 
-    if (!(thread_data->mysql = create_server_handle()))
+    if ((thread_data->mysql = create_server_handle()) == NULL)
     {
         // TODO
         assert(false);
@@ -1733,6 +1733,7 @@ static MYSQL *create_server_handle()
     mysql->user    = my_strdup(user, MYF(0));
     mysql->db      = my_strdup(db, MYF(0));
     mysql->passwd  = NULL;
+
 retblock:
     return mysql;
 }
@@ -1784,6 +1785,7 @@ void free_thd_data(THD_DATA *thd_data)
     (*mysql->methods->free_embedded_thd)(mysql);
     mysql->thd = NULL;
     mysql_close(mysql);
+    thd_data->mysql = NULL;
     pthread_mutex_destroy(&thd_data->mutex);
     free(thd_data);
 }

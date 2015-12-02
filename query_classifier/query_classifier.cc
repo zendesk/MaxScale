@@ -1712,18 +1712,32 @@ skygw_query_op_t query_classifier_get_operation(GWBUF* querybuf)
 
 static THD_DATA *parsing_pool_get_thread()
 {
+    THD_DATA *thd_data = NULL;
+
     if (thread_data != NULL)
     {
+        // TODO
+        pthread_mutex_lock(&thread_data_lock);
+
         for (int i = 0; thread_data[i]; i++)
         {
             if (pthread_mutex_trylock(&thread_data[i]->mutex) == 0)
             {
-                return thread_data[i];
+                thd_data = thread_data[i];
+                break;
             }
         }
+
+        // TODO
+        pthread_mutex_unlock(&thread_data_lock);
     }
 
-    return parsing_pool_init_thread();
+    if (thd_data == NULL)
+    {
+        thd_data = parsing_pool_init_thread();
+    }
+
+    return thd_data;
 }
 
 static THD_DATA *parsing_pool_init_thread()
@@ -1861,6 +1875,9 @@ err:
 
 static void parsing_pool_release_thread(void *handle)
 {
+        // TODO
+    pthread_mutex_lock(&thread_data_lock);
+
     for (int i = 0; thread_data[i]; i++)
     {
         if(thread_data[i]->mysql == handle)
@@ -1869,6 +1886,9 @@ static void parsing_pool_release_thread(void *handle)
             break;
         }
     }
+
+        // TODO
+    pthread_mutex_lock(&thread_data_lock);
 }
 
 void free_thd_data(THD_DATA *thd_data)

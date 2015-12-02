@@ -43,7 +43,7 @@
 # define _GNU_SOURCE
 #endif
 
-static const char LOGFILE_NAME_PREFIX[] = "error";
+static const char LOGFILE_NAME_PREFIX[] = "maxscale";
 static const char LOGFILE_NAME_SUFFIX[] = ".log";
 
 extern char *program_invocation_name;
@@ -105,41 +105,34 @@ static struct
     int  augmentation;     // Can change during the lifetime of log_manager.
     bool do_highprecision; // Can change during the lifetime of log_manager.
     bool do_syslog;        // Can change during the lifetime of log_manager.
-    bool do_maxscalelog;   // Can change during the lifetime of log_manager.
+    bool do_maxlog;        // Can change during the lifetime of log_manager.
     bool use_stdout;       // Can NOT changed during the lifetime of log_manager.
 } log_config =
 {
     DEFAULT_LOG_AUGMENTATION, // augmentation
     false,                    // do_highprecision
     true,                     // do_syslog
-    true,                     // do_maxscalelog
+    true,                     // do_maxlog
     false                     // use_stdout
 };
-
-/**
- * Variable holding the enabled logfiles information.
- * Used from log users to check enabled logs prior calling
- * actual library calls such as skygw_log_write.
- */
-int lm_enabled_logfiles_bitmask = 0;
 
 /**
  * Variable holding the enabled priorities information.
  * Used from logging macros.
  */
-int lm_enabled_priorities_bitmask = 0;
+int mxs_log_enabled_priorities = 0;
 
 /**
  * Thread-specific struct variable for storing current session id and currently
  * enabled log files for the session.
  */
-__thread log_info_t tls_log_info = {0, 0};
+__thread mxs_log_info_t mxs_log_tls = {0, 0};
 
 /**
  * Global counter for each log file type. It indicates for how many sessions
  * each log type is currently enabled.
  */
-ssize_t log_ses_count[LOGFILE_LAST] = {0};
+ssize_t mxs_log_session_count[LOG_DEBUG] = {0};
 
 /**
  * BUFSIZ comes from the system. It equals with block size or
@@ -271,7 +264,6 @@ struct logmanager
     skygw_chk_t      lm_chk_top;
 #endif
     bool             lm_enabled;
-    int              lm_enabled_logfiles;
     simple_mutex_t   lm_mutex;
     size_t           lm_nlinks;
     /** fwr_logmes is for messages from log clients */
@@ -281,7 +273,7 @@ struct logmanager
     fnames_conf_t    lm_fnames_conf;
     logfile_t        lm_logfile;
     filewriter_t     lm_filewriter;
-    log_target_t     lm_target;
+    mxs_log_target_t lm_target;
 #if defined(SS_DEBUG)
     skygw_chk_t      lm_chk_tail;
 #endif
@@ -308,7 +300,7 @@ static void logfile_done(logfile_t* logfile);
 static void logfile_free_memory(logfile_t* lf);
 static void logfile_flush(logfile_t* lf);
 static void logfile_rotate(logfile_t* lf);
-static bool logfile_create(logfile_t* lf);
+static bool logfile_build_name(logfile_t* lf);
 static bool logfile_open_file(filewriter_t* fw, logfile_t* lf);
 static char* form_full_file_name(strpart_t* parts, logfile_t* lf, int seqnoidx);
 
@@ -324,9 +316,8 @@ static bool logmanager_register(bool writep);
 static void logmanager_unregister(void);
 static bool logmanager_init_nomutex(const char* ident,
                                     const char* logdir,
-                                    log_target_t target);
+                                    mxs_log_target_t target);
 static void logmanager_done_nomutex(void);
-static bool logmanager_is_valid_id(logfile_id_t id);
 
 static int logmanager_write_log(int            priority,
                                 enum log_flush flush,
@@ -355,7 +346,7 @@ bool thr_flushall_check();
 
 static bool logmanager_init_nomutex(const char* ident,
                                     const char* logdir,
-                                    log_target_t target)
+                                    mxs_log_target_t target)
 {
     fnames_conf_t* fn;
     filewriter_t*  fw;
@@ -370,7 +361,7 @@ static bool logmanager_init_nomutex(const char* ident,
         goto return_succ;
     }
 
-    lm->lm_target = (target == LOG_TARGET_DEFAULT ? LOG_TARGET_FS : target);
+    lm->lm_target = (target == MXS_LOG_TARGET_DEFAULT ? MXS_LOG_TARGET_FS : target);
 #if defined(SS_DEBUG)
     lm->lm_chk_top   = CHK_NUM_LOGMANAGER;
     lm->lm_chk_tail  = CHK_NUM_LOGMANAGER;
@@ -387,9 +378,6 @@ static bool logmanager_init_nomutex(const char* ident,
         err = 1;
         goto return_succ;
     }
-
-    lm->lm_enabled_logfiles |= LOGFILE_ERROR;
-    lm->lm_enabled_logfiles |= LOGFILE_MESSAGE;
 
     fn = &lm->lm_fnames_conf;
     fw = &lm->lm_filewriter;
@@ -417,7 +405,7 @@ static bool logmanager_init_nomutex(const char* ident,
     /**
      * Set global variable
      */
-    lm_enabled_logfiles_bitmask = lm->lm_enabled_logfiles;
+    mxs_log_enabled_priorities = MXS_LOG_ERR | MXS_LOG_NOTICE | MXS_LOG_WARNING;
 
     /**
      * Initialize filewriter data and open the log file
@@ -471,7 +459,7 @@ return_succ:
  * @return true if succeed, otherwise false
  *
  */
-bool mxs_log_init(const char* ident, const char* logdir, log_target_t target)
+bool mxs_log_init(const char* ident, const char* logdir, mxs_log_target_t target)
 {
     bool succ = false;
 
@@ -586,43 +574,6 @@ static logfile_t* logmanager_get_logfile(logmanager_t* lmgr)
     return lf;
 }
 
-
-/**
- * Returns true if the id log file id is valid.
- *
- * NOTE: Log manager is assumed to exist.
- *
- * @param id The id of a log file.
- *
- */
-
-static bool logmanager_is_valid_id(logfile_id_t id)
-{
-    bool rval = false;
-
-    CHK_LOGMANAGER(lm);
-
-    if ((id >= LOGFILE_FIRST) && (id <= LOGFILE_LAST))
-    {
-        rval = true;
-    }
-    else
-    {
-        const char ERRSTR[] = "Invalid logfile id argument.";
-
-        int err = logmanager_write_log(LOG_ERR,
-                                       LOG_FLUSH_YES,
-                                       0, sizeof(ERRSTR), ERRSTR);
-
-        if (err != 0)
-        {
-            fprintf(stderr, "Writing to logfile %s failed.\n", STRLOGID(LOGFILE_ERROR));
-        }
-    }
-
-    return rval;
-}
-
 /**
  * Finds write position from block buffer for log string and writes there.
  *
@@ -658,7 +609,7 @@ static int logmanager_write_log(int            priority,
     // log_config may change during the course of the function, with would have
     // unpleasant side-effects.
     int do_highprecision = log_config.do_highprecision;
-    int do_maxscalelog = log_config.do_maxscalelog;
+    int do_maxlog = log_config.do_maxlog;
     int do_syslog = log_config.do_syslog;
 
     assert(str);
@@ -676,12 +627,12 @@ static int logmanager_write_log(int            priority,
     size_t cmplen = 0;
     /**
      * 2 braces, 2 spaces and terminating char
-     * If session id is stored to tls_log_info structure, allocate
+     * If session id is stored to mxs_log_tls structure, allocate
      * room for session id too.
      */
-    if ((priority == LOG_INFO) && (tls_log_info.li_sesid != 0))
+    if ((priority == LOG_INFO) && (mxs_log_tls.li_sesid != 0))
     {
-        sesid_str_len = 5 * sizeof(char) + get_decimal_len(tls_log_info.li_sesid);
+        sesid_str_len = 5 * sizeof(char) + get_decimal_len(mxs_log_tls.li_sesid);
     }
     else
     {
@@ -738,7 +689,7 @@ static int logmanager_write_log(int            priority,
     }
 #endif
     /** Book space for log string from buffer */
-    if (do_maxscalelog)
+    if (do_maxlog)
     {
         // All messages are now logged to the error log file.
         wp = blockbuf_get_writepos(&bb, safe_str_len, flush);
@@ -778,7 +729,7 @@ static int logmanager_write_log(int            priority,
         /**
          * Write session id
          */
-        snprintf(wp + timestamp_len, sesid_str_len, "[%lu]  ", tls_log_info.li_sesid);
+        snprintf(wp + timestamp_len, sesid_str_len, "[%lu]  ", mxs_log_tls.li_sesid);
         sesid_str_len -= 1; /*< don't calculate terminating char anymore */
     }
     /**
@@ -803,15 +754,17 @@ static int logmanager_write_log(int            priority,
 
         switch (priority)
         {
+        case LOG_EMERG:
+        case LOG_ALERT:
+        case LOG_CRIT:
         case LOG_ERR:
-            syslog(LOG_ERR, "%s", message);
-            break;
-
+        case LOG_WARNING:
         case LOG_NOTICE:
-            syslog(LOG_NOTICE, "%s", message);
+            syslog(priority, "%s", message);
             break;
 
         default:
+            // LOG_INFO and LOG_DEBUG messages are never written to syslog.
             break;
         }
     }
@@ -822,7 +775,7 @@ static int logmanager_write_log(int            priority,
     }
     wp[safe_str_len - 1] = '\n';
 
-    if (do_maxscalelog)
+    if (do_maxlog)
     {
         blockbuf_unregister(bb);
     }
@@ -1179,50 +1132,6 @@ static blockbuf_t* blockbuf_init()
     return bb;
 }
 
-
-static int skygw_log_enable(logfile_id_t id)
-{
-    bool rval = -1;
-
-    if (logmanager_register(true))
-    {
-        CHK_LOGMANAGER(lm);
-
-        lm->lm_enabled_logfiles |= id;
-        /**
-         * Set global variable
-         */
-        lm_enabled_logfiles_bitmask = lm->lm_enabled_logfiles;
-
-        logmanager_unregister();
-        rval = 0;
-    }
-
-    return rval;
-}
-
-static int skygw_log_disable(logfile_id_t id)
-{
-    bool rval = -1;
-
-    if (logmanager_register(true))
-    {
-        CHK_LOGMANAGER(lm);
-
-        lm->lm_enabled_logfiles &= ~id;
-        /**
-         * Set global variable
-         */
-        lm_enabled_logfiles_bitmask = lm->lm_enabled_logfiles;
-
-        logmanager_unregister();
-        rval = 0;
-    }
-
-    return rval;
-}
-
-
 /**
  * Set log augmentation.
  *
@@ -1230,7 +1139,7 @@ static int skygw_log_disable(logfile_id_t id)
  */
 void mxs_log_set_augmentation(int bits)
 {
-    log_config.augmentation = bits & LOG_AUGMENTATION_MASK;
+    log_config.augmentation = bits & MXS_LOG_AUGMENTATION_MASK;
 }
 
 /**
@@ -1323,7 +1232,7 @@ static bool logmanager_register(bool writep)
             // If someone is logging before the log manager has been inited,
             // or after the log manager has been finished, the messages are
             // written to stdout.
-            succ = logmanager_init_nomutex(NULL, NULL, LOG_TARGET_DEFAULT);
+            succ = logmanager_init_nomutex(NULL, NULL, MXS_LOG_TARGET_DEFAULT);
         }
     }
     /** if logmanager existed or was succesfully restarted, increase link */
@@ -1436,7 +1345,7 @@ static bool fnames_conf_init(fnames_conf_t* fn, const char* logdir)
  */
 static bool logfiles_init(logmanager_t* lm)
 {
-    bool store_shmem = (lm->lm_target == LOG_TARGET_SHMEM);
+    bool store_shmem = (lm->lm_target == MXS_LOG_TARGET_SHMEM);
 
     bool succ = logfile_init(&lm->lm_logfile, lm, store_shmem);
 
@@ -1485,7 +1394,7 @@ static void logfile_rotate(logfile_t* lf)
  * using log manager in parallel with multiple processes and by configuring
  * log manager to use same directories among those processes.
  */
-static bool logfile_create(logfile_t* lf)
+static bool logfile_build_name(logfile_t* lf)
 {
     bool namecreatefail;
     bool nameconflicts;
@@ -1988,7 +1897,7 @@ static bool logfile_init(logfile_t*    logfile,
     }
     logfile->lf_filepath = add_slash(logfile->lf_filepath);
 
-    if (!(succ = logfile_create(logfile)))
+    if (!(succ = logfile_build_name(logfile)))
     {
         goto return_with_succ;
     }
@@ -2009,21 +1918,6 @@ static bool logfile_init(logfile_t*    logfile,
         goto return_with_succ;
     }
 
-#if defined(SS_DEBUG)
-    if (store_shmem && !log_config.use_stdout)
-    {
-        fprintf(stderr, "%s\t: %s->%s\n",
-                STRLOGNAME(LOGFILE_ERROR),
-                logfile->lf_full_link_name,
-                logfile->lf_full_file_name);
-    }
-    else if (!log_config.use_stdout)
-    {
-        fprintf(stderr, "%s\t: %s\n",
-                STRLOGNAME(LOGFILE_ERROR),
-                logfile->lf_full_file_name);
-    }
-#endif
     succ = true;
     logfile->lf_state = RUN;
     CHK_LOGFILE(logfile);
@@ -2190,7 +2084,7 @@ static bool thr_flush_file(logmanager_t *lm, filewriter_t *fwr)
 
         lf->lf_name_seqno += 1; /*< new sequence number */
 
-        if (!(succ = logfile_create(lf)))
+        if (!(succ = logfile_build_name(lf)))
         {
             lf->lf_name_seqno -= 1; /*< restore */
         }
@@ -2258,17 +2152,16 @@ static bool thr_flush_file(logmanager_t *lm, filewriter_t *fwr)
                                    (flush_logfile || do_flushall));
             if (err)
             {
+                // TODO: Log this to syslog.
                 char errbuf[STRERROR_BUFLEN];
                 fprintf(stderr,
-                        "Error : Write to %s log "
-                        ": %s failed due to %d, "
-                        "%s. Disabling the log.",
-                        STRLOGNAME(LOGFILE_ERROR),
+                        "Error : Writing to the log-file %s failed due to (%d, %s). "
+                        "Disabling writing to the log.",
                         lf->lf_full_file_name,
                         err,
                         strerror_r(err, errbuf, sizeof(errbuf)));
-                /** Force log off */
-                skygw_log_disable(LOGFILE_ERROR);
+
+                mxs_log_set_maxlog_enabled(false);
             }
             /**
              * Reset buffer's counters and mark
@@ -2529,6 +2422,8 @@ void flushall_logfiles(bool flush)
 void mxs_log_set_highprecision_enabled(bool enabled)
 {
     log_config.do_highprecision = enabled;
+
+    MXS_NOTICE("highprecision logging is %s.", enabled ? "enabled" : "disabled");
 }
 
 /**
@@ -2539,6 +2434,8 @@ void mxs_log_set_highprecision_enabled(bool enabled)
 void mxs_log_set_syslog_enabled(bool enabled)
 {
     log_config.do_syslog = enabled;
+
+    MXS_NOTICE("syslog logging is %s.", enabled ? "enabled" : "disabled");
 }
 
 /**
@@ -2546,9 +2443,11 @@ void mxs_log_set_syslog_enabled(bool enabled)
  *
  * @param enabled True, if syslog logging should be enabled, false if it should be disabled.
  */
-void mxs_log_set_maxscalelog_enabled(bool enabled)
+void mxs_log_set_maxlog_enabled(bool enabled)
 {
-    log_config.do_maxscalelog = enabled;
+    log_config.do_maxlog = enabled;
+
+    MXS_NOTICE("maxlog logging is %s.", enabled ? "enabled" : "disabled");
 }
 
 
@@ -2661,26 +2560,6 @@ int mxs_log_rotate()
     return err;
 }
 
-static logfile_id_t priority_to_file_id(int priority)
-{
-    switch (priority)
-    {
-    case LOG_DEBUG:
-        return LOGFILE_DEBUG;
-    case LOG_INFO:
-        return LOGFILE_TRACE;
-    case LOG_NOTICE:
-        return LOGFILE_MESSAGE;
-    case LOG_ERR:
-    case LOG_WARNING:
-    case LOG_CRIT:
-    case LOG_ALERT:
-    case LOG_EMERG:
-    default:
-        return LOGFILE_ERROR;
-    }
-}
-
 static const char* priority_name(int priority)
 {
     switch (priority)
@@ -2722,19 +2601,16 @@ int mxs_log_set_priority_enabled(int priority, bool enable)
 
     if ((priority & ~LOG_PRIMASK) == 0)
     {
-        logfile_id_t id = priority_to_file_id(priority);
         int bit = (1 << priority);
 
         if (enable)
         {
             // TODO: Put behind spinlock.
-            lm_enabled_priorities_bitmask |= bit;
-            skygw_log_enable(id);
+            mxs_log_enabled_priorities |= bit;
         }
         else
         {
-            lm_enabled_priorities_bitmask &= ~bit;
-            skygw_log_disable(id);
+            mxs_log_enabled_priorities &= ~bit;
         }
 
         MXS_NOTICE("The logging of %s messages has been %sd.", priority_name(priority), text);
@@ -2761,35 +2637,6 @@ static const char PREFIX_WARNING[] = "warning: ";
 static const char PREFIX_NOTICE[]  = "notice : ";
 static const char PREFIX_INFO[]    = "info   : ";
 static const char PREFIX_DEBUG[]   = "debug  : ";
-
-static logfile_id_t priority_to_id(int priority)
-{
-    assert((priority & ~LOG_PRIMASK) == 0);
-
-    switch (priority)
-    {
-    case LOG_EMERG:
-    case LOG_ALERT:
-    case LOG_CRIT:
-    case LOG_ERR:
-    case LOG_WARNING:
-        return LOGFILE_ERROR;
-
-    case LOG_NOTICE:
-        return LOGFILE_MESSAGE;
-
-    case LOG_INFO:
-        return LOGFILE_TRACE;
-
-    case LOG_DEBUG:
-        return LOGFILE_DEBUG;
-
-    default:
-        // Can't happen!
-        assert(!true);
-        return LOGFILE_ERROR;
-    }
-}
 
 static log_prefix_t priority_to_prefix(int priority)
 {
@@ -2893,9 +2740,7 @@ int mxs_log_message(int priority,
 
     if ((priority & ~LOG_PRIMASK) == 0) // Check that the priority is ok,
     {
-        logfile_id_t id = priority_to_id(priority);
-
-        if (LOG_IS_ENABLED(id))
+        if (MXS_LOG_PRIORITY_IS_ENABLED(priority))
         {
             va_list valist;
 
@@ -2912,12 +2757,13 @@ int mxs_log_message(int priority,
 
                 static const char FORMAT_FUNCTION[] = "(%s): ";
 
-                int augmentation = log_config.augmentation; // Other thread might change log_config.augmentation.
+                // Other thread might change log_config.augmentation.
+                int augmentation = log_config.augmentation;
                 int augmentation_len = 0;
 
                 switch (augmentation)
                 {
-                case LOG_AUGMENT_WITH_FUNCTION:
+                case MXS_LOG_AUGMENT_WITH_FUNCTION:
                     augmentation_len = sizeof(FORMAT_FUNCTION) - 1; // Remove trailing 0
                     augmentation_len -= 2; // Remove the %s
                     augmentation_len += strlen(function);
@@ -2951,7 +2797,7 @@ int mxs_log_message(int priority,
 
                     switch (augmentation)
                     {
-                    case LOG_AUGMENT_WITH_FUNCTION:
+                    case MXS_LOG_AUGMENT_WITH_FUNCTION:
                         len = sprintf(augmentation_text, FORMAT_FUNCTION, function);
                         break;
 

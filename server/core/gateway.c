@@ -166,7 +166,7 @@ static struct option long_options[] = {
     {"cachedir",         required_argument, 0, 'A'},
     {"language",         required_argument, 0, 'N'},
     {"syslog",           required_argument, 0, 's'},
-    {"maxscalelog",      required_argument, 0, 'S'},
+    {"maxlog",          required_argument, 0, 'S'},
     {"user",             required_argument, 0, 'U'},
     {"version",          no_argument,       0, 'v'},
     {"help",             no_argument,       0, '?'},
@@ -174,6 +174,10 @@ static struct option long_options[] = {
     {"log_augmentation", required_argument, 0, 'G'},
     {0, 0, 0, 0}
 };
+static bool syslog_configured = false;
+static bool maxlog_configured = false;
+static bool log_to_shm_configured = false;
+
 static int cnf_preparser(void* data, const char* section, const char* name, const char* value);
 static void log_flush_shutdown(void);
 static void log_flush_cb(void* arg);
@@ -216,9 +220,13 @@ static SPINLOCK* ssl_locks;
 static void ssl_locking_function(int mode, int n, const char* file, int line)
 {
     if (mode & CRYPTO_LOCK)
+    {
         spinlock_acquire(&ssl_locks[n]);
+    }
     else
+    {
         spinlock_release(&ssl_locks[n]);
+    }
 }
 /**
  * OpenSSL requires this struct to be defined in order to use dynamic locks
@@ -372,7 +380,8 @@ static int signal_set(int sig, void (*handler)(int));
 static void
 sigfatal_handler(int i)
 {
-    if (fatal_handling) {
+    if (fatal_handling)
+    {
         fprintf(stderr, "Fatal signal %d while backtracing\n", i);
         _exit(1);
     }
@@ -391,12 +400,16 @@ sigfatal_handler(int i)
         int n, count = backtrace(addrs, 128);
         char** symbols = backtrace_symbols(addrs, count);
 
-        if (symbols) {
-            for (n = 0; n < count; n++) {
+        if (symbols)
+        {
+            for (n = 0; n < count; n++)
+            {
                 MXS_ERROR("  %s\n", symbols[n]);
             }
             free(symbols);
-        } else {
+        }
+        else
+        {
             fprintf(stderr, "\nresolving symbols to error log failed, writing call trace to stderr:\n");
             backtrace_symbols_fd(addrs, count, fileno(stderr));
         }
@@ -425,7 +438,8 @@ sigfatal_handler(int i)
  * @details (write detailed description here)
  *
  */
-static int signal_set(int sig, void (*handler)(int)) {
+static int signal_set(int sig, void (*handler)(int))
+{
     static struct sigaction sigact;
     static int err;
     int rc = 0;
@@ -453,11 +467,10 @@ static int signal_set(int sig, void (*handler)(int)) {
 /**
  * Cleanup the temporary data directory we created for the gateway
  */
-int ntfw_cb(
-    const char*        filename,
-    const struct stat* filestat,
-    int                fileflags,
-    struct FTW*        pfwt)
+int ntfw_cb(const char*        filename,
+            const struct stat* filestat,
+            int                fileflags,
+            struct FTW*        pfwt)
 {
     int rc = remove(filename);
 
@@ -488,7 +501,8 @@ void datadir_cleanup()
 
 static void libmysqld_done(void)
 {
-    if (libmysqld_started) {
+    if (libmysqld_started)
+    {
         mysql_library_end();
     }
 }
@@ -499,8 +513,7 @@ static void write_footer(void)
     file_write_footer(stdout);
 }
 
-static bool file_write_footer(
-    FILE*       outfile)
+static bool file_write_footer(FILE* outfile)
 {
     bool        succp = false;
     size_t      len1;
@@ -518,8 +531,7 @@ static bool file_write_footer(
 
 // Documentation says 26 bytes is enough, but 32 is a nice round number.
 #define ASCTIME_BUF_LEN 32
-static bool file_write_header(
-    FILE*       outfile)
+static bool file_write_header(FILE* outfile)
 {
     bool        succp = false;
     size_t      len1;
@@ -540,6 +552,7 @@ static bool file_write_header(
     return true;
 #endif
 
+    t = time(NULL);
     localtime_r(&t, &tm);
 
     header_buf1 = "\n\nMariaDB Corporation MaxScale " MAXSCALE_VERSION "\t";
@@ -562,10 +575,9 @@ static bool file_write_header(
     return succp;
 }
 
-static bool resolve_maxscale_conf_fname(
-    char** cnf_full_path,
-    char*  home_dir,
-    char*  cnf_file_arg)
+static bool resolve_maxscale_conf_fname(char** cnf_full_path,
+                                        char*  home_dir,
+                                        char*  cnf_file_arg)
 {
     bool  succp = false;
 
@@ -587,9 +599,7 @@ static bool resolve_maxscale_conf_fname(
          * directory.
          * '-f MaxScale.cnf'
          */
-        *cnf_full_path = get_expanded_pathname(NULL,
-                                               home_dir,
-                                               cnf_file_arg);
+        *cnf_full_path = get_expanded_pathname(NULL, home_dir, cnf_file_arg);
 
         if (*cnf_full_path != NULL)
         {
@@ -675,8 +685,7 @@ return_succp:
  * @return NULL if directory can be read and written, an error message if either
  *      read or write is not permitted.
  */
-static char* check_dir_access(
-    char* dirname, bool rd, bool wr)
+static char* check_dir_access(char* dirname, bool rd, bool wr)
 {
     char errbuf[PATH_MAX * 2];
     char* errstr = NULL;
@@ -742,7 +751,8 @@ static void print_log_n_stderr(
     char* fpr_err = "*\n* Error :";
     char* fpr_end   = "\n*\n";
 
-    if (do_log) {
+    if (do_log)
+    {
         char errbuf[STRERROR_BUFLEN];
         MXS_ERROR("%s %s %s %s",
                   log_err,
@@ -750,7 +760,8 @@ static void print_log_n_stderr(
                   eno == 0 ? " " : "Error :",
                   eno == 0 ? " " : strerror_r(eno, errbuf, sizeof(errbuf)));
     }
-    if (do_stderr) {
+    if (do_stderr)
+    {
         char errbuf[STRERROR_BUFLEN];
         fprintf(stderr,
                 "%s %s %s %s %s",
@@ -762,8 +773,7 @@ static void print_log_n_stderr(
     }
 }
 
-static bool file_is_readable(
-    char* absolute_pathname)
+static bool file_is_readable(char* absolute_pathname)
 {
     bool succp = true;
 
@@ -792,8 +802,7 @@ static bool file_is_readable(
     return succp;
 }
 
-static bool file_is_writable(
-    char* absolute_pathname)
+static bool file_is_writable(char* absolute_pathname)
 {
     bool succp = true;
 
@@ -841,13 +850,12 @@ static bool file_is_writable(
  *
  *
  */
-static char* get_expanded_pathname(
-    char** output_path,
-    char*  relative_path,
-    const char*  fname)
+static char* get_expanded_pathname(char** output_path,
+                                   char*  relative_path,
+                                   const char*  fname)
 {
-    char*  cnf_file_buf = NULL;
-    char*  expanded_path;
+    char* cnf_file_buf = NULL;
+    char* expanded_path;
 
     if (relative_path == NULL)
     {
@@ -888,9 +896,7 @@ static char* get_expanded_pathname(
          * readability.
          */
         size_t pathlen = strnlen(expanded_path, PATH_MAX)+
-            1+
-            strnlen(fname, PATH_MAX)+
-            1;
+            1 + strnlen(fname, PATH_MAX) + 1;
         cnf_file_buf = (char*)malloc(pathlen);
 
         if (cnf_file_buf == NULL)
@@ -969,7 +975,7 @@ static void usage(void)
             "  -U, --user=USER            run MaxScale as another user.\n"
             "                             The user ID and group ID of this user are used to run MaxScale.\n"
             "  -s, --syslog=[yes|no]      log messages to syslog (default:yes)\n"
-            "  -S, --maxscalelog=[yes|no] log messages to MaxScale log (default: yes)\n"
+            "  -S, --maxlog=[yes|no]      log messages to MaxScale log (default: yes)\n"
             "  -v, --version              print version info and exit\n"
             "  -V, --version-full         print full version info and exit\n"
             "  -?, --help                 show this help\n"
@@ -1031,9 +1037,9 @@ int main(int argc, char **argv)
     char*    tmp_path;
     char*    tmp_var;
     int      option_index;
-    log_target_t log_target = LOG_TARGET_FS;
     int      *syslog_enabled = &config_get_global_options()->syslog; /** Log to syslog */
-    int      *maxscalelog_enabled = &config_get_global_options()->maxlog; /** Log with MaxScale */
+    int      *maxlog_enabled = &config_get_global_options()->maxlog; /** Log with MaxScale */
+    int      *log_to_shm = &config_get_global_options()->log_to_shm; /** Log to shared memory */
     ssize_t  log_flush_timeout_ms = 0;
     sigset_t sigset;
     sigset_t sigpipe_mask;
@@ -1041,7 +1047,8 @@ int main(int argc, char **argv)
     void   (*exitfunp[4])(void) = { mxs_log_finish, datadir_cleanup, write_footer, NULL };
 
     *syslog_enabled = 1;
-    *maxscalelog_enabled = 1;
+    *maxlog_enabled = 1;
+    *log_to_shm = 0;
 
     sigemptyset(&sigpipe_mask);
     sigaddset(&sigpipe_mask, SIGPIPE);
@@ -1120,9 +1127,15 @@ int main(int argc, char **argv)
 
         case 'l':
             if (strncasecmp(optarg, "file", PATH_MAX) == 0)
-                log_target = LOG_TARGET_FS;
+            {
+                *log_to_shm = false;
+                log_to_shm_configured = true;
+            }
             else if (strncasecmp(optarg, "shm", PATH_MAX) == 0)
-                log_target = LOG_TARGET_SHMEM;
+            {
+                *log_to_shm = true;
+                log_to_shm_configured = true;
+            }
             else
             {
                 char* logerr = "Configuration file argument "
@@ -1209,11 +1222,15 @@ int main(int argc, char **argv)
             {
                 tok++;
                 if (tok)
-                    *maxscalelog_enabled = config_truth_value(tok);
+                {
+                    *maxlog_enabled = config_truth_value(tok);
+                    maxlog_configured = true;
+                }
             }
             else
             {
-                *maxscalelog_enabled = config_truth_value(optarg);
+                *maxlog_enabled = config_truth_value(optarg);
+                maxlog_configured = true;
             }
         }
         break;
@@ -1224,11 +1241,15 @@ int main(int argc, char **argv)
             {
                 tok++;
                 if (tok)
+                {
                     *syslog_enabled = config_truth_value(tok);
+                    syslog_configured = true;
+                }
             }
             else
             {
                 *syslog_enabled = config_truth_value(optarg);
+                syslog_configured = true;
             }
         }
         break;
@@ -1607,7 +1628,9 @@ int main(int argc, char **argv)
     snprintf(pathbuf, PATH_MAX, "%s", get_configdir());
     pathbuf[PATH_MAX] = '\0';
     if (pathbuf[strlen(pathbuf) - 1] != '/')
+    {
         strcat(pathbuf, "/");
+    }
 
     if (!resolve_maxscale_conf_fname(&cnf_file_path, pathbuf, cnf_file_arg))
     {
@@ -1632,8 +1655,7 @@ int main(int argc, char **argv)
         MXS_ERROR("%s", errorbuffer);
         if (!daemon_mode)
         {
-            strncat(errorbuffer, "\n", STRING_BUFFER_SIZE);
-            fprintf(stderr, "%s", errorbuffer);
+            fprintf(stderr, "%s\n", errorbuffer);
         }
 
         rc = MAXSCALE_BADCONFIG;
@@ -1666,13 +1688,15 @@ int main(int argc, char **argv)
             printf("Syslog logging is disabled.\n");
         }
 
-        if (!(*maxscalelog_enabled))
+        if (!(*maxlog_enabled))
         {
             printf("MaxScale logging is disabled.\n");
         }
 
         mxs_log_set_syslog_enabled(*syslog_enabled);
-        mxs_log_set_maxscalelog_enabled(*maxscalelog_enabled);
+        mxs_log_set_maxlog_enabled(*maxlog_enabled);
+
+        mxs_log_target_t log_target = *log_to_shm ? MXS_LOG_TARGET_SHMEM : MXS_LOG_TARGET_FS;
 
         succp = mxs_log_init(NULL, get_logdir(), log_target);
 
@@ -1967,8 +1991,7 @@ static void log_flush_shutdown(void)
  *
  *
  */
-static void log_flush_cb(
-    void* arg)
+static void log_flush_cb(void* arg)
 {
     ssize_t timeout_ms = *(ssize_t *)arg;
     struct timespec ts1;
@@ -1977,7 +2000,8 @@ static void log_flush_cb(
     ts1.tv_nsec = (timeout_ms%1000) * 1000000;
 
     MXS_NOTICE("Started MaxScale log flusher.");
-    while (!do_exit) {
+    while (!do_exit)
+    {
         mxs_log_flush();
         nanosleep(&ts1, NULL);
     }
@@ -2004,7 +2028,8 @@ static void unlock_pidfile()
  */
 static void unlink_pidfile(void)
 {
-    if (strlen(pidfile)) {
+    if (strlen(pidfile))
+    {
         if (unlink(pidfile))
         {
             char errbuf[STRERROR_BUFLEN];
@@ -2036,7 +2061,9 @@ bool pid_file_exists()
     pathbuf[PATH_MAX] = '\0';
 
     if (access(pathbuf, F_OK) != 0)
+    {
         return false;
+    }
 
     if (access(pathbuf, R_OK) == 0)
     {
@@ -2228,7 +2255,9 @@ bool handle_path_arg(char** dest, char* path, char* arg, bool rd, bool wr)
     bool rval = false;
 
     if (path == NULL && arg == NULL)
+    {
         return rval;
+    }
 
     if (path)
     {
@@ -2376,15 +2405,28 @@ static int cnf_preparser(void* data, const char* section, const char* name, cons
         }
         else if (strcmp(name, "syslog") == 0)
         {
-            cnf->syslog = config_truth_value((char*)value);
+            if (!syslog_configured)
+            {
+                cnf->syslog = config_truth_value((char*)value);
+            }
         }
         else if (strcmp(name, "maxlog") == 0)
         {
-            cnf->maxlog = config_truth_value((char*)value);
+            if (!maxlog_configured)
+            {
+                cnf->maxlog = config_truth_value((char*)value);
+            }
         }
         else if (strcmp(name, "log_augmentation") == 0)
         {
             set_log_augmentation(value);
+        }
+        else if (strcmp(name, "log_to_shm") == 0)
+        {
+            if (!log_to_shm_configured)
+            {
+                cnf->log_to_shm = config_truth_value((char*)value);
+            }
         }
     }
 

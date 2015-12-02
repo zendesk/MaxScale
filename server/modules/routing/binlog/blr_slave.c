@@ -667,8 +667,19 @@ extern  char *strcasestr();
 		}
 		else if (strcasecmp(word, "@slave_uuid") == 0)
 		{
-			if ((word = strtok_r(NULL, sep, &brkb)) != NULL)
-				slave->uuid = strdup(word);
+			if ((word = strtok_r(NULL, sep, &brkb)) != NULL) {
+				int len = strlen(word);
+				char *word_ptr = word;
+				if (len) {
+					if (word[len-1] == '\'')
+						word[len-1] = '\0';
+					if (word[0] == '\'') {
+						word[0] = '\0';
+						word_ptr++;
+					}
+				}
+				slave->uuid = strdup(word_ptr);
+			}
 			free(query_text);
 			return blr_slave_replay(router, slave, router->saved_master.setslaveuuid);
 		}
@@ -1781,10 +1792,11 @@ uint32_t	chksum;
 
 	slave->state = BLRS_DUMPING;
 
-	MXS_NOTICE("%s: Slave %s, server id %d requested binlog file %s from position %lu",
-                   router->service->name, slave->dcb->remote,
-                   slave->serverid,
-                   slave->binlogfile, (unsigned long)slave->binlog_pos);
+	MXS_NOTICE("%s: Slave %s:%d, server id %d requested binlog file %s from position %lu",
+		router->service->name, slave->dcb->remote,
+		ntohs((slave->dcb->ipv4).sin_port),
+		slave->serverid,
+		slave->binlogfile, (unsigned long)slave->binlog_pos);
 
 	if (slave->binlog_pos != router->binlog_position ||
 			strcmp(slave->binlogfile, router->binlog_name) != 0)
@@ -1921,9 +1933,9 @@ char read_errmsg[BINLOG_ERROR_MSG_LEN+1];
 				return rval;
 			}
 			MXS_ERROR("Slave %s:%i, server-id %d, binlog '%s': blr_slave_catchup "
-                                  "failed to open binlog file",
-                                  slave->dcb->remote, slave->port, slave->serverid,
-                                  slave->binlogfile);
+				"failed to open binlog file",
+				slave->dcb->remote, ntohs((slave->dcb->ipv4).sin_port), slave->serverid,
+				slave->binlogfile);
 
 			slave->cstate &= ~CS_BUSY;
 			slave->state = BLRS_ERRORED;
@@ -1975,11 +1987,11 @@ char read_errmsg[BINLOG_ERROR_MSG_LEN+1];
 					return rval;
 				}
 				MXS_ERROR("Slave %s:%i, server-id %d, binlog '%s': blr_slave_catchup "
-                                          "failed to open binlog file in rotate event",
-                                          slave->dcb->remote,
-                                          slave->port,
-                                          slave->serverid,
-                                          slave->binlogfile);
+					"failed to open binlog file in rotate event",
+					slave->dcb->remote,
+					ntohs((slave->dcb->ipv4).sin_port),
+					slave->serverid,
+					slave->binlogfile);
 
 				slave->state = BLRS_ERRORED;
 
@@ -2012,14 +2024,24 @@ char read_errmsg[BINLOG_ERROR_MSG_LEN+1];
 	if (record == NULL) {
 		slave->stats.n_failed_read++;
 
+                if (hdr.ok == SLAVE_POS_BAD_FD) {
+			MXS_ERROR("%s Slave %s:%i, server-id %d, binlog '%s', %s",
+				router->service->name,
+				slave->dcb->remote,
+				ntohs((slave->dcb->ipv4).sin_port),
+				slave->serverid,
+				slave->binlogfile,
+				read_errmsg);
+		}
+
                 if (hdr.ok == SLAVE_POS_READ_ERR) {
 			MXS_ERROR("%s Slave %s:%i, server-id %d, binlog '%s', %s",
-                                  router->service->name,
-                                  slave->dcb->remote,
-                                  slave->port,
-                                  slave->serverid,
-                                  slave->binlogfile,
-                                  read_errmsg);
+				router->service->name,
+				slave->dcb->remote,
+				ntohs((slave->dcb->ipv4).sin_port),
+				slave->serverid,
+				slave->binlogfile,
+				read_errmsg);
 
                         spinlock_acquire(&slave->catch_lock);
 
@@ -2039,15 +2061,21 @@ char read_errmsg[BINLOG_ERROR_MSG_LEN+1];
 
 		if (hdr.ok == SLAVE_POS_READ_UNSAFE) {
 
-			ROUTER_OBJECT *router_obj= router->service->router;
+			ROUTER_OBJECT *router_obj;
+
+			spinlock_acquire(&router->lock);
+
+			router_obj = router->service->router;
+
+			spinlock_release(&router->lock);
 
 			MXS_ERROR("%s: Slave %s:%i, server-id %d, binlog '%s', %s",
-                                  router->service->name,
-                                  slave->dcb->remote,
-                                  slave->port,
-                                  slave->serverid,
-                                  slave->binlogfile,
-                                  read_errmsg);
+				router->service->name,
+				slave->dcb->remote,
+				ntohs((slave->dcb->ipv4).sin_port),
+				slave->serverid,
+				slave->binlogfile,
+				read_errmsg);
 
 			/*
 			 * Close the slave session and socket
@@ -2099,7 +2127,11 @@ char read_errmsg[BINLOG_ERROR_MSG_LEN+1];
 				spinlock_release(&slave->catch_lock);
 				spinlock_release(&router->binlog_lock);
 				state_change = 1;
-			} else {
+			}
+			else
+			{
+				MXS_NOTICE("Execution entered branch were locks previously were NOT "
+				           "released. Previously this would have caused a lock-up.");
 				spinlock_release(&slave->catch_lock);
 				spinlock_release(&router->binlog_lock);
 			}
@@ -2110,21 +2142,21 @@ char read_errmsg[BINLOG_ERROR_MSG_LEN+1];
 			slave->stats.n_caughtup++;
 			if (slave->stats.n_caughtup == 1)
 			{
-				MXS_NOTICE("%s: Slave %s:%d, server-id %d is up to date '%s', position %lu.",
-                                           router->service->name,
-                                           slave->dcb->remote,
-                                           slave->port,
-                                           slave->serverid,
-                                           slave->binlogfile, (unsigned long)slave->binlog_pos);
+				MXS_NOTICE("%s: Slave %s:%d, server-id %d is now up to date '%s', position %lu.",
+					router->service->name,
+					slave->dcb->remote,
+					ntohs((slave->dcb->ipv4).sin_port),
+					slave->serverid,
+					slave->binlogfile, (unsigned long)slave->binlog_pos);
 			}
 			else if ((slave->stats.n_caughtup % 50) == 0)
 			{
 				MXS_NOTICE("%s: Slave %s:%d, server-id %d is up to date '%s', position %lu.",
-                                           router->service->name,
-                                           slave->dcb->remote,
-                                           slave->port,
-                                           slave->serverid,
-                                           slave->binlogfile, (unsigned long)slave->binlog_pos);
+					router->service->name,
+					slave->dcb->remote,
+					ntohs((slave->dcb->ipv4).sin_port),
+					slave->serverid,
+					slave->binlogfile, (unsigned long)slave->binlog_pos);
 			}
 		}
 	}
@@ -2144,12 +2176,17 @@ char read_errmsg[BINLOG_ERROR_MSG_LEN+1];
 			 * but the new binlog file has not yet been created. Therefore
 			 * we ignore these issues during the rotate processing.
 			 */
-			MXS_ERROR("Slave reached end of file for binlog file %s at %lu "
-                                  "which is not the file currently being downloaded. "
+			MXS_ERROR("%s: Slave %s:%d, server-id %d reached end of file for binlog file %s "
+                                  "at %lu which is not the file currently being downloaded. "
                                   "Master binlog is %s, %lu. This may be caused by a "
                                   "previous failure of the master.",
+                                  router->service->name,
+                                  slave->dcb->remote,
+                                  ntohs((slave->dcb->ipv4).sin_port),
+                                  slave->serverid,
                                   slave->binlogfile, (unsigned long)slave->binlog_pos,
                                   router->binlog_name, router->binlog_position);
+
 			if (blr_slave_fake_rotate(router, slave))
 			{
 				spinlock_acquire(&slave->catch_lock);
@@ -2203,6 +2240,29 @@ ROUTER_INSTANCE		*router = slave->router;
 	{
 		if (slave->state == BLRS_DUMPING)
 		{
+			int do_return;
+
+			spinlock_acquire(&router->binlog_lock);
+
+			do_return = 0;
+
+			/* check for a pending transaction and not rotating */
+			if (router->pending_transaction && strcmp(router->binlog_name, slave->binlogfile) == 0 &&
+				(slave->binlog_pos > router->binlog_position) && !router->rotating) {
+				do_return = 1;
+			}
+
+			spinlock_release(&router->binlog_lock);
+
+			if (do_return) {
+				spinlock_acquire(&slave->catch_lock);
+				slave->cstate |= CS_EXPECTCB;
+				spinlock_release(&slave->catch_lock);
+				poll_fake_write_event(slave->dcb);
+
+				return 0;
+			}
+
 			spinlock_acquire(&slave->catch_lock);
 			slave->cstate &= ~(CS_UPTODATE|CS_EXPECTCB);
 			spinlock_release(&slave->catch_lock);
@@ -2350,11 +2410,11 @@ char err_msg[BINLOG_ERROR_MSG_LEN+1];
 	{
 		if (hdr.ok != SLAVE_POS_READ_OK) {
 			MXS_ERROR("Slave %s:%i, server-id %d, binlog '%s', blr_read_binlog failure: %s",
-                                  slave->dcb->remote,
-                                  slave->port,
-                                  slave->serverid,
-                                  slave->binlogfile,
-                                  err_msg);
+				slave->dcb->remote,
+				ntohs((slave->dcb->ipv4).sin_port),
+				slave->serverid,
+				slave->binlogfile,
+				err_msg);
 		}
 
 		blr_close_binlog(router, file);

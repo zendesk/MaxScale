@@ -1,5 +1,5 @@
 add_library(binlogrouter SHARED blr.c blr_master.c blr_cache.c blr_slave.c blr_file.c)
-set_target_properties(binlogrouter PROPERTIES INSTALL_RPATH ${CMAKE_INSTALL_RPATH}:${MAXSCALE_LIBDIR})
+set_target_properties(binlogrouter PROPERTIES INSTALL_RPATH ${CMAKE_INSTALL_RPATH}:${MAXSCALE_LIBDIR} VERSION "2.0.0")
 target_link_libraries(binlogrouter ssl pthread log_manager)
 install(TARGETS binlogrouter DESTINATION ${MAXSCALE_LIBDIR})
 
@@ -16,11 +16,11 @@ add_executable(maxbinlogcheck maxbinlogcheck.c blr_file.c blr_cache.c blr_master
   ${CMAKE_SOURCE_DIR}/server/core/resultset.c ${CMAKE_SOURCE_DIR}/server/core/load_utils.c
   ${CMAKE_SOURCE_DIR}/server/core/monitor.c ${CMAKE_SOURCE_DIR}/server/core/gw_utils.c
   ${CMAKE_SOURCE_DIR}/server/core/thread.c ${CMAKE_SOURCE_DIR}/server/core/secrets.c
-  ${CMAKE_SOURCE_DIR}/server/core/random_jkiss.c
-  ${CMAKE_SOURCE_DIR}/log_manager/log_manager.cc)
+  ${CMAKE_SOURCE_DIR}/server/core/random_jkiss.c ${CMAKE_SOURCE_DIR}/server/core/maxscale_pcre2.c
+  ${CMAKE_SOURCE_DIR}/log_manager/log_manager.cc ${CMAKE_SOURCE_DIR}/server/core/externcmd.c)
 
 
-target_link_libraries(maxbinlogcheck utils ssl pthread ${EMBEDDED_LIB} ${PCRE_LINK_FLAGS} aio rt crypt dl crypto inih z m stdc++ ${CURL_LIBRARIES})
+target_link_libraries(maxbinlogcheck utils ssl pthread ${LZMA_LINK_FLAGS} ${EMBEDDED_LIB} ${PCRE_LINK_FLAGS} aio rt crypt dl crypto inih z m stdc++ ${CURL_LIBRARIES})
 
 install(TARGETS maxbinlogcheck DESTINATION bin)
 

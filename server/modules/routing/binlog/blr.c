@@ -50,6 +50,7 @@
  * 30/09/2015	Massimiliano Pinto	Addition of send_slave_heartbeat option
  * 23/10/2015	Markus Makela		Added current_safe_event
  * 27/10/2015   Martin Brampton         Amend getCapabilities to return RCAP_TYPE_NO_RSESSION
+ * 26/11/2015	Massimiliano Pinto	Added check for missing service listener
  *
  * @endverbatim
  */
@@ -217,6 +218,14 @@ char		task_name[BLRM_TASK_NAME_LEN+1] = "";
 	    return NULL;
 	}
 
+	/* Check for listeners associated to this service */
+	if (service->ports == NULL)
+	{
+	    MXS_ERROR("%s: Error: No listener configured for binlogrouter. Add a listener section in config file.",
+                      service->name);
+	    return NULL;
+	}
+
 	/*
 	 * We only support one server behind this router, since the server is
 	 * the master from which we replicate binlog records. Therefore check
@@ -275,7 +284,7 @@ char		task_name[BLRM_TASK_NAME_LEN+1] = "";
 	inst->m_errno = 0;
 	inst->m_errmsg = NULL;
 
-	inst->trx_safe = 1;
+	inst->trx_safe = 0;
 	inst->pending_transaction = 0;
 	inst->last_safe_pos = 0;
 
@@ -866,10 +875,10 @@ ROUTER_SLAVE	 *slave = (ROUTER_SLAVE *)router_session;
 		atomic_add(&router->stats.n_registered, -1);
 
 		if (slave->state > 0) {
-			MXS_NOTICE("%s: Slave %s, server id %d, disconnected after %ld seconds. "
-                                   "%d SQL commands, %d events sent (%lu bytes), binlog '%s', "
+			MXS_NOTICE("%s: Slave %s:%d, server id %d, disconnected after %ld seconds. "
+                                 "%d SQL commands, %d events sent (%lu bytes), binlog '%s', "
                                    "last position %lu",
-                                   router->service->name, slave->dcb->remote,
+                                   router->service->name, slave->dcb->remote, ntohs((slave->dcb->ipv4).sin_port),
                                    slave->serverid,
                                    time(0) - slave->connect_time,
                                    slave->stats.n_queries,

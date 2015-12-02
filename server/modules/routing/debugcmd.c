@@ -419,12 +419,18 @@ static void enable_log_priority(DCB *, char *);
 static void disable_log_priority(DCB *, char *);
 static void enable_sess_log_action(DCB *dcb, char *arg1, char *arg2);
 static void disable_sess_log_action(DCB *dcb, char *arg1, char *arg2);
+static void enable_sess_log_priority(DCB *dcb, char *arg1, char *arg2);
+static void disable_sess_log_priority(DCB *dcb, char *arg1, char *arg2);
 static void enable_monitor_replication_heartbeat(DCB *dcb, MONITOR *monitor);
 static void disable_monitor_replication_heartbeat(DCB *dcb, MONITOR *monitor);
 static void enable_service_root(DCB *dcb, SERVICE *service);
 static void disable_service_root(DCB *dcb, SERVICE *service);
 static void enable_feedback_action();
 static void disable_feedback_action();
+static void enable_syslog();
+static void disable_syslog();
+static void enable_maxlog();
+static void disable_maxlog();
 
 /**
  *  * The subcommands of the enable command
@@ -462,10 +468,22 @@ struct subcommand enableoptions[] = {
         "sessionlog",
         2,
         enable_sess_log_action,
-        "Enable Log options for a single session. Usage: enable sessionlog [trace | error | "
+        "[deprecated] Enable Log options for a single session. Usage: enable sessionlog [trace | error | "
         "message | debug] <session id>\t E.g. enable sessionlog message 123.",
-        "Enable Log options for a single session. Usage: enable sessionlog [trace | error | "
+        "[deprecated] Enable Log options for a single session. Usage: enable sessionlog [trace | error | "
         "message | debug] <session id>\t E.g. enable sessionlog message 123.",
+        {ARG_TYPE_STRING, ARG_TYPE_STRING, 0}
+    },
+    {
+        "sessionlog-priority",
+        2,
+        enable_sess_log_priority,
+        "Enable a logging priority for a particular session. "
+        "Usage: enable sessionlog-priority [err | warning | notice | info | debug] <session id>"
+        "message | debug] <session id>\t E.g. enable sessionlog-priority info 123.",
+        "Enable a logging priority for a particular session. "
+        "Usage: enable sessionlog-priority [err | warning | notice | info | debug] <session id>"
+        "message | debug] <session id>\t E.g. enable sessionlog-priority info 123.",
         {ARG_TYPE_STRING, ARG_TYPE_STRING, 0}
     },
     {
@@ -482,6 +500,22 @@ struct subcommand enableoptions[] = {
         enable_feedback_action,
         "Enable MaxScale modules list sending via http to notification service",
         "Enable MaxScale modules list sending via http to notification service",
+        {0, 0, 0}
+    },
+    {
+        "syslog",
+        0,
+        enable_syslog,
+        "Enable syslog logging",
+        "Enable syslog logging",
+        {0, 0, 0}
+    },
+    {
+        "maxlog",
+        0,
+        enable_maxlog,
+        "Enable maxlog logging",
+        "Enable maxlog logging",
         {0, 0, 0}
     },
     {
@@ -532,10 +566,22 @@ struct subcommand disableoptions[] = {
         "sessionlog",
         2,
         disable_sess_log_action,
-        "Disable Log options for a single session. Usage: disable sessionlog [trace | error | "
+        "[deprecated] Disable Log options for a single session. Usage: disable sessionlog [trace | error | "
         "message | debug] <session id>\t E.g. disable sessionlog message 123.",
-        "Disable Log options for a single session. Usage: disable sessionlog [trace | error | "
+        "[deprecated] Disable Log options for a single session. Usage: disable sessionlog [trace | error | "
         "message | debug] <session id>\t E.g. disable sessionlog message 123.",
+        {ARG_TYPE_STRING, ARG_TYPE_STRING, 0}
+    },
+    {
+        "sessionlog-priority",
+        2,
+        disable_sess_log_priority,
+        "Disable a logging priority for a particular session. "
+        "Usage: disable sessionlog-priority [err | warning | notice | info | debug] <session id>"
+        "message | debug] <session id>\t E.g. enable sessionlog-priority info 123.",
+        "Enable a logging priority for a particular session. "
+        "Usage: disable sessionlog-priority [err | warning | notice | info | debug] <session id>"
+        "message | debug] <session id>\t E.g. enable sessionlog-priority info 123.",
         {ARG_TYPE_STRING, ARG_TYPE_STRING, 0}
     },
     {
@@ -552,6 +598,22 @@ struct subcommand disableoptions[] = {
         disable_feedback_action,
         "Disable MaxScale modules list sending via http to notification service",
         "Disable MaxScale modules list sending via http to notification service",
+        {0, 0, 0}
+    },
+    {
+        "syslog",
+        0,
+        disable_syslog,
+        "Disable syslog logging",
+        "Disable syslog logging",
+        {0, 0, 0}
+    },
+    {
+        "maxlog",
+        0,
+        disable_maxlog,
+        "Disable maxlog logging",
+        "Disable maxlog logging",
         {0, 0, 0}
     },
     {
@@ -1374,110 +1436,6 @@ disable_service_root(DCB *dcb, SERVICE *service)
     serviceEnableRootUser(service, 0);
 }
 
-/**
- * Enables a log for a single session
- * @param session The session in question
- * @param dcb Client DCB
- * @param type Which log to enable
- */
-static void enable_sess_log_action(DCB *dcb, char *arg1, char *arg2)
-{
-    logfile_id_t type;
-    size_t id = 0;
-    int max_len = strlen("message");
-    SESSION* session = get_all_sessions();
-
-    ss_dassert(arg1 != NULL && arg2 != NULL && session != NULL);
-
-    if (strncmp(arg1, "debug", max_len) == 0)
-    {
-        type = LOGFILE_DEBUG;
-    }
-    else if (strncmp(arg1, "trace", max_len) == 0)
-    {
-        type = LOGFILE_TRACE;
-    }
-    else if (strncmp(arg1, "error", max_len) == 0)
-    {
-        type = LOGFILE_ERROR;
-    }
-    else if (strncmp(arg1, "message", max_len) == 0)
-    {
-        type = LOGFILE_MESSAGE;
-    }
-    else
-    {
-        dcb_printf(dcb, "%s is not supported for enable log\n", arg1);
-        return ;
-    }
-
-    id = (size_t)strtol(arg2, 0, 0);
-
-    while(session)
-    {
-        if (session->ses_id == id)
-        {
-            session_enable_log(session, type);
-            return;
-        }
-        session = session->next;
-    }
-
-    dcb_printf(dcb, "Session not found: %s\n", arg2);
-}
-
-/**
- * Disables a log for a single session
- * @param session The session in question
- * @param dcb Client DCB
- * @param type Which log to disable
- */
-static void disable_sess_log_action(DCB *dcb, char *arg1, char *arg2)
-{
-    logfile_id_t type;
-    int id = 0;
-    int max_len = strlen("message");
-    SESSION* session = get_all_sessions();
-
-    ss_dassert(arg1 != NULL && arg2 != NULL && session != NULL);
-
-    if (strncmp(arg1, "debug", max_len) == 0)
-    {
-        type = LOGFILE_DEBUG;
-    }
-    else if (strncmp(arg1, "trace", max_len) == 0)
-    {
-        type = LOGFILE_TRACE;
-    }
-    else if (strncmp(arg1, "error", max_len) == 0)
-    {
-        type = LOGFILE_ERROR;
-    }
-    else if (strncmp(arg1, "message", max_len) == 0)
-    {
-        type = LOGFILE_MESSAGE;
-    }
-    else
-    {
-        dcb_printf(dcb, "%s is not supported for disable log\n", arg1);
-        return ;
-    }
-
-    id = (size_t)strtol(arg2, 0, 0);
-
-    while(session)
-    {
-        if (session->ses_id == id)
-        {
-            session_disable_log(session, type);
-            return;
-        }
-        session = session->next;
-    }
-
-    dcb_printf(dcb, "Session not found: %s\n", arg2);
-}
-
 struct log_action_entry
 {
     const char* name;
@@ -1492,7 +1450,6 @@ static bool get_log_action(const char* name, struct log_action_entry* entryp)
             { "debug",   LOG_DEBUG,  "debug" },
             { "trace",   LOG_INFO,   "info" },
             { "message", LOG_NOTICE, "notice" },
-            { "error",   LOG_ERR,    "err" }
         };
     const int n_entries = sizeof(entries) / sizeof(entries[0]);
 
@@ -1514,44 +1471,78 @@ static bool get_log_action(const char* name, struct log_action_entry* entryp)
 }
 
 /**
- * The log enable action
+ * Enables a log for a single session
+ * @param session The session in question
+ * @param dcb Client DCB
+ * @param type Which log to enable
  */
-static void enable_log_action(DCB *dcb, char *arg1)
+static void enable_sess_log_action(DCB *dcb, char *arg1, char *arg2)
 {
     struct log_action_entry entry;
 
     if (get_log_action(arg1, &entry))
     {
-        mxs_log_set_priority_enabled(entry.priority, true);
+        size_t id = (size_t) strtol(arg2, 0, 0);
 
-        dcb_printf(dcb,
-                   "'enable log %s' is accepted but deprecated, use 'enable log-priority %s' instead.\n",
-                   arg1, entry.replacement);
+        // TODO: This is totally non thread-safe.
+        SESSION* session = get_all_sessions();
+
+        while (session)
+        {
+            if (session->ses_id == id)
+            {
+                session_enable_log_priority(session, entry.priority);
+                break;
+            }
+            session = session->next;
+        }
+
+        if (!session)
+        {
+            dcb_printf(dcb, "Session not found: %s.\n", arg2);
+        }
     }
     else
     {
-        dcb_printf(dcb, "'%s' is not supported for enable log\n", arg1);
+        dcb_printf(dcb, "%s is not supported for enable log.\n", arg1);
     }
 }
 
 /**
- * The log disable action
+ * Disables a log for a single session
+ * @param session The session in question
+ * @param dcb Client DCB
+ * @param type Which log to disable
  */
-static void disable_log_action(DCB *dcb, char *arg1)
+static void disable_sess_log_action(DCB *dcb, char *arg1, char *arg2)
 {
     struct log_action_entry entry;
 
     if (get_log_action(arg1, &entry))
     {
-        mxs_log_set_priority_enabled(entry.priority, false);
+        size_t id = (size_t) strtol(arg2, 0, 0);
 
-        dcb_printf(dcb,
-                   "'disable log %s' is accepted but deprecated, use 'enable log-priority %s' instead.\n",
-                   arg1, entry.replacement);
+        // TODO: This is totally non thread-safe.
+        SESSION* session = get_all_sessions();
+
+        while (session)
+        {
+            if (session->ses_id == id)
+            {
+                session_disable_log_priority(session, entry.priority);
+                break;
+            }
+            session = session->next;
+        }
+
+        if (!session)
+        {
+            dcb_printf(dcb, "Session not found: %s.\n", arg2);
+        }
     }
     else
     {
-        dcb_printf(dcb, "'%s' is not supported for 'disable log'\n", arg1);
+        dcb_printf(dcb, "%s is not supported for disable log.\n", arg1);
     }
 }
 
@@ -1575,7 +1566,6 @@ static int string_to_priority(const char* name)
         {
             // NOTE: If you make changes to this array, ensure that it remains alphabetically ordered.
             { "debug",   LOG_DEBUG },
-            { "err",     LOG_ERR },
             { "info",    LOG_INFO },
             { "notice",  LOG_NOTICE },
             { "warning", LOG_WARNING },
@@ -1594,6 +1584,124 @@ static int string_to_priority(const char* name)
 }
 
 /**
+ * Enables a log priority for a single session
+ * @param session The session in question
+ * @param dcb Client DCB
+ * @param type Which log to enable
+ */
+static void enable_sess_log_priority(DCB *dcb, char *arg1, char *arg2)
+{
+    int priority = string_to_priority(arg1);
+
+    if (priority != -1)
+    {
+        size_t id = (size_t) strtol(arg2, 0, 0);
+
+        // TODO: This is totally non thread-safe.
+        SESSION* session = get_all_sessions();
+
+        while (session)
+        {
+            if (session->ses_id == id)
+            {
+                session_enable_log_priority(session, priority);
+                break;
+            }
+            session = session->next;
+        }
+
+        if (!session)
+        {
+            dcb_printf(dcb, "Session not found: %s.\n", arg2);
+        }
+    }
+    else
+    {
+        dcb_printf(dcb, "'%s' is not a supported log priority.\n", arg1);
+    }
+}
+
+/**
+ * Disable a log priority for a single session
+ * @param session The session in question
+ * @param dcb Client DCB
+ * @param type Which log to enable
+ */
+static void disable_sess_log_priority(DCB *dcb, char *arg1, char *arg2)
+{
+    int priority = string_to_priority(arg1);
+
+    if (priority != -1)
+    {
+        size_t id = (size_t) strtol(arg2, 0, 0);
+
+        // TODO: This is totally non thread-safe.
+        SESSION* session = get_all_sessions();
+
+        while (session)
+        {
+            if (session->ses_id == id)
+            {
+                session_disable_log_priority(session, priority);
+                break;
+            }
+            session = session->next;
+        }
+
+        if (!session)
+        {
+            dcb_printf(dcb, "Session not found: %s.\n", arg2);
+        }
+    }
+    else
+    {
+        dcb_printf(dcb, "'%s' is not a supported log priority.\n", arg1);
+    }
+}
+
+/**
+ * The log enable action
+ */
+static void enable_log_action(DCB *dcb, char *arg1)
+{
+    struct log_action_entry entry;
+
+    if (get_log_action(arg1, &entry))
+    {
+        mxs_log_set_priority_enabled(entry.priority, true);
+
+        dcb_printf(dcb,
+                   "'enable log %s' is accepted but deprecated, use 'enable log-priority %s' instead.\n",
+                   arg1, entry.replacement);
+    }
+    else
+    {
+        dcb_printf(dcb, "'%s' is not supported for enable log.\n", arg1);
+    }
+}
+
+/**
+ * The log disable action
+ */
+static void disable_log_action(DCB *dcb, char *arg1)
+{
+    struct log_action_entry entry;
+
+    if (get_log_action(arg1, &entry))
+    {
+        mxs_log_set_priority_enabled(entry.priority, false);
+
+        dcb_printf(dcb,
+                   "'disable log %s' is accepted but deprecated, use 'enable log-priority %s' instead.\n",
+                   arg1, entry.replacement);
+    }
+    else
+    {
+        dcb_printf(dcb, "'%s' is not supported for 'disable log'.\n", arg1);
+    }
+}
+
+/**
  * The log-priority enable action
  */
 
@@ -1607,7 +1715,7 @@ static void enable_log_priority(DCB *dcb, char *arg1)
     }
     else
     {
-        dcb_printf(dcb, "'%s' is not a supported log priority\n", arg1);
+        dcb_printf(dcb, "'%s' is not a supported log priority.\n", arg1);
     }
 }
 
@@ -1625,7 +1733,7 @@ static void disable_log_priority(DCB *dcb, char *arg1)
     }
     else
     {
-        dcb_printf(dcb, "'%s' is not a supported log priority\n", arg1);
+        dcb_printf(dcb, "'%s' is not a supported log priority.\n", arg1);
     }
 }
 
@@ -1674,6 +1782,42 @@ disable_feedback_action(void)
 {
     config_disable_feedback_task();
     return;
+}
+
+/**
+ * Enable syslog logging.
+ */
+static void
+enable_syslog()
+{
+    mxs_log_set_syslog_enabled(true);
+}
+
+/**
+ * Disable syslog logging.
+ */
+static void
+disable_syslog()
+{
+    mxs_log_set_syslog_enabled(false);
+}
+
+/**
+ * Enable maxlog logging.
+ */
+static void
+enable_maxlog()
+{
+    mxs_log_set_maxlog_enabled(true);
+}
+
+/**
+ * Disable maxlog logging.
+ */
+static void
+disable_maxlog()
+{
+    mxs_log_set_maxlog_enabled(false);
 }
 
 #if defined(FAKE_CODE)

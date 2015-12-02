@@ -48,64 +48,43 @@ enum mxs_log_priorities
 
 typedef enum
 {
-    LOGFILE_ERROR = 1,
-    LOGFILE_FIRST = LOGFILE_ERROR,
-    LOGFILE_MESSAGE = 2,
-    LOGFILE_TRACE = 4,
-    LOGFILE_DEBUG = 8,
-    LOGFILE_LAST = LOGFILE_DEBUG
-} logfile_id_t;
-
-typedef enum
-{
-    LOG_TARGET_DEFAULT = 0,
-    LOG_TARGET_FS      = 1, // File system
-    LOG_TARGET_SHMEM   = 2, // Shared memory
-} log_target_t;
+    MXS_LOG_TARGET_DEFAULT = 0,
+    MXS_LOG_TARGET_FS      = 1, // File system
+    MXS_LOG_TARGET_SHMEM   = 2, // Shared memory
+} mxs_log_target_t;
 
 /**
 * Thread-specific logging information.
 */
-typedef struct log_info
+typedef struct mxs_log_info
 {
     size_t li_sesid;
-    int    li_enabled_logs;
-} log_info_t;
+    int    li_enabled_priorities;
+} mxs_log_info_t;
 
-#define LE LOGFILE_ERROR
-#define LM LOGFILE_MESSAGE
-#define LT LOGFILE_TRACE
-#define LD LOGFILE_DEBUG
-
-extern int lm_enabled_priorities_bitmask;
-extern int lm_enabled_logfiles_bitmask;
-extern ssize_t log_ses_count[];
-extern __thread log_info_t tls_log_info;
+extern int mxs_log_enabled_priorities;
+extern ssize_t mxs_log_session_count[];
+extern __thread mxs_log_info_t mxs_log_tls;
 
 /**
  * Check if specified log type is enabled in general or if it is enabled
  * for the current session.
  */
-#define LOG_IS_ENABLED(id) (((lm_enabled_logfiles_bitmask & id) ||      \
-                             (log_ses_count[id] > 0 &&                  \
-                              tls_log_info.li_enabled_logs & id)) ? true : false)
-
-#define LOG_MAY_BE_ENABLED(id) (((lm_enabled_logfiles_bitmask & id) ||  \
-                                 log_ses_count[id] > 0) ? true : false)
-
-// TODO: Add this at a later stage.
-#define MXS_LOG_PRIORITY_IS_ENABLED(priority) false
+#define MXS_LOG_PRIORITY_IS_ENABLED(priority) \
+    (((mxs_log_enabled_priorities & (1 << priority)) ||      \
+      (mxs_log_session_count[priority] > 0 && \
+       mxs_log_tls.li_enabled_priorities & (1 << priority))) ? true : false)
 
 /**
  * LOG_AUGMENT_WITH_FUNCTION Each logged line is suffixed with [function-name].
  */
 typedef enum
 {
-    LOG_AUGMENT_WITH_FUNCTION = 1,
-    LOG_AUGMENTATION_MASK     = (LOG_AUGMENT_WITH_FUNCTION)
-} log_augmentation_t;
+    MXS_LOG_AUGMENT_WITH_FUNCTION = 1,
+    MXS_LOG_AUGMENTATION_MASK     = (MXS_LOG_AUGMENT_WITH_FUNCTION)
+} mxs_log_augmentation_t;
 
-bool mxs_log_init(const char* ident, const char* logdir, log_target_t target);
+bool mxs_log_init(const char* ident, const char* logdir, mxs_log_target_t target);
 void mxs_log_finish(void);
 
 int mxs_log_flush();
@@ -114,7 +93,7 @@ int mxs_log_rotate();
 
 int  mxs_log_set_priority_enabled(int priority, bool enabled);
 void mxs_log_set_syslog_enabled(bool enabled);
-void mxs_log_set_maxscalelog_enabled(bool enabled);
+void mxs_log_set_maxlog_enabled(bool enabled);
 void mxs_log_set_highprecision_enabled(bool enabled);
 void mxs_log_set_augmentation(int bits);
 

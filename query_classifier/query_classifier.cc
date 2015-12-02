@@ -64,8 +64,6 @@
 #define QTYPE_LESS_RESTRICTIVE_THAN_WRITE(t) (t<QUERY_TYPE_WRITE ? true : false)
 
 typedef struct {
-    pthread_t thread_id;
-    bool stored;
     pthread_mutex_t mutex;
     MYSQL *mysql;
 } THD_DATA;
@@ -253,17 +251,7 @@ static THD* get_or_create_thd_for_parsing(void **ptr, char *query_str)
 
     if ((thd_data = parsing_pool_get_thread()) == NULL)
     {
-        thd_data = parsing_pool_init_thread();
-    }
-
-    if (thd_data == NULL || pthread_mutex_trylock(&thd_data->mutex) != 0)
-    {
-        thd_data = init_thread_data();
-    }
-
-    if (thd_data == NULL)
-    {
-        // TODO
+        // ERROR
         return NULL;
     }
 
@@ -338,40 +326,45 @@ static unsigned long set_client_flags(
 }
 
 
-static bool create_parse_tree(
-        THD* thd)
+static bool create_parse_tree(THD* thd)
 {
-        Parser_state parser_state;
-        bool         failp = FALSE;
-        const char*  virtual_db = "skygw_virtual";
+    Parser_state parser_state;
+    bool         failp = FALSE;
+    const char*  virtual_db = "skygw_virtual";
 
-	if (parser_state.init(thd, thd->query(), thd->query_length())) 
-	{
-                failp = TRUE;
-                goto return_here;
-        }
-	mysql_reset_thd_for_next_command(thd);
+    if (parser_state.init(thd, thd->query(), thd->query_length()))
+    {
+        failp = TRUE;
+        goto return_here;
+    }
+
+    thd->end_statement();
+    thd->cleanup_after_query();
+    thd->reset_for_next_command();
     lex_start(thd);
 
-        /** 
-	 * Set some database to thd so that parsing won't fail because of
-         * missing database. Then parse. 
-	 */
-        failp = thd->set_db(virtual_db, strlen(virtual_db));
-        if (failp) 
-	{
-            MXS_ERROR("Failed to set database in thread context.");
-        }
-        failp = parse_sql(thd, &parser_state, NULL);
+    /** 
+     * Set some database to thd so that parsing won't fail because of
+     * missing database. Then parse. 
+     */
+    failp = thd->set_db(virtual_db, strlen(virtual_db));
 
-        if (failp) 
-	{
-            MXS_DEBUG("%lu [readwritesplit:create_parse_tree] failed to "
-                      "create parse tree.",
-                      pthread_self());
-        }
+    if (failp)
+    {
+        MXS_ERROR("Failed to set database in thread context.");
+    }
+
+    failp = parse_sql(thd, &parser_state, NULL);
+
+    if (failp)
+    {
+        MXS_DEBUG("%lu [readwritesplit:create_parse_tree] failed to "
+                "create parse tree.",
+                pthread_self());
+    }
+
 return_here:
-        return failp;
+    return failp;
 }
 
 
@@ -1434,25 +1427,19 @@ void parsing_info_done(
 	if (ptr)
 	{
 		pi = (parsing_info_t *)ptr;
-        
+
 		if (pi->pi_handle != NULL)
 		{
 			THD_DATA* thd_data = (THD_DATA *) pi->pi_handle;
-			
-            if (thd_data->stored)
-            {
-                pthread_mutex_unlock(&thd_data->mutex);
-            }
-            else
-            {
-                free_thd_data(thd_data);
-            }
+            pthread_mutex_unlock(&thd_data->mutex);
 		}
+
 		/** Free plain text query string */
 		if (pi->pi_query_plain_str != NULL)
 		{
 			free(pi->pi_query_plain_str);
 		}
+
 		free(pi);
 	}
 }
@@ -1640,20 +1627,19 @@ static THD_DATA *parsing_pool_get_thread()
     if (thread_data == NULL)
         return NULL;
 
-    pthread_t tid = pthread_self();
-
-    for(int i = 0; thread_data[i]; i++) {
-        if(thread_data[i]->thread_id == tid) {
+    for (int i = 0; thread_data[i]; i++)
+    {
+        if (pthread_mutex_trylock(&thread_data[i]->mutex) == 0)
+        {
             return thread_data[i];
         }
     }
 
-    return NULL;
+    return parsing_pool_init_thread();
 }
 
 static THD_DATA *parsing_pool_init_thread()
 {
-    pthread_t tid = pthread_self();
     int i;
 
     if (thread_data == NULL)
@@ -1662,7 +1648,7 @@ static THD_DATA *parsing_pool_init_thread()
     }
     else
     {
-        for(i = 0; thread_data[i]; i++)
+        for (i = 0; thread_data[i]; i++)
             ;
     }
 
@@ -1671,12 +1657,7 @@ static THD_DATA *parsing_pool_init_thread()
     // TODO fail
 
     thread_data[i + 1] = NULL;
-
-    if ((thread_data[i] = init_thread_data()) != NULL)
-    {
-        thread_data[i]->stored = true;
-        thread_data[i]->thread_id = tid;
-    }
+    thread_data[i] = init_thread_data();
 
     return thread_data[i];
 }

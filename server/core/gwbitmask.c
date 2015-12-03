@@ -290,7 +290,7 @@ bitmask_render_readable(GWBITMASK *bitmask)
     spinlock_acquire(&bitmask->lock);
     if (999 < bitmask->length)
     {
-        result = malloc(strlen(toobig));
+        result = malloc(strlen(toobig) + 1);
         if (result)
         {
             strcpy(result, toobig);
@@ -318,7 +318,7 @@ bitmask_render_readable(GWBITMASK *bitmask)
         }
         else
         {
-            result = malloc(strlen(empty));
+            result = malloc(strlen(empty) + 1);
             if (result)
             {
                 strcpy(result, empty);

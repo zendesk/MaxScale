@@ -272,7 +272,7 @@ typedef enum skygw_chk_t {
                         (SERVER_IS_SLAVE(s)   ? "RUNNING SLAVE" :       \
                         (SERVER_IS_JOINED(s)  ? "RUNNING JOINED" :     \
                         (SERVER_IS_NDB(s)     ? "RUNNING NDB" :     	\
-                        ((SERVER_IS_RUNNING(s) && SERVER_IN_MAINT(s)) ? "RUNNING MAINTENANCE" : \
+                        (SERVER_IN_MAINT(s)   ? "RUNNING MAINTENANCE" : \
                         (SERVER_IS_RELAY_SERVER(s) ? "RUNNING RELAY" : \
                         (SERVER_IS_RUNNING(s) ? "RUNNING (only)" : "NO STATUS")))))))
 

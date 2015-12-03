@@ -120,7 +120,7 @@ endif()
 
 IF(DEFINED OLEVEL)
   if((OLEVEL GREATER -1) AND (OLEVEL LESS 4) )
-    set(FLAGS "${FLAGS} -O${OLEVEL} -fno-inline" CACHE STRING "Compilation flags"  FORCE)
+    set(FLAGS "${FLAGS} -O${OLEVEL} -fno-inline -fno-reorder-blocks" CACHE STRING "Compilation flags"  FORCE)
 	message(STATUS "Optimization level at: ${OLEVEL}")
   else()
 	message(WARNING "Optimization level was set to a bad value, ignoring it. (Valid values are 0-3)")

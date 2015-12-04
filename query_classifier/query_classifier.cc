@@ -137,7 +137,6 @@ skygw_query_type_t query_classifier_get_type(GWBUF* querybuf)
             if (mysql != NULL)
             {
                 qtype = resolve_query_type((THD *) mysql->thd);
-                qtype = resolve_query_type((THD *) mysql->thd);
             }
         }
     }

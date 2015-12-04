@@ -63,13 +63,24 @@
 
 #define QTYPE_LESS_RESTRICTIVE_THAN_WRITE(t) (t<QUERY_TYPE_WRITE ? true : false)
 
-typedef struct {
+typedef struct thd_data {
     pthread_mutex_t mutex;
     MYSQL *mysql;
+    struct thd_data *next;
 } THD_DATA;
 
-static THD_DATA **thread_data = NULL;
-static pthread_mutex_t thread_data_lock;
+static THD_DATA *thread_data = NULL;
+static pthread_mutex_t thread_data_lock = PTHREAD_MUTEX_INITIALIZER;
+
+#define THREAD_DATA_ACCESS(access) \
+    do { \
+        int errno; \
+        if((errno = pthread_mutex_lock(&thread_data_lock)) != 0) \
+            MXS_ERROR("Locking thread data mutex failed: %s", strerror(errno)); \
+        access \
+        if((errno = pthread_mutex_unlock(&thread_data_lock)) != 0) \
+            MXS_ERROR("Unlocking thread data mutex failed: %s", strerror(errno)); \
+    } while(0);
 
 static THD_DATA *parsing_pool_get_thread();
 static THD_DATA *parsing_pool_init_thread();
@@ -256,7 +267,7 @@ static THD* get_or_create_thd_for_parsing(void **handle, char *query_str)
 
     if ((thd_data = parsing_pool_get_thread()) == NULL)
     {
-        // ERROR
+        MXS_ERROR("Could not obtain embedded parsing thread");
         return NULL;
     }
 
@@ -270,25 +281,24 @@ static THD* get_or_create_thd_for_parsing(void **handle, char *query_str)
     if (mysql->status != MYSQL_STATUS_READY)
     {
         set_mysql_error(mysql, CR_COMMANDS_OUT_OF_SYNC, unknown_sqlstate);
-        MXS_ERROR("Invalid status %d in embedded server.",
-                  mysql->status);
-        // TODO
+        MXS_ERROR("Invalid status %d in embedded server.", mysql->status);
         return NULL;
     }
 
     /** Clear result variables */
     free_old_query(mysql);
 
-//    thd->lex->unit.cleanup();
-
+    // THD cleanup / reset
     thd->end_statement();
     thd->cleanup_after_query();
     thd->reset_query();
 
+    // This is from dispatch_command to free previous statement
     thd_proc_info(thd, 0);
-    thd->packet.shrink(thd->variables.net_buffer_length); // Reclaim some memory
+    thd->packet.shrink(thd->variables.net_buffer_length);
     free_root(thd->mem_root,MYF(MY_KEEP_PREALLOC));
 
+    // Ready for next command
     thd->reset_for_next_command();
     thd->store_globals();
 
@@ -1724,20 +1734,10 @@ static THD_DATA *parsing_pool_get_thread()
 
     if (thread_data != NULL)
     {
-        // TODO
-        pthread_mutex_lock(&thread_data_lock);
-
-        for (int i = 0; thread_data[i]; i++)
-        {
-            if (pthread_mutex_trylock(&thread_data[i]->mutex) == 0)
-            {
-                thd_data = thread_data[i];
-                break;
-            }
-        }
-
-        // TODO
-        pthread_mutex_unlock(&thread_data_lock);
+        THD_DATA *thd_data = thread_data;
+        while (pthread_mutex_trylock(&thd_data->mutex) != 0 &&
+                (thd_data = thd_data->next) != NULL)
+            ;
     }
 
     if (thd_data == NULL)
@@ -1750,67 +1750,60 @@ static THD_DATA *parsing_pool_get_thread()
 
 static THD_DATA *parsing_pool_init_thread()
 {
-    int i = 0;
+    int errno;
 
-    if (thread_data != NULL)
+    if ((errno = pthread_mutex_lock(&thread_data_lock)) != 0)
     {
-        pthread_mutex_lock(&thread_data_lock);
-        // TODO
-
-        for (; thread_data[i]; i++)
-            ;
-    } else {
-        pthread_mutex_init(&thread_data_lock, NULL);
-        pthread_mutex_lock(&thread_data_lock);
-        // TODO
+        MXS_ERROR("Locking thread data mutex failed: %s", strerror(errno));
+        return NULL;
     }
 
-    thread_data = (THD_DATA **) realloc(thread_data, sizeof(THD_DATA *) * (i + 2));
+    THD_DATA *thd_data = init_thread_data();
 
-    // TODO fail
+    if (thd_data != NULL)
+    {
+        THD_DATA *prev_thd_data = thread_data;
+        thd_data->next = prev_thd_data;
+        thread_data = thd_data;
+    }
 
-    thread_data[i + 1] = NULL;
-    thread_data[i] = init_thread_data();
+    if ((errno = pthread_mutex_unlock(&thread_data_lock)) != 0)
+    {
+        MXS_ERROR("Unlocking thread data mutex failed: %s", strerror(errno));
+        return NULL;
+    }
 
-    pthread_mutex_unlock(&thread_data_lock);
-    // TODO
-
-    return thread_data[i];
+    return thd_data;
 }
 
 static THD_DATA *init_thread_data()
 {
-    THD_DATA *thread_data = (THD_DATA *) calloc(1, sizeof(THD_DATA));
+    THD_DATA *thd_data = (THD_DATA *) calloc(1, sizeof(THD_DATA));
 
-    if ((thread_data->mysql = create_server_handle()) == NULL)
+    if ((thd_data->mysql = create_server_handle()) == NULL)
     {
-        // TODO
-        assert(false);
-        // return;
+        goto err;
     }
 
-    if (!create_thd_for_parsing(thread_data->mysql))
+    if (!create_thd_for_parsing(thd_data->mysql))
     {
-        // TODO
-        assert(false);
-        // return;
+        goto err;
     }
 
-    if (pthread_mutex_init(&thread_data->mutex, NULL) != 0)
+    int errno;
+
+    if ((errno = pthread_mutex_init(&thread_data->mutex, NULL)) != 0 ||
+        (errno = pthread_mutex_lock(&thread_data->mutex) != 0))
     {
-        // TODO
-        assert(false);
-        // return;
+        MXS_ERROR("Error initializing thread data mutex: %s", strerror(errno));
+        goto err;
     }
 
-    if (pthread_mutex_lock(&thread_data->mutex) != 0)
-    {
-        // TODO
-        assert(false);
-        // return;
-    }
+    return thd_data;
 
-    return thread_data;
+err:
+    free_thd_data(thd_data);
+    return NULL;
 }
 
 static MYSQL *create_server_handle()
@@ -1850,8 +1843,6 @@ static bool create_thd_for_parsing(MYSQL *mysql)
     char *db = mysql->options.db;
     bool failp = FALSE;
 
-    ss_info_dassert(mysql != NULL, ("mysql is NULL"));
-
     client_flags = set_client_flags(mysql);
     thd = (THD *) create_embedded_thd(client_flags);
 
@@ -1875,8 +1866,6 @@ static bool create_thd_for_parsing(MYSQL *mysql)
 
 err:
     (*mysql->methods->free_embedded_thd)(mysql);
-
-    thd = NULL;
     mysql->thd = NULL;
 
     return false;
@@ -1884,31 +1873,35 @@ err:
 
 static void parsing_pool_release_thread(void *handle)
 {
-        // TODO
-    pthread_mutex_lock(&thread_data_lock);
+    THD_DATA *thd_data = thread_data;
 
-    for (int i = 0; thread_data[i]; i++)
+    while (thd_data->mysql != handle && (thd_data = thd_data->next) != NULL)
+        ;
+
+    if (thd_data != NULL)
     {
-        if(thread_data[i]->mysql == handle)
-        {
-            pthread_mutex_unlock(&thread_data[i]->mutex);
-            break;
-        }
+        pthread_mutex_unlock(&thd_data->mutex);
     }
-
-        // TODO
-    pthread_mutex_unlock(&thread_data_lock);
 }
 
 void free_thd_data(THD_DATA *thd_data)
 {
-    MYSQL *mysql = thd_data->mysql;
-    THD *thd = (THD *) mysql->thd;
-    thd->end_statement();
-    (*mysql->methods->free_embedded_thd)(mysql);
-    mysql->thd = NULL;
-    mysql_close(mysql);
-    thd_data->mysql = NULL;
+    if (thd_data->mysql != NULL)
+    {
+        MYSQL *mysql = thd_data->mysql;
+        THD *thd = (THD *) mysql->thd;
+
+        if (thd != NULL)
+        {
+            thd->end_statement();
+            (*mysql->methods->free_embedded_thd)(mysql);
+            mysql->thd = NULL;
+        }
+
+        mysql_close(mysql);
+        thd_data->mysql = NULL;
+    }
+
     pthread_mutex_destroy(&thd_data->mutex);
     free(thd_data);
 }

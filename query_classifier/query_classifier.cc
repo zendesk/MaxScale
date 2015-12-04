@@ -72,16 +72,6 @@ typedef struct thd_data {
 static THD_DATA *thread_data = NULL;
 static pthread_mutex_t thread_data_lock = PTHREAD_MUTEX_INITIALIZER;
 
-#define THREAD_DATA_ACCESS(access) \
-    do { \
-        int errno; \
-        if((errno = pthread_mutex_lock(&thread_data_lock)) != 0) \
-            MXS_ERROR("Locking thread data mutex failed: %s", strerror(errno)); \
-        access \
-        if((errno = pthread_mutex_unlock(&thread_data_lock)) != 0) \
-            MXS_ERROR("Unlocking thread data mutex failed: %s", strerror(errno)); \
-    } while(0);
-
 static THD_DATA *parsing_pool_get_thread();
 static THD_DATA *parsing_pool_init_thread();
 static void parsing_pool_release_thread(void *);
@@ -1792,8 +1782,8 @@ static THD_DATA *init_thread_data()
 
     int errno;
 
-    if ((errno = pthread_mutex_init(&thread_data->mutex, NULL)) != 0 ||
-        (errno = pthread_mutex_lock(&thread_data->mutex) != 0))
+    if ((errno = pthread_mutex_init(&thd_data->mutex, NULL)) != 0 ||
+        (errno = pthread_mutex_lock(&thd_data->mutex) != 0))
     {
         MXS_ERROR("Error initializing thread data mutex: %s", strerror(errno));
         goto err;

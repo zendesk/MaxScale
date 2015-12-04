@@ -1719,14 +1719,16 @@ skygw_query_op_t query_classifier_get_operation(GWBUF* querybuf)
 
 static THD_DATA *parsing_pool_get_thread()
 {
-    THD_DATA *thd_data = NULL;
+    THD_DATA *thd_data = thread_data;
 
-    if (thread_data != NULL)
+    while (thd_data != NULL)
     {
-        THD_DATA *thd_data = thread_data;
-        while (pthread_mutex_trylock(&thd_data->mutex) != 0 &&
-                (thd_data = thd_data->next) != NULL)
-            ;
+        if (pthread_mutex_trylock(&thd_data->mutex) == 0)
+        {
+            break;
+        }
+
+        thd_data = thd_data->next;
     }
 
     if (thd_data == NULL)
@@ -1751,8 +1753,7 @@ static THD_DATA *parsing_pool_init_thread()
 
     if (thd_data != NULL)
     {
-        THD_DATA *prev_thd_data = thread_data;
-        thd_data->next = prev_thd_data;
+        thd_data->next = thread_data;
         thread_data = thd_data;
     }
 

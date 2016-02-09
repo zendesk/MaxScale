@@ -17,7 +17,7 @@ set_target_properties(ndbclustermon PROPERTIES VERSION "2.1.0")
 install(TARGETS ndbclustermon DESTINATION ${MAXSCALE_LIBDIR})
 
 add_library(accountmon SHARED account_mon.c)
-target_link_libraries(accountmon log_manager utils rdkafka zookeeper_mt yajl)
+target_link_libraries(accountmon maxscale-common rdkafka zookeeper_mt yajl)
 install(TARGETS accountmon DESTINATION ${MAXSCALE_LIBDIR})
 
 if(BUILD_MMMON)

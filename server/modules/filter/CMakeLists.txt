@@ -42,7 +42,7 @@ set_target_properties(namedserverfilter PROPERTIES VERSION "1.1.0")
 install(TARGETS namedserverfilter DESTINATION ${MAXSCALE_LIBDIR})
 
 add_library(flexmasterfilter SHARED flexmasterfilter.c)
-target_link_libraries(flexmasterfilter log_manager)
+target_link_libraries(flexmasterfilter maxscale-common)
 install(TARGETS flexmasterfilter DESTINATION ${MAXSCALE_LIBDIR})
 
 if(BUILD_SLAVELAG)

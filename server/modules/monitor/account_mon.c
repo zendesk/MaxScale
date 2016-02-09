@@ -293,7 +293,10 @@ static void *startMonitor(void *arg, void *opt)
         return NULL;
     }
 
-    handle->tid = (THREAD) thread_start(monitorMain, handle);
+    if (thread_start(&handle->tid, monitorMain, handle) == NULL)
+    {
+        MXS_ERROR("Failed to start monitor thread for account monitor");
+    }
 
     return handle;
 }
@@ -306,7 +309,7 @@ static void stopMonitor(void *arg)
     if (handle != NULL)
     {
         handle->shutdown = 1;
-        thread_wait((void *) handle->tid);
+        thread_wait(handle->tid);
 
         account_monitor_free(handle);
         monitor->handle = NULL;

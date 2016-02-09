@@ -87,7 +87,7 @@ static int preflight_check_new_master_slave(struct flexmaster_parameters *);
 static int preflight_check_new_master_ro(struct flexmaster_parameters *);
 static int preflight_check_old_master_rw(struct flexmaster_parameters *);
 
-static MYSQL *mysql_connect(SERVICE *, char *, unsigned short);
+static MYSQL *connect_to_mysql(SERVICE *, char *, unsigned short);
 static void error(char *);
 static void parse_url_parameters(struct flexmaster_parameters *);
 static int parse_host_and_port(char *, SERVER **);
@@ -279,7 +279,7 @@ static int routeQuery(ROUTER *instance, void *session, GWBUF *queue)
 
                 parse_url_parameters(params); // TODO errors
 
-                if (thread_start(master_cut, params) == NULL)
+                if (thread_start(NULL, master_cut, params) == NULL)
                 {
                     httpd_respond_error(dcb, 400, "There was an error starting a new master cut thread.");
                 }
@@ -327,12 +327,12 @@ static void master_cut(void *arg)
         goto error;
     }
 
-    if ((params->old_master_connection = mysql_connect(flex_instance->service, params->old_master_server->name, params->old_master_server->port)) == NULL)
+    if ((params->old_master_connection = connect_to_mysql(flex_instance->service, params->old_master_server->name, params->old_master_server->port)) == NULL)
     {
         goto error;
     }
 
-    if ((params->new_master_connection = mysql_connect(flex_instance->service, params->new_master_server->name, params->new_master_server->port)) == NULL)
+    if ((params->new_master_connection = connect_to_mysql(flex_instance->service, params->new_master_server->name, params->new_master_server->port)) == NULL)
     {
         goto error;
     }
@@ -802,7 +802,7 @@ static void error(char *msg)
     strcpy(errmsg, msg);
 }
 
-static MYSQL *mysql_connect(SERVICE *service, char *host, unsigned short port)
+static MYSQL *connect_to_mysql(SERVICE *service, char *host, unsigned short port)
 {
     MYSQL *connection = mysql_init(NULL);
 

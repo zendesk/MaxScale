@@ -22,11 +22,11 @@ set_target_properties(cli PROPERTIES VERSION "1.0.0")
 install(TARGETS cli DESTINATION ${MAXSCALE_LIBDIR})
 
 add_library(flexmaster SHARED flexmaster.c)
-target_link_libraries(flexmaster log_manager utils HTTPD)
+target_link_libraries(flexmaster maxscale-common HTTPD)
 install(TARGETS flexmaster DESTINATION ${MAXSCALE_LIBDIR})
 
 add_library(shards SHARED shards.c)
-target_link_libraries(shards accountmon log_manager utils query_classifier)
+target_link_libraries(shards accountmon maxscale-common)
 install(TARGETS shards DESTINATION ${MAXSCALE_LIBDIR})
 
 add_subdirectory(readwritesplit)

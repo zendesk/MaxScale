@@ -303,12 +303,7 @@ static int routeQuery(ROUTER *instance, void *session, GWBUF *queue)
 
     if (modutil_is_SQL(queue))
     {
-        if (!query_is_parsed(queue))
-        {
-            parse_query(queue);
-        }
-
-        if (query_classifier_get_operation(queue) == QUERY_OP_CHANGE_DB)
+        if (qc_get_operation(queue) == QUERY_OP_CHANGE_DB)
         {
             account_id = shards_handle_change_db(shard_router, shard_session, &queue);
         }

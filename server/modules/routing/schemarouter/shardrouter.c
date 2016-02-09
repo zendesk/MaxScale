@@ -112,7 +112,7 @@ static int router_get_servercount(ROUTER_INSTANCE* router);
 
 
 static route_target_t get_shard_route_target(
-                                             skygw_query_type_t qtype,
+                                             qc_query_type_t qtype,
                                              bool trx_active,
                                              HINT* hint);
 
@@ -197,7 +197,7 @@ static bool route_session_write(
                                 GWBUF* querybuf,
                                 ROUTER_INSTANCE* inst,
                                 unsigned char packet_type,
-                                skygw_query_type_t qtype);
+                                qc_query_type_t qtype);
 
 static void refreshInstance(
                             ROUTER_INSTANCE* router,
@@ -438,7 +438,7 @@ gen_subsvc_dblist(ROUTER_INSTANCE* inst, ROUTER_CLIENT_SES* session)
  * @return Name of the backend or NULL if the query contains no known databases.
  */
 char*
-get_shard_target_name(ROUTER_INSTANCE* router, ROUTER_CLIENT_SES* client, GWBUF* buffer, skygw_query_type_t qtype)
+get_shard_target_name(ROUTER_INSTANCE* router, ROUTER_CLIENT_SES* client, GWBUF* buffer, qc_query_type_t qtype)
 {
     HASHTABLE* ht = client->dbhash;
     int sz = 0, i, j;
@@ -447,12 +447,7 @@ get_shard_target_name(ROUTER_INSTANCE* router, ROUTER_CLIENT_SES* client, GWBUF*
     char *query = NULL,*tmp = NULL;
     bool has_dbs = false; /**If the query targets any database other than the current one*/
 
-    if(!query_is_parsed(buffer))
-    {
-        parse_query(buffer);
-    }
-
-    dbnms = skygw_get_database_names(buffer, &sz);
+    dbnms = qc_get_database_names(buffer, &sz);
 
     if(sz > 0)
     {
@@ -482,8 +477,8 @@ get_shard_target_name(ROUTER_INSTANCE* router, ROUTER_CLIENT_SES* client, GWBUF*
         query = modutil_get_SQL(buffer);
         if((tmp = strcasestr(query,"from")))
         {
-            char* tok = strtok(tmp, " ;");
-            tok = strtok(NULL," ;");
+            char *saved, *tok = strtok_r(tmp, " ;", &saved);
+            tok = strtok_r(NULL, " ;", &saved);
             ss_dassert(tok != NULL);
             tmp = (char*) hashtable_fetch(ht, tok);
             if(tmp)
@@ -540,44 +535,6 @@ get_shard_target_name(ROUTER_INSTANCE* router, ROUTER_CLIENT_SES* client, GWBUF*
     }
    
     return rval;
-}
-
-char**
-tokenize_string(char* str)
-{
-    char *tok;
-    char **list = NULL;
-    int sz = 2, count = 0;
-
-    tok = strtok(str, ", ");
-
-    if(tok == NULL)
-        return NULL;
-
-    list = (char**) malloc(sizeof(char*)*(sz));
-
-    while(tok)
-    {
-        if(count + 1 >= sz)
-        {
-            char** tmp = realloc(list, sizeof(char*)*(sz * 2));
-            if(tmp == NULL)
-            {
-                char errbuf[STRERROR_BUFLEN];
-                MXS_ERROR("realloc returned NULL: %s.",
-                          strerror_r(errno, errbuf, sizeof(errbuf)));
-                free(list);
-                return NULL;
-            }
-            list = tmp;
-            sz *= 2;
-        }
-        list[count] = strdup(tok);
-        count++;
-        tok = strtok(NULL, ", ");
-    }
-    list[count] = NULL;
-    return list;
 }
 
 /**
@@ -1318,7 +1275,7 @@ freeSession(
  *          if the query would otherwise be routed to slave.
  */
 static route_target_t
-get_shard_route_target(skygw_query_type_t qtype,
+get_shard_route_target(qc_query_type_t qtype,
                        bool trx_active, /*< !!! turha ? */
                        HINT* hint) /*< !!! turha ? */
 {
@@ -1497,7 +1454,7 @@ gen_show_dbs_response(ROUTER_INSTANCE* router, ROUTER_CLIENT_SES* client)
     rval = gwbuf_append(rval, last_packet);
 
     rval = gwbuf_make_contiguous(rval);
-
+    hashtable_iterator_free(iter);
     return rval;
 }
 
@@ -1526,7 +1483,7 @@ routeQuery(ROUTER* instance,
            void* router_session,
            GWBUF* querybuf)
 {
-    skygw_query_type_t qtype = QUERY_TYPE_UNKNOWN;
+    qc_query_type_t qtype = QUERY_TYPE_UNKNOWN;
     mysql_server_cmd_t packet_type;
     uint8_t* packet;
     int i,ret = 1;
@@ -1650,11 +1607,11 @@ routeQuery(ROUTER* instance,
         break;
 
     case MYSQL_COM_QUERY:
-        qtype = query_classifier_get_type(querybuf);
+        qtype = qc_get_type(querybuf);
         break;
 
     case MYSQL_COM_STMT_PREPARE:
-        qtype = query_classifier_get_type(querybuf);
+        qtype = qc_get_type(querybuf);
         qtype |= QUERY_TYPE_PREPARE_STMT;
         break;
 
@@ -2567,7 +2524,7 @@ route_session_write(
                     GWBUF* querybuf,
                     ROUTER_INSTANCE* inst,
                     unsigned char packet_type,
-                    skygw_query_type_t qtype)
+                    qc_query_type_t qtype)
 {
     bool succp;
     rses_property_t* prop;

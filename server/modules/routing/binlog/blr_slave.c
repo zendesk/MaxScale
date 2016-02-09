@@ -103,7 +103,7 @@ static int blr_slave_binlog_dump(ROUTER_INSTANCE *router, ROUTER_SLAVE *slave, G
 int blr_slave_catchup(ROUTER_INSTANCE *router, ROUTER_SLAVE *slave, bool large);
 uint8_t *blr_build_header(GWBUF	*pkt, REP_HEADER *hdr);
 int blr_slave_callback(DCB *dcb, DCB_REASON reason, void *data);
-static int blr_slave_fake_rotate(ROUTER_INSTANCE *router, ROUTER_SLAVE *slave);
+static int blr_slave_fake_rotate(ROUTER_INSTANCE *router, ROUTER_SLAVE *slave, BLFILE** filep);
 static void blr_slave_send_fde(ROUTER_INSTANCE *router, ROUTER_SLAVE *slave);
 static int blr_slave_send_maxscale_version(ROUTER_INSTANCE *router, ROUTER_SLAVE *slave);
 static int blr_slave_send_server_id(ROUTER_INSTANCE *router, ROUTER_SLAVE *slave);
@@ -1577,7 +1577,7 @@ ROUTER_SLAVE	*sptr;
 	sptr = router->slaves;
 	while (sptr)
 	{
-		if (sptr->state != 0)
+		if (sptr->state == BLRS_DUMPING || sptr->state == BLRS_REGISTERED)
 		{
 			sprintf(server_id, "%d", sptr->serverid);
 			sprintf(host, "%s", sptr->hostname ? sptr->hostname : "");
@@ -1895,7 +1895,7 @@ GWBUF		*head, *record;
 REP_HEADER	hdr;
 int		written, rval = 1, burst;
 int		rotating = 0;
-unsigned long	burst_size;
+long	burst_size;
 uint8_t		*ptr;
 char read_errmsg[BINLOG_ERROR_MSG_LEN+1];
 
@@ -1915,10 +1915,18 @@ char read_errmsg[BINLOG_ERROR_MSG_LEN+1];
 	slave->cstate |= CS_BUSY;
 	spinlock_release(&slave->catch_lock);
 
-	if (slave->file == NULL)
+        BLFILE *file;
+#ifdef BLFILE_IN_SLAVE
+        file = slave->file;
+        slave->file = NULL;
+#else
+        file = NULL;
+#endif
+
+	if (file == NULL)
 	{
 		rotating = router->rotating;
-		if ((slave->file = blr_open_binlog(router, slave->binlogfile)) == NULL)
+		if ((file = blr_open_binlog(router, slave->binlogfile)) == NULL)
 		{
 			char err_msg[BINLOG_ERROR_MSG_LEN+1];
 			err_msg[BINLOG_ERROR_MSG_LEN] = '\0';
@@ -1951,8 +1959,12 @@ char read_errmsg[BINLOG_ERROR_MSG_LEN+1];
 	}
 	slave->stats.n_bursts++;
 
+#ifdef BLSLAVE_IN_FILE
+        slave->file = file;
+#endif
+
 	while (burst-- && burst_size > 0 &&
-		(record = blr_read_binlog(router, slave->file, slave->binlog_pos, &hdr, read_errmsg)) != NULL)
+		(record = blr_read_binlog(router, file, slave->binlog_pos, &hdr, read_errmsg)) != NULL)
 	{
 		head = gwbuf_alloc(5);
 		ptr = GWBUF_DATA(head);
@@ -1967,13 +1979,17 @@ char read_errmsg[BINLOG_ERROR_MSG_LEN+1];
 		if (hdr.event_type == ROTATE_EVENT)
 		{
 			unsigned long beat1 = hkheartbeat;
-			blr_close_binlog(router, slave->file);
+			blr_close_binlog(router, file);
 			if (hkheartbeat - beat1 > 1)
 				MXS_ERROR("blr_close_binlog took %lu maxscale beats",
                                           hkheartbeat - beat1);
 			blr_slave_rotate(router, slave, GWBUF_DATA(record));
 			beat1 = hkheartbeat;
+#ifdef BLFILE_IN_SLAVE
 			if ((slave->file = blr_open_binlog(router, slave->binlogfile)) == NULL)
+#else
+			if ((file = blr_open_binlog(router, slave->binlogfile)) == NULL)
+#endif
 			{
 				char err_msg[BINLOG_ERROR_MSG_LEN+1];
 				err_msg[BINLOG_ERROR_MSG_LEN] = '\0';
@@ -2003,6 +2019,9 @@ char read_errmsg[BINLOG_ERROR_MSG_LEN+1];
 				dcb_close(slave->dcb);
 				break;
 			}
+#ifdef BLFILE_IN_SLAVE
+                        file = slave->file;
+#endif
 			if (hkheartbeat - beat1 > 1)
 				MXS_ERROR("blr_open_binlog took %lu beats",
                                           hkheartbeat - beat1);
@@ -2034,6 +2053,27 @@ char read_errmsg[BINLOG_ERROR_MSG_LEN+1];
 				read_errmsg);
 		}
 
+		if (hdr.ok == SLAVE_POS_BEYOND_EOF) {
+			MXS_ERROR("%s Slave %s:%i, server-id %d, binlog '%s', %s",
+				router->service->name,
+				slave->dcb->remote,
+				ntohs((slave->dcb->ipv4).sin_port),
+				slave->serverid,
+				slave->binlogfile,
+				read_errmsg);
+
+			/*
+			 * Close the slave session and socket
+			 * The slave will try to reconnect
+			 */
+			dcb_close(slave->dcb);
+
+#ifndef BLFILE_IN_SLAVE
+			blr_close_binlog(router, file);
+#endif
+			return 0;
+		}
+
                 if (hdr.ok == SLAVE_POS_READ_ERR) {
 			MXS_ERROR("%s Slave %s:%i, server-id %d, binlog '%s', %s",
 				router->service->name,
@@ -2055,19 +2095,13 @@ char read_errmsg[BINLOG_ERROR_MSG_LEN+1];
                         blr_send_custom_error(slave->dcb, slave->seqno++, 0, read_errmsg, "HY000", 1236);
 
                         dcb_close(slave->dcb);
-
+#ifndef BLFILE_IN_SLAVE
+                        blr_close_binlog(router, file);
+#endif
                         return 0;
                 }
 
 		if (hdr.ok == SLAVE_POS_READ_UNSAFE) {
-
-			ROUTER_OBJECT *router_obj;
-
-			spinlock_acquire(&router->lock);
-
-			router_obj = router->service->router;
-
-			spinlock_release(&router->lock);
 
 			MXS_ERROR("%s: Slave %s:%i, server-id %d, binlog '%s', %s",
 				router->service->name,
@@ -2081,8 +2115,11 @@ char read_errmsg[BINLOG_ERROR_MSG_LEN+1];
 			 * Close the slave session and socket
 			 * The slave will try to reconnect
 			 */
-			router_obj->closeSession(router->service->router_instance, slave);
+			dcb_close(slave->dcb);
 
+#ifndef BLFILE_IN_SLAVE
+                        blr_close_binlog(router, file);
+#endif
 			return 0;
 		}
 	}
@@ -2102,8 +2139,11 @@ char read_errmsg[BINLOG_ERROR_MSG_LEN+1];
 			strcmp(slave->binlogfile, router->binlog_name) == 0)
 	{
 		int state_change = 0;
+		unsigned int cstate =0;
 		spinlock_acquire(&router->binlog_lock);
 		spinlock_acquire(&slave->catch_lock);
+
+		cstate = slave->cstate;
 
 		/*
 		 * Now check again since we hold the router->binlog_lock
@@ -2116,6 +2156,19 @@ char read_errmsg[BINLOG_ERROR_MSG_LEN+1];
 			slave->cstate |= CS_EXPECTCB;
 			spinlock_release(&slave->catch_lock);
 			spinlock_release(&router->binlog_lock);
+
+			if ((cstate & CS_UPTODATE) == CS_UPTODATE)
+			{
+#ifdef STATE_CHANGE_LOGGING_ENABLED
+				MXS_NOTICE("%s: Slave %s:%d, server-id %d transition from up-to-date to catch-up in blr_slave_catchup, binlog file '%s', position %lu.",
+					router->service->name,
+					slave->dcb->remote,
+					ntohs((slave->dcb->ipv4).sin_port),
+					slave->serverid,
+					slave->binlogfile, (unsigned long)slave->binlog_pos);
+#endif
+			}
+
 			poll_fake_write_event(slave->dcb);
 		}
 		else
@@ -2140,6 +2193,8 @@ char read_errmsg[BINLOG_ERROR_MSG_LEN+1];
 		if (state_change)
 		{
 			slave->stats.n_caughtup++;
+#ifdef STATE_CHANGE_LOGGING_ENABLED
+                        // TODO: The % 50 should be removed. Now only every 50th state change is logged.
 			if (slave->stats.n_caughtup == 1)
 			{
 				MXS_NOTICE("%s: Slave %s:%d, server-id %d is now up to date '%s', position %lu.",
@@ -2158,11 +2213,12 @@ char read_errmsg[BINLOG_ERROR_MSG_LEN+1];
 					slave->serverid,
 					slave->binlogfile, (unsigned long)slave->binlog_pos);
 			}
+#endif
 		}
 	}
 	else
 	{
-		if (slave->binlog_pos >= blr_file_size(slave->file)
+		if (slave->binlog_pos >= blr_file_size(file)
 				&& router->rotating == 0
 				&& strcmp(router->binlog_name, slave->binlogfile) != 0
 				&& (blr_master_connected(router)
@@ -2187,7 +2243,11 @@ char read_errmsg[BINLOG_ERROR_MSG_LEN+1];
                                   slave->binlogfile, (unsigned long)slave->binlog_pos,
                                   router->binlog_name, router->binlog_position);
 
-			if (blr_slave_fake_rotate(router, slave))
+#ifdef BLFILE_IN_SLAVE
+			if (blr_slave_fake_rotate(router, slave, &slave->file))
+#else
+			if (blr_slave_fake_rotate(router, slave, &file))
+#endif
 			{
 				spinlock_acquire(&slave->catch_lock);
 				slave->cstate |= CS_EXPECTCB;
@@ -2208,6 +2268,13 @@ char read_errmsg[BINLOG_ERROR_MSG_LEN+1];
 			poll_fake_write_event(slave->dcb);
 		}
 	}
+
+#ifndef BLFILE_IN_SLAVE
+        if (file)
+        {
+            blr_close_binlog(router, file);
+        }
+#endif
 	return rval;
 }
 
@@ -2226,6 +2293,7 @@ blr_slave_callback(DCB *dcb, DCB_REASON reason, void *data)
 {
 ROUTER_SLAVE		*slave = (ROUTER_SLAVE *)data;
 ROUTER_INSTANCE		*router = slave->router;
+unsigned int cstate;
 
     if (NULL == dcb->session->router_session)
     {
@@ -2245,6 +2313,7 @@ ROUTER_INSTANCE		*router = slave->router;
 			spinlock_acquire(&router->binlog_lock);
 
 			do_return = 0;
+			cstate = slave->cstate;
 
 			/* check for a pending transaction and not rotating */
 			if (router->pending_transaction && strcmp(router->binlog_name, slave->binlogfile) == 0 &&
@@ -2264,8 +2333,22 @@ ROUTER_INSTANCE		*router = slave->router;
 			}
 
 			spinlock_acquire(&slave->catch_lock);
+			cstate = slave->cstate;
 			slave->cstate &= ~(CS_UPTODATE|CS_EXPECTCB);
 			spinlock_release(&slave->catch_lock);
+
+			if ((cstate & CS_UPTODATE) == CS_UPTODATE)
+			{
+#ifdef STATE_CHANGE_LOGGING_ENABLED
+				MXS_NOTICE("%s: Slave %s:%d, server-id %d transition from up-to-date to catch-up in blr_slave_callback, binlog file '%s', position %lu.",
+					router->service->name,
+					slave->dcb->remote,
+					ntohs((slave->dcb->ipv4).sin_port),
+					slave->serverid,
+					slave->binlogfile, (unsigned long)slave->binlog_pos);
+#endif
+			}
+
 			slave->stats.n_dcb++;
 			blr_slave_catchup(router, slave, true);
 		}
@@ -2323,7 +2406,7 @@ int	len = EXTRACT24(ptr + 9);	// Extract the event length
  * @return  Non-zero if the rotate took place
  */
 static int
-blr_slave_fake_rotate(ROUTER_INSTANCE *router, ROUTER_SLAVE *slave)
+blr_slave_fake_rotate(ROUTER_INSTANCE *router, ROUTER_SLAVE *slave, BLFILE** filep)
 {
 char		*sptr;
 int		filenum;
@@ -2335,11 +2418,11 @@ uint32_t	chksum;
 
 	if ((sptr = strrchr(slave->binlogfile, '.')) == NULL)
 		return 0;
-	blr_close_binlog(router, slave->file);
+	blr_close_binlog(router, *filep);
 	filenum = atoi(sptr + 1);
 	sprintf(slave->binlogfile, BINLOG_NAMEFMT, router->fileroot, filenum + 1);
 	slave->binlog_pos = 4;
-	if ((slave->file = blr_open_binlog(router, slave->binlogfile)) == NULL)
+	if ((*filep = blr_open_binlog(router, slave->binlogfile)) == NULL)
 		return 0;
 
 	binlognamelen = strlen(slave->binlogfile);
@@ -2629,7 +2712,8 @@ blr_slave_disconnect_server(ROUTER_INSTANCE *router, ROUTER_SLAVE *slave, int se
 	while (sptr)
 	{
 		/* don't examine slaves with state = 0 */
-		if (sptr->state != 0 && sptr->serverid == server_id)
+		if ((sptr->state == BLRS_REGISTERED || sptr->state == BLRS_DUMPING) &&
+			sptr->serverid == server_id)
 		{
 			/* server_id found */
 			server_found = 1;
@@ -2643,8 +2727,8 @@ blr_slave_disconnect_server(ROUTER_INSTANCE *router, ROUTER_SLAVE *slave, int se
 			/* send server_id with disconnect state to client */
 			n = blr_slave_send_disconnected_server(router, slave, server_id, 1);
 
-			/* force session close for matched slave */
-			router_obj->closeSession(router->service->router_instance, sptr);
+			sptr->state = BLRS_UNREGISTERED;
+			dcb_close(sptr->dcb);
 
 			break;
 		} else {
@@ -2705,7 +2789,7 @@ blr_slave_disconnect_all(ROUTER_INSTANCE *router, ROUTER_SLAVE *slave)
 	while (sptr)
 	{
 		/* skip servers with state = 0 */
-		if (sptr->state != 0)
+		if (sptr->state == BLRS_REGISTERED || sptr->state == BLRS_DUMPING)
 		{
 			sprintf(server_id, "%d", sptr->serverid);
 			sprintf(state, "disconnected");
@@ -2742,8 +2826,8 @@ blr_slave_disconnect_all(ROUTER_INSTANCE *router, ROUTER_SLAVE *slave)
 
 			slave->dcb->func.write(slave->dcb, pkt);
 
-			/* force session close*/
-			router_obj->closeSession(router->service->router_instance, sptr);
+			sptr->state = BLRS_UNREGISTERED;
+			dcb_close(sptr->dcb);
 
 		}
 		sptr = sptr->next;

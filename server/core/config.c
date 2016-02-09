@@ -91,17 +91,102 @@ static void feedback_defaults();
 static void check_config_objects(CONFIG_CONTEXT *context);
 static int maxscale_getline(char** dest, int* size, FILE* file);
 int config_truth_value(char *str);
-bool isInternalService(char *router);
 int config_get_ifaddr(unsigned char *output);
 int config_get_release_string(char* release);
 FEEDBACK_CONF *config_get_feedback_data();
 void config_add_param(CONFIG_CONTEXT*, char*, char*);
 bool config_has_duplicate_sections(const char* config);
+int create_new_service(CONFIG_CONTEXT *obj);
+int create_new_server(CONFIG_CONTEXT *obj);
+int create_new_monitor(CONFIG_CONTEXT *context, CONFIG_CONTEXT *obj, HASHTABLE* monitorhash);
+int create_new_listener(CONFIG_CONTEXT *obj);
+int create_new_filter(CONFIG_CONTEXT *obj);
+int configure_new_service(CONFIG_CONTEXT *context, CONFIG_CONTEXT *obj);
+
 static char          *config_file = NULL;
 static GATEWAY_CONF  gateway;
 static FEEDBACK_CONF feedback;
 char                 *version_string = NULL;
 
+
+static char *service_params[] =
+{
+    "type",
+    "router",
+    "router_options",
+    "servers",
+    "user",
+    "passwd",
+    "enable_root_user",
+    "connection_timeout",
+    "auth_all_servers",
+    "optimize_wildcard",
+    "strip_db_esc",
+    "localhost_match_wildcard_host",
+    "max_slave_connections",
+    "max_slave_replication_lag",
+    "use_sql_variables_in",         /*< rwsplit only */
+    "subservices",
+    "version_string",
+    "filters",
+    "weightby",
+    "ssl_cert",
+    "ssl_ca_cert",
+    "ssl",
+    "ssl_key",
+    "ssl_version",
+    "ssl_cert_verify_depth",
+    "ignore_databases",
+    "ignore_databases_regex",
+    "log_auth_warnings",
+    NULL
+};
+
+static char *listener_params[] =
+{
+    "type",
+    "service",
+    "protocol",
+    "port",
+    "address",
+    "socket",
+    NULL
+};
+
+static char *monitor_params[] =
+{
+    "type",
+    "module",
+    "servers",
+    "user",
+    "passwd",
+    "script",
+    "events",
+    "mysql51_replication",
+    "monitor_interval",
+    "detect_replication_lag",
+    "detect_stale_master",
+    "disable_master_failback",
+    "backend_connect_timeout",
+    "backend_read_timeout",
+    "backend_write_timeout",
+    "available_when_donor",
+    "disable_master_role_setting",
+    NULL
+};
+
+static char *server_params[] =
+{
+    "type",
+    "protocol",
+    "port",
+    "address",
+    "monitoruser",
+    "monitorpw",
+    "persistpoolmax",
+    "persistmaxtime",
+    NULL
+};
 
 /**
  * Trim whitespace from the front and rear of a string
@@ -435,7 +520,7 @@ config_reload()
  * @param context       The configuration data
  * @return A zero result indicates a fatal error
  */
-static  int
+static int
 process_config_context(CONFIG_CONTEXT *context)
 {
     CONFIG_CONTEXT  *obj;
@@ -447,7 +532,8 @@ process_config_context(CONFIG_CONTEXT *context)
         MXS_ERROR("Failed to allocate, monitor configuration check hashtable.");
         return 0;
     }
-    hashtable_memory_fns(monitorhash, (HASHMEMORYFN)strdup, NULL, (HASHMEMORYFN)free, NULL);
+    hashtable_memory_fns(monitorhash, (HASHMEMORYFN) strdup, NULL,
+                         (HASHMEMORYFN) free, NULL);
 
     /**
      * Process the data and create the services and servers defined
@@ -457,804 +543,64 @@ process_config_context(CONFIG_CONTEXT *context)
     while (obj)
     {
         char *type = config_get_value(obj->parameters, "type");
-        if (type == NULL)
+        if (type)
+        {
+            if (!strcmp(type, "service"))
+            {
+                error_count += create_new_service(obj);
+            }
+            else if (!strcmp(type, "server"))
+            {
+                error_count += create_new_server(obj);
+            }
+            else if (!strcmp(type, "filter"))
+            {
+                error_count += create_new_filter(obj);
+            }
+        }
+        else
         {
             MXS_ERROR("Configuration object '%s' has no type.", obj->object);
             error_count++;
         }
-        else if (!strcmp(type, "service"))
-        {
-            char *router = config_get_value(obj->parameters, "router");
-            if (router)
-            {
-                char* max_slave_conn_str;
-                char* max_slave_rlag_str;
-                char *user;
-                char *auth;
-                char *enable_root_user;
-                char *connection_timeout;
-                char *auth_all_servers;
-                char *optimize_wildcard;
-                char *strip_db_esc;
-                char *weightby;
-                char *version_string;
-                char *subservices;
-                char *ssl, *ssl_cert, *ssl_key, *ssl_ca_cert, *ssl_version;
-                char* ssl_cert_verify_depth;
-                bool  is_rwsplit = false;
-                bool  is_schemarouter = false;
-                char *allow_localhost_match_wildcard_host;
-
-                obj->element = service_alloc(obj->object, router);
-                user = config_get_value(obj->parameters, "user");
-                auth = config_get_value(obj->parameters, "passwd");
-                subservices = config_get_value(obj->parameters, "subservices");
-                ssl = config_get_value(obj->parameters, "ssl");
-                ssl_cert = config_get_value(obj->parameters, "ssl_cert");
-                ssl_key = config_get_value(obj->parameters, "ssl_key");
-                ssl_ca_cert = config_get_value(obj->parameters, "ssl_ca_cert");
-                ssl_version = config_get_value(obj->parameters, "ssl_version");
-                ssl_cert_verify_depth = config_get_value(obj->parameters, "ssl_cert_verify_depth");
-                enable_root_user = config_get_value(obj->parameters, "enable_root_user");
-                connection_timeout = config_get_value(obj->parameters, "connection_timeout");
-                optimize_wildcard = config_get_value(obj->parameters, "optimize_wildcard");
-                auth_all_servers = config_get_value(obj->parameters, "auth_all_servers");
-                strip_db_esc = config_get_value(obj->parameters, "strip_db_esc");
-                allow_localhost_match_wildcard_host = config_get_value(obj->parameters,
-                                                                       "localhost_match_wildcard_host");
-                weightby = config_get_value(obj->parameters, "weightby");
-
-                version_string = config_get_value(obj->parameters, "version_string");
-
-                if (subservices)
-                {
-                    service_set_param_value(obj->element,
-                                            obj->parameters,
-                                            subservices,
-                                            1, STRING_TYPE);
-                }
-                char *log_auth_warnings = config_get_value(obj->parameters, "log_auth_warnings");
-                int truthval;
-                if (log_auth_warnings && (truthval = config_truth_value(log_auth_warnings)) != -1)
-                {
-                    ((SERVICE*) obj->element)->log_auth_warnings = (bool) truthval;
-                }
-
-                CONFIG_PARAMETER* param;
-                if ((param = config_get_param(obj->parameters, "ignore_databases")))
-                {
-                    service_set_param_value(obj->element, param, param->value, 0, STRING_TYPE);
-                }
-
-                if ((param = config_get_param(obj->parameters, "ignore_databases_regex")))
-                {
-                    service_set_param_value(obj->element, param, param->value, 0, STRING_TYPE);
-                }
-                /** flag for rwsplit-specific parameters */
-                if (strncmp(router, "readwritesplit", strlen("readwritesplit")+1) == 0)
-                {
-                    is_rwsplit = true;
-                }
-
-                allow_localhost_match_wildcard_host =
-                    config_get_value(obj->parameters, "localhost_match_wildcard_host");
-
-                if (obj->element == NULL) /*< if module load failed */
-                {
-                    MXS_ERROR("Reading configuration "
-                              "for router service '%s' failed. "
-                              "Router %s is not loaded.",
-                              obj->object,
-                              obj->object);
-                    obj = obj->next;
-                    continue; /*< process next obj */
-                }
-
-                if (version_string) {
-                    /** Add the 5.5.5- string to the start of the version string if
-                     * the version string starts with "10.".
-                     * This mimics MariaDB 10.0 replication which adds 5.5.5- for backwards compatibility. */
-                    if (strncmp(version_string, "10.", 3) == 0)
-                    {
-                        ((SERVICE *)(obj->element))->version_string =
-                            malloc((strlen(version_string) + strlen("5.5.5-") + 1) * sizeof(char));
-                        strcpy(((SERVICE *)(obj->element))->version_string, "5.5.5-");
-                        strcat(((SERVICE *)(obj->element))->version_string, version_string);
-                    }
-                    else
-                    {
-                        ((SERVICE *)(obj->element))->version_string = strdup(version_string);
-                    }
-                }
-                else
-                {
-                    if (gateway.version_string)
-                        ((SERVICE *)(obj->element))->version_string = strdup(gateway.version_string);
-                }
-
-                max_slave_conn_str = config_get_value(obj->parameters, "max_slave_connections");
-                max_slave_rlag_str = config_get_value(obj->parameters, "max_slave_replication_lag");
-
-                if (ssl)
-                {
-                    if (ssl_cert == NULL)
-                    {
-                        error_count++;
-                        MXS_ERROR("Server certificate missing for service '%s'."
-                                  "Please provide the path to the server certificate by adding "
-                                  "the ssl_cert=<path> parameter", obj->object);
-                    }
-
-                    if (ssl_ca_cert == NULL)
-                    {
-                        error_count++;
-                        MXS_ERROR("CA Certificate missing for service '%s'."
-                                  "Please provide the path to the certificate authority "
-                                  "certificate by adding the ssl_ca_cert=<path> parameter",
-                                  obj->object);
-                    }
-
-                    if (ssl_key == NULL)
-                    {
-                        error_count++;
-                        MXS_ERROR("Server private key missing for service '%s'. "
-                                  "Please provide the path to the server certificate key by "
-                                  "adding the ssl_key=<path> parameter",
-                                  obj->object);
-                    }
-
-                    if (access(ssl_ca_cert, F_OK) != 0)
-                    {
-                        MXS_ERROR("Certificate authority file for service '%s' "
-                                  "not found: %s",
-                                  obj->object, ssl_ca_cert);
-                        error_count++;
-                    }
-
-                    if (access(ssl_cert, F_OK) != 0)
-                    {
-                        MXS_ERROR("Server certificate file for service '%s' not found: %s",
-                                  obj->object,
-                                  ssl_cert);
-                        error_count++;
-                    }
-
-                    if (access(ssl_key, F_OK) != 0)
-                    {
-                        MXS_ERROR("Server private key file for service '%s' not found: %s",
-                                  obj->object,
-                                  ssl_key);
-                        error_count++;
-                    }
-
-                    if (error_count == 0)
-                    {
-                        if (serviceSetSSL(obj->element, ssl) != 0)
-                        {
-                            MXS_ERROR("Unknown parameter for service '%s': %s",
-                                      obj->object, ssl);
-                            error_count++;
-                        }
-                        else
-                        {
-                            serviceSetCertificates(obj->element, ssl_cert, ssl_key, ssl_ca_cert);
-                            if (ssl_version)
-                            {
-                                if (serviceSetSSLVersion(obj->element, ssl_version) != 0)
-                                {
-                                    MXS_ERROR("Unknown parameter value for "
-                                              "'ssl_version' for service '%s': %s",
-                                              obj->object, ssl_version);
-                                    error_count++;
-                                }
-                            }
-                            if (ssl_cert_verify_depth)
-                            {
-                                if (serviceSetSSLVerifyDepth(obj->element, atoi(ssl_cert_verify_depth)) != 0)
-                                {
-                                    MXS_ERROR("Invalid parameter value for "
-                                              "'ssl_cert_verify_depth' for service '%s': %s",
-                                              obj->object, ssl_cert_verify_depth);
-                                    error_count++;
-                                }
-                            }
-                        }
-                    }
-                }
-
-                serviceSetRetryOnFailure(obj->element, config_get_value(obj->parameters, "retry_on_failure"));
-
-                if (enable_root_user)
-                {
-                    serviceEnableRootUser(obj->element, config_truth_value(enable_root_user));
-                }
-
-                if (connection_timeout)
-                {
-                    serviceSetTimeout(obj->element, atoi(connection_timeout));
-                }
-
-                if(auth_all_servers)
-                {
-                    serviceAuthAllServers(obj->element, config_truth_value(auth_all_servers));
-                }
-
-                if(optimize_wildcard)
-                {
-                    serviceOptimizeWildcard(obj->element, config_truth_value(optimize_wildcard));
-                }
-
-                if(strip_db_esc)
-                {
-                    serviceStripDbEsc(obj->element, config_truth_value(strip_db_esc));
-                }
-
-                if (weightby)
-                {
-                    serviceWeightBy(obj->element, weightby);
-                }
-
-                if (allow_localhost_match_wildcard_host)
-                {
-                    serviceEnableLocalhostMatchWildcardHost(
-                        obj->element,
-                        config_truth_value(allow_localhost_match_wildcard_host));
-                }
-
-                if (!auth)
-                {
-                    auth = config_get_value(obj->parameters, "auth");
-                }
-
-                if (obj->element && user && auth)
-                {
-                    serviceSetUser(obj->element, user, auth);
-                }
-                else if (user && auth == NULL)
-                {
-                    MXS_ERROR("Service '%s' has a "
-                              "user defined but no "
-                              "corresponding password.",
-                              obj->object);
-                }
-                /** Read, validate and set max_slave_connections */
-                if (max_slave_conn_str != NULL)
-                {
-                    CONFIG_PARAMETER* param;
-                    bool              succp;
-
-                    param = config_get_param(obj->parameters, "max_slave_connections");
-
-                    if (param == NULL)
-                    {
-                        succp = false;
-                    }
-                    else
-                    {
-                        succp = service_set_param_value(
-                            obj->element,
-                            param,
-                            max_slave_conn_str,
-                            COUNT_ATMOST,
-                            (COUNT_TYPE|PERCENT_TYPE));
-                    }
-
-                    if (!succp)
-                    {
-                        MXS_WARNING("Invalid value type "
-                                    "for parameter \'%s.%s = %s\'\n\tExpected "
-                                    "type is either <int> for slave connection "
-                                    "count or\n\t<int>%% for specifying the "
-                                    "maximum percentage of available the "
-                                    "slaves that will be connected.",
-                                    ((SERVICE*)obj->element)->name,
-                                    param->name,
-                                    param->value);
-                    }
-                }
-                /** Read, validate and set max_slave_replication_lag */
-                if (max_slave_rlag_str != NULL)
-                {
-                    CONFIG_PARAMETER* param;
-                    bool              succp;
-
-                    param = config_get_param(
-                        obj->parameters, 
-                        "max_slave_replication_lag");
-
-                    if (param == NULL)
-                    {
-                        succp = false;
-                    }
-                    else
-                    {
-                        succp = service_set_param_value(
-                            obj->element,
-                            param,
-                            max_slave_rlag_str,
-                            COUNT_ATMOST,
-                            COUNT_TYPE);
-                    }
-
-                    if (!succp)
-                    {
-                        MXS_WARNING("Invalid value type "
-                                    "for parameter \'%s.%s = %s\'\n\tExpected "
-                                    "type is <int> for maximum "
-                                    "slave replication lag.",
-                                    ((SERVICE*)obj->element)->name,
-                                    param->name,
-                                    param->value);
-                    }
-                }
-                /** Parameters for rwsplit router only */
-                if (is_rwsplit)
-                {
-                    CONFIG_PARAMETER* param;
-                    char*             use_sql_variables_in;
-                    bool              succp;
-
-                    use_sql_variables_in =
-                        config_get_value(obj->parameters, "use_sql_variables_in");
-
-                    if (use_sql_variables_in != NULL)
-                    {
-                        param = config_get_param(obj->parameters,
-                                                 "use_sql_variables_in");
-
-                        if (param == NULL)
-                        {
-                            succp = false;
-                        }
-                        else
-                        {
-                            succp = service_set_param_value(obj->element,
-                                                            param,
-                                                            use_sql_variables_in,
-                                                            COUNT_NONE,
-                                                            SQLVAR_TARGET_TYPE);
-                        }
-
-                        if (!succp)
-                        {
-                            if(param)
-                            {
-                                MXS_WARNING("Invalid value type "
-                                            "for parameter \'%s.%s = %s\'\n\tExpected "
-                                            "type is [master|all] for "
-                                            "use sql variables in.",
-                                            ((SERVICE*)obj->element)->name,
-                                            param->name,
-                                            param->value);
-                            }
-                            else
-                            {
-                                MXS_ERROR("Parameter was NULL");
-                            }
-                        }
-                    }
-                } /*< if (rw_split) */
-            } /*< if (router) */
-            else
-            {
-                obj->element = NULL;
-                MXS_ERROR("No router defined for service '%s'.", obj->object);
-                error_count++;
-            }
-        }
-        else if (!strcmp(type, "server"))
-        {
-            char *address;
-            char *port;
-            char *protocol;
-            char *monuser;
-            char *monpw;
-
-            address = config_get_value(obj->parameters, "address");
-            port = config_get_value(obj->parameters, "port");
-            protocol = config_get_value(obj->parameters, "protocol");
-            monuser = config_get_value(obj->parameters, "monitoruser");
-            monpw = config_get_value(obj->parameters, "monitorpw");
-
-            if (address && port && protocol)
-            {
-                obj->element = server_alloc(address,
-                                            protocol,
-                                            atoi(port));
-                server_set_unique_name(obj->element, obj->object);
-            }
-            else
-            {
-                obj->element = NULL;
-                MXS_ERROR("Server '%s' is missing a "
-                          "required configuration parameter. A "
-                          "server must "
-                          "have address, port and protocol "
-                          "defined.",
-                          obj->object);
-                error_count++;
-            }
-
-            if (obj->element && monuser && monpw)
-            {
-                serverAddMonUser(obj->element, monuser, monpw);
-            }
-            else if (monuser && monpw == NULL)
-            {
-                MXS_ERROR("Server '%s' has a monitoruser"
-                          "defined but no corresponding password.",
-                          obj->object);
-            }
-
-            if (obj->element)
-            {
-                SERVER *server = obj->element;
-                server->persistpoolmax = strtol(config_get_value_string(obj->parameters,
-                                                                        "persistpoolmax"), NULL, 0);
-                server->persistmaxtime = strtol(config_get_value_string(obj->parameters,
-                                                                        "persistmaxtime"), NULL, 0);
-                CONFIG_PARAMETER *params = obj->parameters;
-
-                while (params)
-                {
-                    if (strcmp(params->name, "address")
-                        && strcmp(params->name, "port")
-                        && strcmp(params->name, "protocol")
-                        && strcmp(params->name, "monitoruser")
-                        && strcmp(params->name, "monitorpw")
-                        && strcmp(params->name, "type")
-                        && strcmp(params->name, "persistpoolmax")
-                        && strcmp(params->name, "persistmaxtime"))
-                    {
-                        serverAddParameter(obj->element, params->name, params->value);
-                    }
-                    params = params->next;
-                }
-            }
-        }
-        else if (!strcmp(type, "filter"))
-        {
-            char *module = config_get_value(obj->parameters, "module");
-            char *options = config_get_value(obj->parameters, "options");
-
-            if (module)
-            {
-                obj->element = filter_alloc(obj->object, module);
-            }
-            else
-            {
-                MXS_ERROR("Filter '%s' has no module "
-                          "defined defined to load.",
-                          obj->object);
-                error_count++;
-            }
-
-            if (obj->element && options)
-            {
-                char *lasts;
-                char *s = strtok_r(options, ",", &lasts);
-                while (s)
-                {
-                    filterAddOption(obj->element, s);
-                    s = strtok_r(NULL, ",", &lasts);
-                }
-            }
-
-            if (obj->element)
-            {
-                CONFIG_PARAMETER *params = obj->parameters;
-                while (params)
-                {
-                    if (strcmp(params->name, "module") && strcmp(params->name, "options"))
-                    {
-                        filterAddParameter(obj->element,
-                                           params->name,
-                                           params->value);
-                    }
-                    params = params->next;
-                }
-            }
-        }
         obj = obj->next;
     }
 
-    /*
-     * Now we have the services we can add the servers to the services
-     * add the protocols to the services
-     */
-    obj = context;
-    while (obj)
+    if (error_count == 0)
     {
-        char *type = config_get_value(obj->parameters, "type");
-        if (type == NULL)
+        /*
+         * Now we have created the services, servers and filters and we can add the
+         * servers and filters to the services. Monitors are also created at this point
+         * because they require a set of servers to monitor.
+         */
+        obj = context;
+        while (obj)
         {
-            ;
-        }
-        else if (!strcmp(type, "service"))
-        {
-            char *servers;
-            char *roptions;
-            char *router;
-            char *filters = config_get_value(obj->parameters, "filters");
-            servers = config_get_value(obj->parameters, "servers");
-            roptions = config_get_value(obj->parameters, "router_options");
-            router = config_get_value(obj->parameters, "router");
-            if (servers && obj->element)
+            char *type = config_get_value(obj->parameters, "type");
+            if (type)
             {
-                char *lasts;
-                char *s = strtok_r(servers, ",", &lasts);
-                while (s)
+                if (!strcmp(type, "service"))
                 {
-                    CONFIG_CONTEXT *obj1 = context;
-                    int found = 0;
-                    while (obj1)
-                    {
-                        if (strcmp(trim(s), obj1->object) == 0 && obj->element && obj1->element)
-                        {
-                            found = 1;
-                            serviceAddBackend(obj->element, obj1->element);
-                        }
-                        obj1 = obj1->next;
-                    }
-
-                    if (!found)
-                    {
-                        MXS_ERROR("Unable to find "
-                                  "server '%s' that is "
-                                  "configured as part of "
-                                  "service '%s'.",
-                                  s, obj->object);
-                    }
-                    s = strtok_r(NULL, ",", &lasts);
+                    error_count += configure_new_service(context, obj);
                 }
-            }
-            else if (servers == NULL && !isInternalService(router))
-            {
-                MXS_WARNING("The service '%s' is missing a "
-                            "definition of the servers that provide "
-                            "the service.",
-                            obj->object);
-            }
-
-            if (roptions && obj->element)
-            {
-                char *lasts;
-                char *s = strtok_r(roptions, ",", &lasts);
-                while (s)
+                else if (!strcmp(type, "listener"))
                 {
-                    serviceAddRouterOption(obj->element, s);
-                    s = strtok_r(NULL, ",", &lasts);
+                    error_count += create_new_listener(obj);
                 }
-            }
-
-            if (filters && obj->element)
-            {
-                if (!serviceSetFilters(obj->element, filters))
+                else if (!strcmp(type, "monitor"))
                 {
-                    error_count++;
+                    error_count += create_new_monitor(context, obj, monitorhash);
                 }
-            }
-        }
-        else if (!strcmp(type, "listener"))
-        {
-            char *service;
-            char *address;
-            char *port;
-            char *protocol;
-            char *socket;
-            struct sockaddr_in serv_addr;
-
-            service = config_get_value(obj->parameters, "service");
-            port = config_get_value(obj->parameters, "port");
-            address = config_get_value(obj->parameters, "address");
-            protocol = config_get_value(obj->parameters, "protocol");
-            socket = config_get_value(obj->parameters, "socket");
-
-            /* if id is not set, do it now */
-            if (gateway.id == 0)
-            {
-                setipaddress(&serv_addr.sin_addr, (address == NULL) ? "0.0.0.0" : address);
-                gateway.id = (unsigned long) (serv_addr.sin_addr.s_addr +
-                                              (port != NULL ? atoi(port) : 0 + getpid()));
-            }
-
-            if (service && protocol && (socket || port))
-            {
-                if (socket)
+                else if (strcmp(type, "server") != 0 && strcmp(type, "filter") != 0)
                 {
-                    CONFIG_CONTEXT *ptr = context;
-                    while (ptr && strcmp(ptr->object, service) != 0)
-                    {
-                        ptr = ptr->next;
-                    }
-
-                    if (ptr && ptr->element)
-                    {
-                        serviceAddProtocol(ptr->element, protocol, socket, 0);
-                    }
-                    else
-                    {
-                        MXS_ERROR("Listener '%s', "
-                                  "service '%s' not found. "
-                                  "Listener will not execute for socket %s.",
-                                  obj->object, service, socket);
-                        error_count++;
-                    }
-                }
-
-                if (port)
-                {
-                    CONFIG_CONTEXT *ptr = context;
-                    while (ptr && strcmp(ptr->object, service) != 0)
-                    {
-                        ptr = ptr->next;
-                    }
-
-                    if (ptr && ptr->element)
-                    {
-                        serviceAddProtocol(ptr->element, protocol, address, atoi(port));
-                    }
-                    else
-                    {
-                        MXS_ERROR("Listener '%s', "
-                                  "service '%s' not found. "
-                                  "Listener will not execute.",
-                                  obj->object, service);
-                        error_count++;
-                    }
-                }
-            }
-            else
-            {
-                MXS_ERROR("Listener '%s' is missing a "
-                          "required "
-                          "parameter. A Listener must have a "
-                          "service, port and protocol defined.",
-                          obj->object);
-                error_count++;
-            }
-        }
-        else if (!strcmp(type, "monitor"))
-        {
-            char *module;
-            char *servers;
-            char *user;
-            char *passwd;
-            unsigned long interval = 0;
-            int connect_timeout = 0;
-            int read_timeout = 0;
-            int write_timeout = 0;
-
-            module = config_get_value(obj->parameters, "module");
-            servers = config_get_value(obj->parameters, "servers");
-            user = config_get_value(obj->parameters, "user");
-            passwd = config_get_value(obj->parameters, "passwd");
-            if (config_get_value(obj->parameters, "monitor_interval"))
-            {
-                interval = strtoul(config_get_value(obj->parameters, "monitor_interval"), NULL, 10);
-            }
-
-            if (config_get_value(obj->parameters, "backend_connect_timeout"))
-            {
-                connect_timeout = atoi(config_get_value(obj->parameters, "backend_connect_timeout"));
-            }
-            if (config_get_value(obj->parameters, "backend_read_timeout"))
-            {
-                read_timeout = atoi(config_get_value(obj->parameters, "backend_read_timeout"));
-            }
-            if (config_get_value(obj->parameters, "backend_write_timeout"))
-            {
-                write_timeout = atoi(config_get_value(obj->parameters, "backend_write_timeout"));
-            }
-
-            if (module)
-            {
-                obj->element = monitor_alloc(obj->object, module);
-                if (servers && obj->element)
-                {
-                    char *s, *lasts;
-
-                    /* if id is not set, compute it now with pid only */
-                    if (gateway.id == 0)
-                    {
-                        gateway.id = getpid();
-                    }
-
-                    monitorAddParameters(obj->element, obj->parameters);
-
-                    /* set monitor interval */
-                    if (interval > 0)
-                    {
-                        monitorSetInterval(obj->element, interval);
-                    }
-                    else
-                    {
-                        MXS_WARNING("Monitor '%s' "
-                                    "missing monitor_interval parameter, "
-                                    "default value of 10000 miliseconds.", obj->object);
-                    }
-
-                    /* set timeouts */
-                    if (connect_timeout > 0)
-                    {
-                        monitorSetNetworkTimeout(obj->element, MONITOR_CONNECT_TIMEOUT, connect_timeout);
-                    }
-                    if (read_timeout > 0)
-                    {
-                        monitorSetNetworkTimeout(obj->element, MONITOR_READ_TIMEOUT, read_timeout);
-                    }
-                    if (write_timeout > 0)
-                    {
-                        monitorSetNetworkTimeout(obj->element, MONITOR_WRITE_TIMEOUT, write_timeout);
-                    }
-
-                    /* get the servers to monitor */
-                    s = strtok_r(servers, ",", &lasts);
-                    while (s)
-                    {
-                        CONFIG_CONTEXT *obj1 = context;
-                        int             found = 0;
-                        while (obj1)
-                        {
-                            if (strcmp(trim(s), obj1->object) == 0 && obj->element && obj1->element)
-                            {
-                                found = 1;
-                                if (hashtable_add(monitorhash, obj1->object, "") == 0)
-                                {
-                                    MXS_WARNING("Multiple monitors are monitoring server [%s]. "
-                                                "This will cause undefined behavior.",
-                                                obj1->object);
-                                }
-                                monitorAddServer(obj->element, obj1->element);
-                            }
-                            obj1 = obj1->next;
-                        }
-                        if (!found)
-                        {
-                            MXS_ERROR("Unable to find "
-                                      "server '%s' that is "
-                                      "configured in the "
-                                      "monitor '%s'.",
-                                      s, obj->object);
-                        }
-
-                        s = strtok_r(NULL, ",", &lasts);
-                    }
-                }
-
-                if (obj->element && user && passwd)
-                {
-                    monitorAddUser(obj->element, user, passwd);
-                    check_monitor_permissions(obj->element);
-                }
-                else if (obj->element && user)
-                {
-                    MXS_ERROR("Monitor '%s' defines a "
-                              "username with no password.",
+                    MXS_ERROR("Configuration object '%s' has an invalid type specified.",
                               obj->object);
                     error_count++;
                 }
             }
-            else
-            {
-                obj->element = NULL;
-                MXS_ERROR("Monitor '%s' is missing a "
-                          "require module parameter.",
-                          obj->object);
-                error_count++;
-            }
+            obj = obj->next;
         }
-        else if (strcmp(type, "server") != 0 && strcmp(type, "filter") != 0)
-        {
-            MXS_ERROR("Configuration object '%s' has an "
-                      "invalid type specified.",
-                      obj->object);
-            error_count++;
-        }
-
-        obj = obj->next;
-    } /*< while */
-
+    }
     /** TODO: consistency check function */
 
     hashtable_free(monitorhash);
@@ -1264,10 +610,8 @@ process_config_context(CONFIG_CONTEXT *context)
 
     if (error_count)
     {
-        MXS_ERROR("%d errors where encountered processing the "
-                  "configuration file '%s'.",
-                  error_count,
-                  config_file);
+        MXS_ERROR("%d errors where encountered processing the configuration "
+                  "file '%s'.", error_count, config_file);
         return 0;
     }
 
@@ -1578,15 +922,33 @@ handle_global_item(const char *name, const char *value)
     int i;
     if (strcmp(name, "threads") == 0)
     {
-        int thrcount = atoi(value);
-        if (thrcount > 0)
+        if (strcmp(name, "auto") == 0)
         {
-            gateway.n_threads = thrcount;
+            if ((gateway.n_threads = get_processor_count()) > 1)
+            {
+                gateway.n_threads--;
+            }
         }
         else
         {
-            MXS_WARNING("Invalid value for 'threads': %s.", value);
-            return 0;
+            int thrcount = atoi(value);
+            if (thrcount > 0)
+            {
+                gateway.n_threads = thrcount;
+
+                int processor_count = get_processor_count();
+                if (thrcount > processor_count)
+                {
+                    MXS_WARNING("Number of threads set to %d which is greater than"
+                                " the number of processors available: %d",
+                                thrcount, processor_count);
+                }
+            }
+            else
+            {
+                MXS_WARNING("Invalid value for 'threads': %s.", value);
+                return 0;
+            }
         }
     }
     else if (strcmp(name, "non_blocking_polls") == 0)
@@ -1638,6 +1000,22 @@ handle_global_item(const char *name, const char *value)
         else
         {
             MXS_ERROR("Invalid timeout value for 'auth_write_timeout': %s", value);
+        }
+    }
+    else if (strcmp(name, "query_classifier") == 0)
+    {
+        int len = strlen(value);
+        int max_len = sizeof(gateway.qc_name) - 1;
+
+        if (len <= max_len)
+        {
+            strcpy(gateway.qc_name, value);
+        }
+        else
+        {
+            MXS_ERROR("The length of '%s' is %d, while the maximum length is %d.",
+                      value, len, max_len);
+            return 0;
         }
     }
     else
@@ -1706,7 +1084,7 @@ global_defaults()
 {
     uint8_t mac_addr[6]="";
     struct utsname uname_data;
-    gateway.n_threads = get_processor_count();
+    gateway.n_threads = DEFAULT_NTHREADS;
     gateway.n_nbpoll = DEFAULT_NBPOLLS;
     gateway.pollsleep = DEFAULT_POLLSLEEP;
     gateway.auth_conn_timeout = DEFAULT_AUTH_CONNECT_TIMEOUT;
@@ -1748,6 +1126,9 @@ global_defaults()
     {
         strncpy(gateway.sysname, uname_data.sysname, _SYSNAME_STR_LENGTH);
     }
+
+    /* query_classifier */
+    memset(gateway.qc_name, 0, sizeof(gateway.qc_name));
 }
 
 /**
@@ -1795,8 +1176,7 @@ process_config_update(CONFIG_CONTEXT *context)
         }
         else if (!strcmp(type, "service"))
         {
-            char *router = config_get_value(obj->parameters,
-                                            "router");
+            char *router = config_get_value(obj->parameters, "router");
             if (router)
             {
                 if ((service = service_find(obj->object)) != NULL)
@@ -1922,7 +1302,7 @@ process_config_update(CONFIG_CONTEXT *context)
                                             "count or\n\t<int>%% for specifying the "
                                             "maximum percentage of available the "
                                             "slaves that will be connected.",
-                                            ((SERVICE*)obj->element)->name,
+                                            service->name,
                                             param->name,
                                             param->value);
                             }
@@ -1960,7 +1340,7 @@ process_config_update(CONFIG_CONTEXT *context)
                                                 "for parameter \'%s.%s = %s\'\n\tExpected "
                                                 "type is <int> for maximum "
                                                 "slave replication lag.",
-                                                ((SERVICE*)obj->element)->name,
+                                                service->name,
                                                 param->name,
                                                 param->value);
                                 }
@@ -1976,47 +1356,7 @@ process_config_update(CONFIG_CONTEXT *context)
                 }
                 else
                 {
-                    char *user;
-                    char *auth;
-                    char *enable_root_user;
-                    char *connection_timeout;
-                    char *allow_localhost_match_wildcard_host;
-
-                    enable_root_user = config_get_value(obj->parameters,
-                                                        "enable_root_user");
-
-                    connection_timeout = config_get_value(obj->parameters,
-                                                          "connection_timeout");
-
-                    allow_localhost_match_wildcard_host =
-                        config_get_value(obj->parameters, "localhost_match_wildcard_host");
-
-                    user = config_get_value(obj->parameters, "user");
-                    auth = config_get_value(obj->parameters, "passwd");
-                    obj->element = service_alloc(obj->object, router);
-
-                    if (obj->element && user && auth)
-                    {
-                        serviceSetUser(obj->element,
-                                       user,
-                                       auth);
-                        if (enable_root_user)
-                        {
-                            serviceEnableRootUser(obj->element, config_truth_value(enable_root_user));
-                        }
-
-                        if (connection_timeout)
-                        {
-                            serviceSetTimeout(obj->element, atoi(connection_timeout));
-                        }
-
-                        if (allow_localhost_match_wildcard_host)
-                        {
-                            serviceEnableLocalhostMatchWildcardHost(
-                                obj->element,
-                                config_truth_value(allow_localhost_match_wildcard_host));
-                        }
-                    }
+                    create_new_service(obj);
                 }
             }
             else
@@ -2027,52 +1367,21 @@ process_config_update(CONFIG_CONTEXT *context)
         }
         else if (!strcmp(type, "server"))
         {
-            char *address;
-            char *port;
-            char *protocol;
-            char *monuser;
-            char *monpw;
+            char *address = config_get_value(obj->parameters, "address");
+            char *port = config_get_value(obj->parameters, "port");
 
-            address = config_get_value(obj->parameters, "address");
-            port = config_get_value(obj->parameters, "port");
-            protocol = config_get_value(obj->parameters, "protocol");
-            monuser = config_get_value(obj->parameters, "monitoruser");
-            monpw = config_get_value(obj->parameters, "monitorpw");
-
-            if (address && port && protocol)
+            if (address && port &&
+                (server = server_find(address, atoi(port))) != NULL)
             {
-                if ((server = server_find(address, atoi(port))) != NULL)
-                {
-                    server_update(server,
-                                  protocol,
-                                  monuser,
-                                  monpw);
-                    obj->element = server;
-                }
-                else
-                {
-                    obj->element = server_alloc(address,
-                                                protocol,
-                                                atoi(port));
-
-                    server_set_unique_name(obj->element, obj->object);
-
-                    if (obj->element && monuser && monpw)
-                    {
-                        serverAddMonUser(obj->element,
-                                         monuser,
-                                         monpw);
-                    }
-                }
+                char *protocol = config_get_value(obj->parameters, "protocol");
+                char *monuser = config_get_value(obj->parameters, "monuser");
+                char *monpw = config_get_value(obj->parameters, "monpw");
+                server_update(server, protocol, monuser, monpw);
+                obj->element = server;
             }
             else
             {
-                MXS_ERROR("Server '%s' is missing a "
-                          "required "
-                          "configuration parameter. A server must "
-                          "have address, port and protocol "
-                          "defined.",
-                          obj->object);
+                create_new_server(obj);
             }
         }
         obj = obj->next;
@@ -2092,65 +1401,7 @@ process_config_update(CONFIG_CONTEXT *context)
         }
         else if (!strcmp(type, "service"))
         {
-            char *servers;
-            char *roptions;
-            char *filters;
-
-            servers = config_get_value(obj->parameters, "servers");
-            roptions = config_get_value(obj->parameters, "router_options");
-            filters = config_get_value(obj->parameters, "filters");
-
-            if (servers && obj->element)
-            {
-                char *lasts;
-                char *s = strtok_r(servers, ",", &lasts);
-                while (s)
-                {
-                    CONFIG_CONTEXT *obj1 = context;
-                    int             found = 0;
-                    while (obj1)
-                    {
-                        if (strcmp(trim(s), obj1->object) == 0 && obj->element && obj1->element)
-                        {
-                            found = 1;
-                            if (!serviceHasBackend(obj->element, obj1->element))
-                            {
-                                serviceAddBackend(obj->element, obj1->element);
-                            }
-                        }
-
-                        obj1 = obj1->next;
-                    }
-                    if (!found)
-                    {
-                        MXS_ERROR("Unable to find "
-                                  "server '%s' that is "
-                                  "configured as part of "
-                                  "service '%s'.",
-                                  s, obj->object);
-                    }
-                    s = strtok_r(NULL, ",", &lasts);
-                }
-            }
-            if (roptions && obj->element)
-            {
-                char *lasts;
-                char *s = strtok_r(roptions, ",", &lasts);
-                serviceClearRouterOptions(obj->element);
-                while (s)
-                {
-                    serviceAddRouterOption(obj->element, s);
-                    s = strtok_r(NULL, ",", &lasts);
-                }
-            }
-            if (filters && obj->element)
-            {
-                if (!serviceSetFilters(obj->element, filters))
-                {
-                    MXS_ERROR("Failed to set service filters for '%s'. This "
-                              "service will not use filters.", obj->object);
-                }
-            }
+            configure_new_service(context, obj);
         }
         else if (!strcmp(type, "listener"))
         {
@@ -2213,71 +1464,6 @@ process_config_update(CONFIG_CONTEXT *context)
     return 1;
 }
 
-static char *service_params[] =
-{
-    "type",
-    "router",
-    "router_options",
-    "servers",
-    "user",
-    "passwd",
-    "enable_root_user",
-    "connection_timeout",
-    "auth_all_servers",
-    "optimize_wildcard",
-    "strip_db_esc",
-    "localhost_match_wildcard_host",
-    "max_slave_connections",
-    "max_slave_replication_lag",
-    "use_sql_variables_in",         /*< rwsplit only */
-    "subservices",
-    "version_string",
-    "filters",
-    "weightby",
-    "ssl_cert",
-    "ssl_ca_cert",
-    "ssl",
-    "ssl_key",
-    "ssl_version",
-    "ssl_cert_verify_depth",
-    "ignore_databases",
-    "ignore_databases_regex",
-    "log_auth_warnings",
-    NULL
-};
-
-static char *listener_params[] =
-{
-    "type",
-    "service",
-    "protocol",
-    "port",
-    "address",
-    "socket",
-    NULL
-};
-
-static char *monitor_params[] =
-{
-    "type",
-    "module",
-    "servers",
-    "user",
-    "passwd",
-    "script",
-    "events",
-    "mysql51_replication",
-    "monitor_interval",
-    "detect_replication_lag",
-    "detect_stale_master",
-    "disable_master_failback",
-    "backend_connect_timeout",
-    "backend_read_timeout",
-    "backend_write_timeout",
-    "available_when_donor",
-    "disable_master_role_setting",
-    NULL
-};
 /**
  * Check the configuration objects have valid parameters
  */
@@ -2452,8 +1638,7 @@ static char *InternalRouters[] =
  * @param router        The router name
  * @return      Non-zero if the router is in the InternalRouters table
  */
-bool
-isInternalService(char *router)
+bool is_internal_service(const char *router)
 {
     if (router)
     {
@@ -2528,6 +1713,7 @@ config_get_ifaddr(unsigned char *output)
     {
         memcpy(output, ifr.ifr_hwaddr.sa_data, 6);
     }
+    close(sock);
 
     return success;
 }
@@ -2760,7 +1946,7 @@ bool config_has_duplicate_sections(const char* config)
     HASHTABLE *hash = hashtable_alloc(table_size, simple_str_hash, strcmp);
     pcre2_code *re = pcre2_compile((PCRE2_SPTR) "^\\s*\\[(.+)\\]\\s*$", PCRE2_ZERO_TERMINATED,
                                    0, &errcode, &erroffset, NULL);
-    pcre2_match_data *mdata;
+    pcre2_match_data *mdata = NULL;
     int size = 1024;
     char *buffer = malloc(size * sizeof(char));
 
@@ -2876,4 +2062,687 @@ int maxscale_getline(char** dest, int* size, FILE* file)
 
     *dest = destptr;
     return 1;
+}
+
+/**
+ * Validate the SSL parameters for a service
+ * @param ssl_cert SSL certificate (private key)
+ * @param ssl_ca_cert SSL CA certificate
+ * @param ssl_key SSL key (public key)
+ * @return 0 if parameters are valid otherwise the number of errors if errors
+ * were detected
+ */
+static int validate_ssl_parameters(CONFIG_CONTEXT* obj, char *ssl_cert, char *ssl_ca_cert, char *ssl_key)
+{
+    int error_count = 0;
+    if (ssl_cert == NULL)
+    {
+        error_count++;
+        MXS_ERROR("Server certificate missing for service '%s'."
+                  "Please provide the path to the server certificate by adding "
+                  "the ssl_cert=<path> parameter", obj->object);
+    }
+    else if (access(ssl_cert, F_OK) != 0)
+    {
+        error_count++;
+        MXS_ERROR("Server certificate file for service '%s' not found: %s",
+                  obj->object, ssl_cert);
+    }
+
+    if (ssl_ca_cert == NULL)
+    {
+        error_count++;
+        MXS_ERROR("CA Certificate missing for service '%s'."
+                  "Please provide the path to the certificate authority "
+                  "certificate by adding the ssl_ca_cert=<path> parameter",
+                  obj->object);
+    }
+    else if (access(ssl_ca_cert, F_OK) != 0)
+    {
+        error_count++;
+        MXS_ERROR("Certificate authority file for service '%s' "
+                  "not found: %s", obj->object, ssl_ca_cert);
+    }
+
+    if (ssl_key == NULL)
+    {
+        error_count++;
+        MXS_ERROR("Server private key missing for service '%s'. "
+                  "Please provide the path to the server certificate key by "
+                  "adding the ssl_key=<path> parameter", obj->object);
+    }
+    else if (access(ssl_key, F_OK) != 0)
+    {
+        error_count++;
+        MXS_ERROR("Server private key file for service '%s' not found: %s",
+                  obj->object, ssl_key);
+    }
+    return error_count;
+}
+
+/**
+ * Create a new router for a service
+ * @param obj Service configuration context
+ * @return True if configuration was successful, false if an error occurred.
+ */
+int create_new_service(CONFIG_CONTEXT *obj)
+{
+    char *router = config_get_value(obj->parameters, "router");
+    if (router == NULL)
+    {
+        obj->element = NULL;
+        MXS_ERROR("No router defined for service '%s'.", obj->object);
+        return 1;
+    }
+    else if ((obj->element = service_alloc(obj->object, router)) == NULL)
+    {
+        MXS_ERROR("Service creation failed.");
+        return 1;
+    }
+
+    SERVICE* service = (SERVICE*) obj->element;
+    int error_count = 0;
+    CONFIG_PARAMETER* param;
+
+    char *retry = config_get_value(obj->parameters, "retry_on_failure");
+    if (retry)
+    {
+        serviceSetRetryOnFailure(obj->element, retry);
+    }
+
+    char *enable_root_user = config_get_value(obj->parameters, "enable_root_user");
+    if (enable_root_user)
+    {
+        serviceEnableRootUser(obj->element, config_truth_value(enable_root_user));
+    }
+
+    char *connection_timeout = config_get_value(obj->parameters, "connection_timeout");
+    if (connection_timeout)
+    {
+        serviceSetTimeout(obj->element, atoi(connection_timeout));
+    }
+
+    char *auth_all_servers = config_get_value(obj->parameters, "auth_all_servers");
+    if (auth_all_servers)
+    {
+        serviceAuthAllServers(obj->element, config_truth_value(auth_all_servers));
+    }
+
+    char *optimize_wildcard = config_get_value(obj->parameters, "optimize_wildcard");
+    if (optimize_wildcard)
+    {
+        serviceOptimizeWildcard(obj->element, config_truth_value(optimize_wildcard));
+    }
+
+    char *strip_db_esc = config_get_value(obj->parameters, "strip_db_esc");
+    if (strip_db_esc)
+    {
+        serviceStripDbEsc(obj->element, config_truth_value(strip_db_esc));
+    }
+
+    char *weightby = config_get_value(obj->parameters, "weightby");
+    if (weightby)
+    {
+        serviceWeightBy(obj->element, weightby);
+    }
+
+    char *wildcard = config_get_value(obj->parameters, "localhost_match_wildcard_host");
+    if (wildcard)
+    {
+        serviceEnableLocalhostMatchWildcardHost(obj->element, config_truth_value(wildcard));
+    }
+
+    char *user = config_get_value(obj->parameters, "user");
+    char *auth = config_get_value(obj->parameters, "passwd");
+
+    if (user && auth)
+    {
+        serviceSetUser(obj->element, user, auth);
+    }
+    else if(!is_internal_service(router))
+    {
+        error_count++;
+        MXS_ERROR("Service '%s' is missing %s%s%s.",
+                  obj->object,
+                  user ? "" : "the 'user' parameter",
+                  !user && !auth ? " and " : "",
+                  auth ? "" : "the 'passwd' parameter");
+    }
+
+    char *subservices = config_get_value(obj->parameters, "subservices");
+    if (subservices)
+    {
+        service_set_param_value(obj->element, obj->parameters, subservices, 1, STRING_TYPE);
+    }
+
+    char *log_auth_warnings = config_get_value(obj->parameters, "log_auth_warnings");
+    if (log_auth_warnings)
+    {
+        int truthval = config_truth_value(log_auth_warnings);
+        if (truthval != -1)
+        {
+            service->log_auth_warnings = (bool) truthval;
+        }
+        else
+        {
+            MXS_ERROR("Invalid value for 'log_auth_warnings': %s", log_auth_warnings);
+        }
+    }
+
+    if ((param = config_get_param(obj->parameters, "ignore_databases")))
+    {
+        service_set_param_value(obj->element, param, param->value, 0, STRING_TYPE);
+    }
+
+    if ((param = config_get_param(obj->parameters, "ignore_databases_regex")))
+    {
+        service_set_param_value(obj->element, param, param->value, 0, STRING_TYPE);
+    }
+
+
+    char *version_string = config_get_value(obj->parameters, "version_string");
+    if (version_string)
+    {
+        /** Add the 5.5.5- string to the start of the version string if
+         * the version string starts with "10.".
+         * This mimics MariaDB 10.0 replication which adds 5.5.5- for backwards compatibility. */
+        if (strncmp(version_string, "10.", 3) == 0)
+        {
+            size_t len = strlen(version_string) + strlen("5.5.5-") + 1;
+            service->version_string = malloc(len);
+            strcpy(service->version_string, "5.5.5-");
+            strcat(service->version_string, version_string);
+        }
+        else
+        {
+            service->version_string = strdup(version_string);
+        }
+    }
+    else
+    {
+        if (gateway.version_string)
+        {
+            service->version_string = strdup(gateway.version_string);
+        }
+    }
+
+    char *ssl = config_get_value(obj->parameters, "ssl");
+    if (ssl)
+    {
+        char *ssl_cert = config_get_value(obj->parameters, "ssl_cert");
+        char *ssl_key = config_get_value(obj->parameters, "ssl_key");
+        char *ssl_ca_cert = config_get_value(obj->parameters, "ssl_ca_cert");
+        error_count += validate_ssl_parameters(obj, ssl_cert, ssl_ca_cert, ssl_key);
+
+        if (error_count == 0)
+        {
+            if (serviceSetSSL(obj->element, ssl) == 0)
+            {
+                serviceSetCertificates(obj->element, ssl_cert, ssl_key, ssl_ca_cert);
+
+                char *ssl_version = config_get_value(obj->parameters, "ssl_version");
+                if (ssl_version)
+                {
+                    if (serviceSetSSLVersion(obj->element, ssl_version) != 0)
+                    {
+                        MXS_ERROR("Unknown parameter value for 'ssl_version' for"
+                                  " service '%s': %s", obj->object, ssl_version);
+                        error_count++;
+                    }
+                }
+
+                char *cert_depth = config_get_value(obj->parameters, "ssl_cert_verify_depth");
+                if (cert_depth)
+                {
+                    if (serviceSetSSLVerifyDepth(obj->element, atoi(cert_depth)) != 0)
+                    {
+                        MXS_ERROR("Invalid parameter value for 'ssl_cert_verify_depth'"
+                                  " for service '%s': %s", obj->object, cert_depth);
+                        error_count++;
+                    }
+                }
+            }
+            else
+            {
+                MXS_ERROR("Unknown parameter for service '%s': %s", obj->object, ssl);
+                error_count++;
+            }
+        }
+    }
+
+    /** Parameters for rwsplit router only */
+    if (strcmp(router, "readwritesplit"))
+    {
+        if ((param = config_get_param(obj->parameters, "max_slave_connections")))
+        {
+            if (!service_set_param_value(obj->element, param, param->value,
+                                         COUNT_ATMOST, (COUNT_TYPE | PERCENT_TYPE)))
+            {
+                MXS_WARNING("Invalid value type for parameter \'%s.%s = %s\'\n\tExpected "
+                            "type is either <int> for slave connection count or\n\t<int>%% for specifying the "
+                            "maximum percentage of available the slaves that will be connected.",
+                            service->name, param->name, param->value);
+            }
+        }
+
+        if ((param = config_get_param(obj->parameters, "max_slave_replication_lag")))
+        {
+            if (!service_set_param_value(obj->element, param, param->value,
+                                         COUNT_ATMOST, COUNT_TYPE))
+            {
+                MXS_WARNING("Invalid value type for parameter \'%s.%s = %s\'\n\tExpected "
+                            "type is <int> for maximum slave replication lag.",
+                            service->name, param->name, param->value);
+            }
+        }
+
+        if ((param = config_get_param(obj->parameters, "use_sql_variables_in")))
+        {
+            if (service_set_param_value(obj->element, param, param->value,
+                                        COUNT_NONE, SQLVAR_TARGET_TYPE))
+            {
+                if (param)
+                {
+                    MXS_WARNING("Invalid value type for parameter \'%s.%s = %s\'\n\tExpected "
+                                "type is [master|all] for use sql variables in.",
+                                service->name, param->name, param->value);
+                }
+            }
+        }
+    }
+    return error_count;
+}
+
+/**
+ * Check if a parameter is a default server parameter.
+ * @param param Parameter name
+ * @return True if it is one of the standard server parameters
+ */
+bool is_normal_server_parameter(const char *param)
+{
+    for (int i = 0; server_params[i]; i++)
+    {
+        if (strcmp(param, server_params[i]) == 0)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+/**
+ * Create a new server
+ * @param obj Server configuration context
+ * @return Number of errors
+ */
+int create_new_server(CONFIG_CONTEXT *obj)
+{
+    int error_count = 0;
+    char *address = config_get_value(obj->parameters, "address");
+    char *port = config_get_value(obj->parameters, "port");
+    char *protocol = config_get_value(obj->parameters, "protocol");
+    char *monuser = config_get_value(obj->parameters, "monitoruser");
+    char *monpw = config_get_value(obj->parameters, "monitorpw");
+
+    if (address && port && protocol)
+    {
+        if ((obj->element = server_alloc(address, protocol, atoi(port))))
+        {
+            server_set_unique_name(obj->element, obj->object);
+        }
+        else
+        {
+            MXS_ERROR("Failed to create a new server, memory allocation failed.");
+            error_count++;
+        }
+    }
+    else
+    {
+        obj->element = NULL;
+        MXS_ERROR("Server '%s' is missing a required configuration parameter. A "
+                  "server must have address, port and protocol defined.", obj->object);
+        error_count++;
+    }
+
+    if (error_count == 0)
+    {
+        SERVER *server = obj->element;
+
+        if (monuser && monpw)
+        {
+            serverAddMonUser(server, monuser, monpw);
+        }
+        else if (monuser && monpw == NULL)
+        {
+            MXS_ERROR("Server '%s' has a monitoruser defined but no corresponding "
+                      "password.", obj->object);
+            error_count++;
+        }
+
+        char *endptr;
+        const char *poolmax = config_get_value_string(obj->parameters, "persistpoolmax");
+        if (poolmax)
+        {
+            server->persistpoolmax = strtol(poolmax, &endptr, 0);
+            if (*endptr != '\0')
+            {
+                MXS_ERROR("Invalid value for 'persistpoolmax' for server %s: %s",
+                          server->unique_name, poolmax);
+            }
+        }
+
+        const char *persistmax = config_get_value_string(obj->parameters, "persistmaxtime");
+        if (persistmax)
+        {
+            server->persistmaxtime = strtol(persistmax, &endptr, 0);
+            if (*endptr != '\0')
+            {
+                MXS_ERROR("Invalid value for 'persistmaxtime' for server %s: %s",
+                          server->unique_name, persistmax);
+            }
+        }
+
+        CONFIG_PARAMETER *params = obj->parameters;
+
+        while (params)
+        {
+            if (!is_normal_server_parameter(params->name))
+            {
+                serverAddParameter(obj->element, params->name, params->value);
+            }
+            params = params->next;
+        }
+    }
+    return error_count;
+}
+
+/**
+ * Configure a new service
+ *
+ * Add servers, router options and filters to a new service.
+ * @param context The complete configuration context
+ * @param obj The service configuration context
+ * @return Number of errors
+ */
+int configure_new_service(CONFIG_CONTEXT *context, CONFIG_CONTEXT *obj)
+{
+    int error_count = 0;
+    char *filters = config_get_value(obj->parameters, "filters");
+    char *servers = config_get_value(obj->parameters, "servers");
+    char *roptions = config_get_value(obj->parameters, "router_options");
+    char *router = config_get_value(obj->parameters, "router");
+    SERVICE *service = obj->element;
+
+    if (service)
+    {
+        if (servers)
+        {
+            char *lasts;
+            char *s = strtok_r(servers, ",", &lasts);
+            while (s)
+            {
+                CONFIG_CONTEXT *obj1 = context;
+                int found = 0;
+                while (obj1)
+                {
+                    if (strcmp(trim(s), obj1->object) == 0 && obj1->element)
+                    {
+                        found = 1;
+                        serviceAddBackend(service, obj1->element);
+                    }
+                    obj1 = obj1->next;
+                }
+
+                if (!found)
+                {
+                    MXS_ERROR("Unable to find server '%s' that is "
+                              "configured as part of service '%s'.", s, obj->object);
+                }
+                s = strtok_r(NULL, ",", &lasts);
+            }
+        }
+        else if (servers == NULL && !is_internal_service(router))
+        {
+            MXS_ERROR("The service '%s' is missing a definition of the servers "
+                      "that provide the service.", obj->object);
+            error_count++;
+        }
+
+        if (roptions)
+        {
+            char *lasts;
+            char *s = strtok_r(roptions, ",", &lasts);
+            while (s)
+            {
+                serviceAddRouterOption(service, s);
+                s = strtok_r(NULL, ",", &lasts);
+            }
+        }
+
+        if (filters)
+        {
+            if (!serviceSetFilters(service, filters))
+            {
+                error_count++;
+            }
+        }
+    }
+
+    return error_count;
+}
+
+/**
+ * Create a new monitor
+ * @param context The complete configuration context
+ * @param obj Monitor configuration context
+ * @param monitorhash Hashtable containing the servers that are already monitored
+ * @return Number of errors
+ */
+int create_new_monitor(CONFIG_CONTEXT *context, CONFIG_CONTEXT *obj, HASHTABLE* monitorhash)
+{
+    int error_count = 0;
+
+    char *module = config_get_value(obj->parameters, "module");
+    if (module)
+    {
+        if ((obj->element = monitor_alloc(obj->object, module)) == NULL)
+        {
+            MXS_ERROR("Failed to create monitor '%s'.", obj->object);
+            error_count++;
+        }
+    }
+    else
+    {
+        obj->element = NULL;
+        MXS_ERROR("Monitor '%s' is missing a require module parameter.", obj->object);
+        error_count++;
+    }
+
+    char *servers = config_get_value(obj->parameters, "servers");
+    if (servers == NULL)
+    {
+        MXS_ERROR("Monitor '%s' is missing the 'servers' parameter that "
+                  "lists the servers that it monitors.", obj->object);
+        error_count++;
+    }
+
+    if (error_count == 0)
+    {
+        monitorAddParameters(obj->element, obj->parameters);
+
+        char *interval = config_get_value(obj->parameters, "monitor_interval");
+        if (interval)
+        {
+            monitorSetInterval(obj->element, atoi(interval));
+        }
+        else
+        {
+            MXS_WARNING("Monitor '%s' is missing the 'monitor_interval' parameter, "
+                        "using default value of 10000 milliseconds.", obj->object);
+        }
+
+        char *connect_timeout = config_get_value(obj->parameters, "backend_connect_timeout");
+        if (connect_timeout)
+        {
+            monitorSetNetworkTimeout(obj->element, MONITOR_CONNECT_TIMEOUT, atoi(connect_timeout));
+        }
+
+        char *read_timeout = config_get_value(obj->parameters, "backend_read_timeout");
+        if (read_timeout)
+        {
+            monitorSetNetworkTimeout(obj->element, MONITOR_READ_TIMEOUT, atoi(read_timeout));
+        }
+
+        char *write_timeout = config_get_value(obj->parameters, "backend_write_timeout");
+        if (write_timeout)
+        {
+            monitorSetNetworkTimeout(obj->element, MONITOR_WRITE_TIMEOUT, atoi(write_timeout));
+        }
+
+        /* get the servers to monitor */
+        char *s, *lasts;
+        s = strtok_r(servers, ",", &lasts);
+        while (s)
+        {
+            CONFIG_CONTEXT *obj1 = context;
+            int found = 0;
+            while (obj1)
+            {
+                if (strcmp(trim(s), obj1->object) == 0 && obj->element && obj1->element)
+                {
+                    found = 1;
+                    if (hashtable_add(monitorhash, obj1->object, "") == 0)
+                    {
+                        MXS_WARNING("Multiple monitors are monitoring server [%s]. "
+                                    "This will cause undefined behavior.",
+                                    obj1->object);
+                    }
+                    monitorAddServer(obj->element, obj1->element);
+                }
+                obj1 = obj1->next;
+            }
+            if (!found)
+            {
+                MXS_ERROR("Unable to find server '%s' that is "
+                          "configured in the monitor '%s'.", s, obj->object);
+                error_count++;
+            }
+
+            s = strtok_r(NULL, ",", &lasts);
+        }
+
+        char *user = config_get_value(obj->parameters, "user");
+        char *passwd = config_get_value(obj->parameters, "passwd");
+        if (user && passwd)
+        {
+            monitorAddUser(obj->element, user, passwd);
+            check_monitor_permissions(obj->element);
+        }
+        else if (user)
+        {
+            MXS_ERROR("Monitor '%s' defines a username but does not define a password.",
+                      obj->object);
+            error_count++;
+        }
+    }
+
+    return error_count;
+}
+
+/**
+ * Create a new listener for a service
+ * @param obj Listener configuration context
+ * @return Number of errors
+ */
+int create_new_listener(CONFIG_CONTEXT *obj)
+{
+    int error_count = 0;
+    char *service_name = config_get_value(obj->parameters, "service");
+    char *port = config_get_value(obj->parameters, "port");
+    char *address = config_get_value(obj->parameters, "address");
+    char *protocol = config_get_value(obj->parameters, "protocol");
+    char *socket = config_get_value(obj->parameters, "socket");
+
+    if (service_name && protocol && (socket || port))
+    {
+        SERVICE *service = service_find(service_name);
+        if (service)
+        {
+            if (socket)
+            {
+                serviceAddProtocol(service, protocol, socket, 0);
+            }
+
+            if (port)
+            {
+                serviceAddProtocol(service, protocol, address, atoi(port));
+            }
+        }
+        else
+        {
+            MXS_ERROR("Listener '%s', service '%s' not found.", obj->object,
+                      service_name);
+            error_count++;
+        }
+    }
+    else
+    {
+        MXS_ERROR("Listener '%s' is missing a required parameter. A Listener "
+                  "must have a service, port and protocol defined.", obj->object);
+        error_count++;
+    }
+
+    return error_count;
+}
+
+/**
+ * Create a new filter
+ * @param obj Filter configuration context
+ * @return Number of errors
+ */
+int create_new_filter(CONFIG_CONTEXT *obj)
+{
+    int error_count = 0;
+    char *module = config_get_value(obj->parameters, "module");
+
+    if (module)
+    {
+        if ((obj->element = filter_alloc(obj->object, module)))
+        {
+            char *options = config_get_value(obj->parameters, "options");
+            if (options)
+            {
+                char *lasts;
+                char *s = strtok_r(options, ",", &lasts);
+                while (s)
+                {
+                    filterAddOption(obj->element, s);
+                    s = strtok_r(NULL, ",", &lasts);
+                }
+            }
+
+            CONFIG_PARAMETER *params = obj->parameters;
+            while (params)
+            {
+                if (strcmp(params->name, "module") && strcmp(params->name, "options"))
+                {
+                    filterAddParameter(obj->element, params->name, params->value);
+                }
+                params = params->next;
+            }
+        }
+        else
+        {
+            MXS_ERROR("Failed to create filter '%s'. Memory allocation failed.",
+                      obj->object);
+            error_count++;
+        }
+    }
+    else
+    {
+        MXS_ERROR("Filter '%s' has no module defined defined to load.", obj->object);
+        error_count++;
+    }
+
+    return error_count;
 }

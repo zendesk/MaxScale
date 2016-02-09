@@ -1,6 +1,5 @@
-add_library(query_classifier SHARED query_classifier.cc)
-set_target_properties(query_classifier PROPERTIES VERSION "1.0.0")
-install(TARGETS query_classifier COMPONENT lib DESTINATION ${MAXSCALE_LIBDIR})
+add_subdirectory(qc_mysqlembedded)
+
 if(BUILD_TESTS)
   add_subdirectory(test)
 endif()

@@ -731,7 +731,10 @@ blr_make_binlog_dump(ROUTER_INSTANCE *router)
 {
 GWBUF		*buf;
 unsigned char	*data;
-int		len = 0x1b;
+int		binlog_file_len = strlen(router->binlog_name);
+/* COM_BINLOG_DUMP needs 11 bytes + binlogname (terminating NULL is not required) */
+int		len = 11 + binlog_file_len;
+
 
 	if ((buf = gwbuf_alloc(len + 4)) == NULL)
 		return NULL;
@@ -745,8 +748,8 @@ int		len = 0x1b;
 	encode_value(&data[9], 0, 16);			// Flags
 	encode_value(&data[11],
 		router->serverid, 32);			// Server-id of MaxScale
-	strncpy((char *)&data[15], router->binlog_name,
-				BINLOG_FNAMELEN);	// binlog filename
+	memcpy((char *)&data[15], router->binlog_name,
+		binlog_file_len);			// binlog filename
 	return buf;
 }
 
@@ -1129,7 +1132,7 @@ int			n_bufs = -1, pn_bufs = -1;
 
 				event_limit = router->mariadb10_compat ? MAX_EVENT_TYPE_MARIADB10 : MAX_EVENT_TYPE;
 
-				if (hdr.event_type >= 0 && hdr.event_type <= event_limit)
+				if (hdr.event_type <= event_limit)
 					router->stats.events[hdr.event_type]++;
 
 				if (hdr.event_type == FORMAT_DESCRIPTION_EVENT && hdr.next_pos == 0)
@@ -1562,6 +1565,7 @@ GWBUF		*pkt;
 uint8_t		*buf;
 ROUTER_SLAVE	*slave, *nextslave;
 int		action;
+unsigned int cstate;
 
 	spinlock_acquire(&router->lock);
 	slave = router->slaves;
@@ -1716,9 +1720,21 @@ int		action;
 
 				case SLAVE_FORCE_CATCHUP:
 					spinlock_acquire(&slave->catch_lock);
+					cstate = slave->cstate;
 					slave->cstate &= ~(CS_UPTODATE|CS_BUSY);
 					slave->cstate |= CS_EXPECTCB;
 					spinlock_release(&slave->catch_lock);
+					if ((cstate & CS_UPTODATE) == CS_UPTODATE)
+					{
+#ifdef STATE_CHANGE_LOGGING_ENABLED
+						MXS_NOTICE("%s: Slave %s:%d, server-id %d transition from up-to-date to catch-up in blr_distribute_binlog_record, binlog file '%s', position %lu.",
+							router->service->name,
+							slave->dcb->remote,
+							ntohs((slave->dcb->ipv4).sin_port),
+							slave->serverid,
+							slave->binlogfile, (unsigned long)slave->binlog_pos);
+#endif
+					}
 					poll_fake_write_event(slave->dcb);
 					break;
 			}

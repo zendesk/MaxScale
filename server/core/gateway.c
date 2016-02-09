@@ -37,6 +37,7 @@
  * 05/02/14     Mark Riddoch            Addition of version string
  * 29/06/14     Massimiliano Pinto      Addition of pidfile
  * 10/08/15     Markus Makela           Added configurable directory locations
+ * 19/01/16     Markus Makela           Set cwd to log directory
  * @endverbatim
  */
 #define _XOPEN_SOURCE 700
@@ -78,8 +79,9 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 
-# include <skygw_utils.h>
-# include <log_manager.h>
+#include <skygw_utils.h>
+#include <log_manager.h>
+#include <query_classifier.h>
 
 #include <execinfo.h>
 
@@ -87,6 +89,7 @@
 #include <sys/wait.h>
 #include <sys/prctl.h>
 #include <sys/file.h>
+#include <statistics.h>
 
 #define STRING_BUFFER_SIZE 1024
 #define PIDFD_CLOSED -1
@@ -101,33 +104,6 @@ time_t  MaxScaleStarted;
 extern char *program_invocation_name;
 extern char *program_invocation_short_name;
 
-/*
- * Server options are passed to the mysql_server_init. Each gateway must have a unique
- * data directory that is passed to the mysql_server_init, therefore the data directory
- * is not fixed here and will be updated elsewhere.
- */
-static char* server_options[] = {
-    "MariaDB Corporation MaxScale",
-    "--no-defaults",
-    "--datadir=",
-    "--language=",
-    "--skip-innodb",
-    "--default-storage-engine=myisam",
-    NULL
-};
-
-const int num_elements = (sizeof(server_options) / sizeof(char *)) - 1;
-
-static char* server_groups[] = {
-    "embedded",
-    "server",
-    "server",
-    "embedded",
-    "server",
-    "server",
-    NULL
-};
-
 /* The data directory we created for this gateway instance */
 static char     datadir[PATH_MAX + 1] = "";
 static bool     datadir_defined = false; /*< If the datadir was already set */
@@ -141,9 +117,9 @@ static int pidfd = PIDFD_CLOSED;
 static bool do_exit = FALSE;
 
 /**
- * Flag to indicate whether libmysqld is successfully initialized.
+ * Flag to indicate whether MySQL is successfully initialized.
  */
-static bool libmysqld_started = FALSE;
+static bool libmysql_initialized = FALSE;
 
 /**
  * If MaxScale is started to run in daemon process the value is true.
@@ -210,9 +186,10 @@ static bool resolve_maxscale_conf_fname(
     char*  cnf_file_arg);
 
 static char* check_dir_access(char* dirname, bool, bool);
-static int set_user();
+static int set_user(const char* user);
 bool pid_file_exists();
 void write_child_exit_code(int fd, int code);
+static bool change_cwd();
 /** SSL multi-threading functions and structures */
 
 static SPINLOCK* ssl_locks;
@@ -501,7 +478,7 @@ void datadir_cleanup()
 
 static void libmysqld_done(void)
 {
-    if (libmysqld_started)
+    if (libmysql_initialized)
     {
         mysql_library_end();
     }
@@ -773,6 +750,11 @@ static void print_log_n_stderr(
     }
 }
 
+/**
+ * Check if the file or directory is readable
+ * @param absolute_pathname Path of the file or directory to check
+ * @return True if file is readable
+ */
 static bool file_is_readable(char* absolute_pathname)
 {
     bool succp = true;
@@ -785,23 +767,22 @@ static bool file_is_readable(char* absolute_pathname)
 
         if (!daemon_mode)
         {
-            fprintf(stderr,
-                    "*\n* Warning : Failed to read the configuration "
-                    "file %s. %s.\n*\n",
-                    absolute_pathname,
-                    strerror_r(eno, errbuf, sizeof(errbuf)));
+            fprintf(stderr, "*\n* Error : Failed to read '%s' due to error %d, %s.\n*\n",
+                    absolute_pathname, eno, strerror_r(eno, errbuf, sizeof (errbuf)));
         }
-        MXS_WARNING("Failed to read the configuration file %s due "
-                    "to %d, %s.",
-                    absolute_pathname,
-                    eno,
-                    strerror_r(eno, errbuf, sizeof(errbuf)));
+        MXS_ERROR("Failed to read '%s' due to error %d, %s.", absolute_pathname,
+                  eno, strerror_r(eno, errbuf, sizeof (errbuf)));
         mxs_log_flush_sync();
         succp = false;
     }
     return succp;
 }
 
+/**
+ * Check if the file or directory is writable
+ * @param absolute_pathname Path of the file or directory to check
+ * @return True if file is writable
+ */
 static bool file_is_writable(char* absolute_pathname)
 {
     bool succp = true;
@@ -814,18 +795,12 @@ static bool file_is_writable(char* absolute_pathname)
 
         if (!daemon_mode)
         {
-            fprintf(stderr,
-                    "*\n* Error : unable to open file %s for write "
-                    "due %d, %s.\n*\n",
-                    absolute_pathname,
-                    eno,
-                    strerror_r(eno, errbuf, sizeof(errbuf)));
+            fprintf(stderr, "*\n* Error : Unable to open file '%s' for writing "
+                    "due to error %d, %s.\n*\n", absolute_pathname, eno,
+                    strerror_r(eno, errbuf, sizeof (errbuf)));
         }
-        MXS_ERROR("Unable to open file %s for write due "
-                  "to %d, %s.",
-                  absolute_pathname,
-                  eno,
-                  strerror_r(eno, errbuf, sizeof(errbuf)));
+        MXS_ERROR("Unable to open file '%s' for writing due to error %d, %s.",
+                  absolute_pathname, eno, strerror_r(eno, errbuf, sizeof (errbuf)));
         succp = false;
     }
     return succp;
@@ -968,7 +943,7 @@ static void usage(void)
             "                             (default: /etc/)\n"
             "  -D, --datadir=PATH         path to data directory, stored embedded mysql tables\n"
             "                             (default: /var/cache/maxscale)\n"
-            "  -N, --language=PATH         apth to errmsg.sys file\n"
+            "  -N, --language=PATH         path to errmsg.sys file\n"
             "                             (default: /var/lib/maxscale)\n"
             "  -P, --piddir=PATH          path to PID file directory\n"
             "                             (default: /var/run/maxscale)\n"
@@ -980,6 +955,37 @@ static void usage(void)
             "  -V, --version-full         print full version info and exit\n"
             "  -?, --help                 show this help\n"
             , progname);
+}
+
+
+/**
+ * The entry point of each worker thread.
+ *
+ * @param arg The thread argument.
+ */
+void worker_thread_main(void* arg)
+{
+    if (qc_thread_init())
+    {
+        /** Init mysql thread context for use with a mysql handle and a parser */
+        if (mysql_thread_init() == 0)
+        {
+            poll_waitevents(arg);
+
+            /** Release mysql thread context */
+            mysql_thread_end();
+        }
+        else
+        {
+            MXS_ERROR("Could not perform thread initialization for MySQL. Exiting thread.");
+        }
+
+        qc_thread_end();
+    }
+    else
+    {
+        MXS_ERROR("Could not perform thread initialization for query classifier. Exiting thread.");
+    }
 }
 
 /**
@@ -1024,16 +1030,14 @@ int main(int argc, char **argv)
     int      n_services;
     int      eno = 0;   /*< local variable for errno */
     int      opt;
-    int      daemon_pipe[2];
+    int      daemon_pipe[2] = {-1, -1};
     bool     parent_process;
     int      child_status;
-    void**   threads = NULL;   /*< thread list */
+    THREAD*   threads = NULL;   /*< thread list */
     char     mysql_home[PATH_MAX+1];
-    char     datadir_arg[10+PATH_MAX+1];  /*< '--datadir='  + PATH_MAX */
-    char     language_arg[11+PATH_MAX+1]; /*< '--language=' + PATH_MAX */
     char*    cnf_file_path = NULL;        /*< conf file, to be freed */
     char*    cnf_file_arg = NULL;         /*< conf filename from cmd-line arg */
-    void*    log_flush_thr = NULL;
+    THREAD    log_flush_thr;
     char*    tmp_path;
     char*    tmp_var;
     int      option_index;
@@ -1574,6 +1578,14 @@ int main(int argc, char **argv)
         goto return_main;
     }
 
+    if (!utils_init())
+    {
+        char* logerr = "Failed to initialise utility library.";
+        print_log_n_stderr(true, true, logerr, logerr, eno);
+        rc = MAXSCALE_INTERNALERROR;
+        goto return_main;
+    }
+
     /** OpenSSL initialization */
     if (!HAVE_OPENSSL_THREADS)
     {
@@ -1707,6 +1719,14 @@ int main(int argc, char **argv)
         }
     }
 
+    if (daemon_mode)
+    {
+        if (!change_cwd())
+        {
+            rc = MAXSCALE_INTERNALERROR;
+            goto return_main;
+        }
+    }
 
     /*
      * Set a data directory for the mysqld library, we use
@@ -1717,19 +1737,6 @@ int main(int argc, char **argv)
 
     snprintf(datadir, PATH_MAX, "%s", get_datadir());
     datadir[PATH_MAX] = '\0';
-    if (mkdir(datadir, 0777) != 0){
-
-        if (errno != EEXIST){
-            char errbuf[STRERROR_BUFLEN];
-            fprintf(stderr,
-                    "Error: Cannot create data directory '%s': %d %s\n",
-                    datadir, errno, strerror_r(errno, errbuf, sizeof(errbuf)));
-            goto return_main;
-        }
-    }
-
-    snprintf(datadir, PATH_MAX, "%s/data%d", get_datadir(), getpid());
-
     if (mkdir(datadir, 0777) != 0){
 
         if (errno != EEXIST){
@@ -1762,25 +1769,31 @@ int main(int argc, char **argv)
     MXS_NOTICE("Module directory: %s", get_libdir());
     MXS_NOTICE("Service cache: %s", get_cachedir());
 
-    /*< Update the server options */
-    for (i = 0; server_options[i]; i++)
+    if (!config_load(cnf_file_path))
     {
-        if (!strcmp(server_options[i], "--datadir="))
-        {
-            snprintf(datadir_arg, 10+PATH_MAX+1, "--datadir=%s", datadir);
-            server_options[i] = datadir_arg;
-        }
-        else if (!strcmp(server_options[i], "--language="))
-        {
-            snprintf(language_arg,
-                     11+PATH_MAX+1,
-                     "--language=%s",
-                     get_langdir());
-            server_options[i] = language_arg;
-        }
+        char* fprerr =
+            "Failed to open, read or process the MaxScale configuration "
+            "file. Exiting. See the error log for details.";
+        print_log_n_stderr(false, !daemon_mode, fprerr, fprerr, 0);
+        MXS_ERROR("Failed to open, read or process the MaxScale configuration file %s. "
+                  "Exiting.",
+                  cnf_file_path);
+        rc = MAXSCALE_BADCONFIG;
+        goto return_main;
     }
 
-    if (mysql_library_init(num_elements, server_options, server_groups))
+    GATEWAY_CONF* cnf = config_get_global_options();
+    ss_dassert(cnf);
+
+    if (!qc_init(cnf->qc_name))
+    {
+        char* logerr = "Failed to initialise query classifier library.";
+        print_log_n_stderr(true, true, logerr, logerr, eno);
+        rc = MAXSCALE_INTERNALERROR;
+        goto return_main;
+    }
+
+    if (mysql_library_init(0, NULL, NULL))
     {
         if (!daemon_mode)
         {
@@ -1819,28 +1832,14 @@ int main(int argc, char **argv)
         }
         MXS_ERROR("mysql_library_init failed. It is a "
                   "mandatory component, required by router services and "
-                  "the MaxScale core. Error %d, %s, %s : %d. Exiting.",
+                  "the MaxScale core. Error %d, %s. Exiting.",
                   mysql_errno(NULL),
-                  mysql_error(NULL),
-                  __FILE__,
-                  __LINE__);
+                  mysql_error(NULL));
         rc = MAXSCALE_NOLIBRARY;
         goto return_main;
     }
-    libmysqld_started = TRUE;
+    libmysql_initialized = TRUE;
 
-    if (!config_load(cnf_file_path))
-    {
-        char* fprerr =
-            "Failed to open, read or process the MaxScale configuration "
-            "file. Exiting. See the error log for details.";
-        print_log_n_stderr(false, !daemon_mode, fprerr, fprerr, 0);
-        MXS_ERROR("Failed to open, read or process the MaxScale configuration file %s. "
-                  "Exiting.",
-                  cnf_file_path);
-        rc = MAXSCALE_BADCONFIG;
-        goto return_main;
-    }
     MXS_NOTICE("MariaDB Corporation MaxScale %s (C) MariaDB Corporation Ab 2013-2015", MAXSCALE_VERSION);
     MXS_NOTICE("MaxScale is running in process %i", getpid());
 
@@ -1860,6 +1859,9 @@ int main(int argc, char **argv)
         rc = MAXSCALE_ALREADYRUNNING;
         goto return_main;
     }
+
+    /** Initialize statistics */
+    ts_stats_init();
 
     /* Init MaxScale poll system */
     poll_init();
@@ -1884,9 +1886,14 @@ int main(int argc, char **argv)
      * Start periodic log flusher thread.
      */
     log_flush_timeout_ms = 1000;
-    log_flush_thr = thread_start(
-        log_flush_cb,
-        (void *)&log_flush_timeout_ms);
+
+    if (thread_start(&log_flush_thr, log_flush_cb, (void *) &log_flush_timeout_ms) == NULL)
+    {
+        char* logerr = "Failed to start log flushing thread.";
+        print_log_n_stderr(true, !daemon_mode, logerr, logerr, 0);
+        rc = MAXSCALE_INTERNALERROR;
+        goto return_main;
+    }
 
     /*
      * Start the housekeeper thread
@@ -1898,14 +1905,22 @@ int main(int argc, char **argv)
      * configured as the main thread will also poll.
      */
     n_threads = config_threadcount();
-    threads = (void **)calloc(n_threads, sizeof(void *));
+    threads = calloc(n_threads, sizeof(THREAD));
     /*<
      * Start server threads.
      */
     for (thread_id = 0; thread_id < n_threads - 1; thread_id++)
     {
-        threads[thread_id] = thread_start(poll_waitevents, (void *)(thread_id + 1));
+        if (thread_start(&threads[thread_id], worker_thread_main,
+                         (void *)(thread_id + 1)) == NULL)
+        {
+            char* logerr = "Failed to start worker thread.";
+            print_log_n_stderr(true, !daemon_mode, logerr, logerr, 0);
+            rc = MAXSCALE_INTERNALERROR;
+            goto return_main;
+        }
     }
+
     MXS_NOTICE("MaxScale started with %d server threads.", config_threadcount());
     /**
      * Successful start, notify the parent process that it can exit.
@@ -1939,6 +1954,9 @@ int main(int argc, char **argv)
     /** Release mysql thread context*/
     mysql_thread_end();
 
+    qc_end();
+
+    utils_end();
     datadir_cleanup();
     MXS_NOTICE("MaxScale shutdown completed.");
 
@@ -2433,7 +2451,7 @@ static int cnf_preparser(void* data, const char* section, const char* name, cons
     return 1;
 }
 
-static int set_user(char* user)
+static int set_user(const char* user)
 {
     errno = 0;
     struct passwd *pwname;
@@ -2498,3 +2516,36 @@ void write_child_exit_code(int fd, int code)
     close(fd);
 }
 
+/**
+ * Change the current working directory
+ *
+ * Change the current working directory to the log directory. If this is not
+ * possible, try to change location to the file system root. If this also fails,
+ * return with an error.
+ * @return True if changing the current working directory was successful.
+ */
+static bool change_cwd()
+{
+    bool rval = true;
+
+    if (chdir(get_logdir()) != 0)
+    {
+        char errbuf[STRERROR_BUFLEN];
+        MXS_ERROR("Failed to change working directory to '%s': %d, %s. "
+                  "Trying to change working directory to '/'.",
+                  get_logdir(), errno, strerror_r(errno, errbuf, sizeof (errbuf)));
+        if (chdir("/") != 0)
+        {
+            MXS_ERROR("Failed to change working directory to '/': %d, %s",
+                      errno, strerror_r(errno, errbuf, sizeof (errbuf)));
+            rval = false;
+        }
+        else
+        {
+            MXS_WARNING("Using '/' instead of '%s' as the current working directory.",
+                        get_logdir());
+        }
+    }
+
+    return rval;
+}

@@ -217,7 +217,7 @@ int		i,cflags = 0;
 		if(regcomp(&my_instance->nore,my_instance->nomatch,cflags))
 		{
 		    MXS_ERROR("lagfilter: Failed to compile regex '%s'.",
-                              my_instance->nomatch)));
+                              my_instance->nomatch);
 		}
 	    }
 	}
@@ -314,11 +314,6 @@ time_t now = time(NULL);
 	    if (queue->next != NULL)
 	    {
 		queue = gwbuf_make_contiguous(queue);
-	    }
-
-	    if(!query_is_parsed(queue))
-	    {
-		parse_query(queue);
 	    }
 
 	    if(query_classifier_get_operation(queue) & (QUERY_OP_DELETE|QUERY_OP_INSERT|QUERY_OP_UPDATE))

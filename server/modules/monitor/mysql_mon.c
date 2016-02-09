@@ -205,7 +205,11 @@ startMonitor(void *arg, void* opt)
         memset(handle->events, true, sizeof(handle->events));
     }
 
-    handle->tid = (THREAD) thread_start(monitorMain, monitor);
+    if (thread_start(&handle->thread, monitorMain, monitor) == NULL)
+    {
+        MXS_ERROR("Failed to start monitor thread for monitor '%s'.", monitor->name);
+    }
+
     return handle;
 }
 
@@ -221,7 +225,7 @@ stopMonitor(void *arg)
     MYSQL_MONITOR *handle = (MYSQL_MONITOR *) mon->handle;
 
     handle->shutdown = 1;
-    thread_wait((void *) handle->tid);
+    thread_wait(handle->thread);
 }
 
 /**
@@ -946,7 +950,7 @@ monitorMain(void *arg)
                 evtype = mon_get_event_type(ptr);
                 if (isMySQLEvent(evtype))
                 {
-                    MXS_INFO("Server changed state: %s[%s:%u]: %s",
+                    MXS_NOTICE("Server changed state: %s[%s:%u]: %s",
                              ptr->server->unique_name,
                              ptr->server->name, ptr->server->port,
                              mon_get_event_name(ptr));

@@ -88,7 +88,6 @@ static unsigned char required_packets[] =
 {
     MYSQL_COM_QUIT,
     MYSQL_COM_INITDB,
-    MYSQL_COM_FIELD_LIST,
     MYSQL_COM_CHANGE_USER,
     MYSQL_COM_STMT_PREPARE,
     MYSQL_COM_STMT_EXECUTE,
@@ -850,7 +849,7 @@ int count_replies(GWBUF* buffer)
 
 int lenenc_length(uint8_t* ptr)
 {
-    char val = *ptr;
+    uint8_t val = *ptr;
     if (val < 251)
     {
         return 1;
@@ -1318,6 +1317,16 @@ int route_single_query(TEE_INSTANCE* my_instance, TEE_SESSION* my_session, GWBUF
         my_session->active = 0;
         return rval;
     }
+
+    if (clone == NULL)
+    {
+        /** We won't be expecting any response from the child branch */
+        my_session->waiting[CHILD] = false;
+        my_session->multipacket[CHILD] = false;
+        my_session->eof[CHILD] = 2;
+        my_session->n_rejected++;
+    }
+
     rval = my_session->down.routeQuery(my_session->down.instance,
                                        my_session->down.session,
                                        buffer);
@@ -1338,16 +1347,7 @@ int route_single_query(TEE_INSTANCE* my_instance, TEE_SESSION* my_session, GWBUF
             gwbuf_free(clone);
         }
     }
-    else
-    {
-        if (my_session->active)
-        {
-            MXS_INFO("Closed tee filter session: Child session is NULL.");
-            my_session->active = 0;
-            rval = 0;
-        }
-        my_session->n_rejected++;
-    }
+
     return rval;
 }
 

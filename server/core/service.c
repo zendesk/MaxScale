@@ -98,7 +98,7 @@ static int find_type(typelib_t* tl, const char* needle, int maxlen);
 
 static void service_add_qualified_param(SERVICE*          svc,
                                         CONFIG_PARAMETER* param);
-void service_interal_restart(void *data);
+static void service_internal_restart(void *data);
 
 /**
  * Allocate a new service for the gateway to support
@@ -142,6 +142,15 @@ service_alloc(const char *servname, const char *router)
     service->resources = NULL;
     service->localhost_match_wildcard_host = SERVICE_PARAM_UNINIT;
     service->retry_start = true;
+    service->conn_idle_timeout = SERVICE_NO_SESSION_TIMEOUT;
+    service->weightby = NULL;
+    service->credentials.authdata = NULL;
+    service->credentials.name = NULL;
+    service->version_string = NULL;
+    service->ctx = NULL;
+    service->svc_config_param = NULL;
+    service->users = NULL;
+    service->routerOptions = NULL;
     service->ssl_mode = SSL_DISABLED;
     service->ssl_init_done = false;
     service->ssl_ca_cert = NULL;
@@ -423,11 +432,6 @@ int serviceStartAllPorts(SERVICE* service)
     {
         service->state = SERVICE_STATE_STARTED;
         service->stats.started = time(0);
-        /** Add the task that monitors session timeouts */
-        if (service->conn_timeout > 0)
-        {
-            hktask_add("connection_timeout", session_close_timeouts, NULL, 5);
-        }
     }
     else if (service->retry_start)
     {
@@ -437,7 +441,7 @@ int serviceStartAllPorts(SERVICE* service)
         int retry_after = MIN(service->stats.n_failed_starts * 10, SERVICE_MAX_RETRY_INTERVAL);
         snprintf(taskname, sizeof (taskname), "%s_start_retry_%d",
                  service->name, service->stats.n_failed_starts);
-        hktask_oneshot(taskname, service_interal_restart,
+        hktask_oneshot(taskname, service_internal_restart,
                        (void*) service, retry_after);
         MXS_NOTICE("Failed to start service %s, retrying in %d seconds.",
                    service->name, retry_after);
@@ -654,14 +658,20 @@ service_free(SERVICE *service)
 
     free(service->name);
     free(service->routerModule);
-    if (service->credentials.name)
-    {
-        free(service->credentials.name);
-    }
-    if (service->credentials.authdata)
-    {
-        free(service->credentials.authdata);
-    }
+    free(service->weightby);
+    free(service->version_string);
+    free(service->ssl_key);
+    free(service->ssl_cert);
+    free(service->ssl_ca_cert);
+    free(service->credentials.name);
+    free(service->credentials.authdata);
+
+    SSL_CTX_free(service->ctx);
+    free_config_parameter(service->svc_config_param);
+    users_free(service->users);
+    hashtable_free(service->resources);
+    serviceClearRouterOptions(service);
+
     free(service);
     return 1;
 }
@@ -1103,7 +1113,13 @@ serviceSetTimeout(SERVICE *service, int val)
     {
         return 0;
     }
-    service->conn_timeout = val;
+
+    /** Enable the session timeout checks if and only if at least one service is
+     * configured with a idle timeout. */
+    if ((service->conn_idle_timeout = val))
+    {
+       enable_session_timeouts();
+    }
 
     return 1;
 }
@@ -2227,7 +2243,7 @@ int serviceInitSSL(SERVICE* service)
  * Function called by the housekeeper thread to retry starting of a service
  * @param data Service to restart
  */
-void service_interal_restart(void *data)
+static void service_internal_restart(void *data)
 {
     SERVICE* service = (SERVICE*)data;
     serviceStartAllPorts(service);

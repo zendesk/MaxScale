@@ -30,14 +30,16 @@
  *@code{.unparsed}
  *		rules=<path to file>			Location of the rule file
  *@endcode
- * Rules are defined in a separate rule file that lists all the rules and the users to whom the rules are applied.
+ * Rules are defined in a separate rule file that lists all the rules and the users to whom the
+ * rules are applied.
  * Rules follow a simple syntax that denies the queries that meet the requirements of the rules.
  * For example, to define a rule denying users from accessing the column 'salary' between
  * the times 15:00 and 17:00, the following rule is to be configured into the configuration file:
  *@code{.unparsed}
  *		rule block_salary deny columns salary at_times 15:00:00-17:00:00
  *@endcode
- * The users are matched by username and network address. Wildcard values can be provided by using the '%' character.
+ * The users are matched by username and network address. Wildcard values can be provided by
+ * using the '%' character.
  * For example, to apply this rule to users John, connecting from any address
  * that starts with the octets 198.168.%, and Jane, connecting from the address 192.168.0.1:
  *@code{.unparsed}
@@ -51,7 +53,9 @@
  * @subsection secRule Rule syntax
  * This is the syntax used when defining rules.
  *@code{.unparsed}
- * rule NAME deny [wildcard | columns VALUE ... | regex REGEX | limit_queries COUNT TIMEPERIOD HOLDOFF | no_where_clause] [at_times VALUE...] [on_queries [select|update|insert|delete]]
+ * rule NAME deny [wildcard | columns VALUE ... | regex REGEX |
+ *           limit_queries COUNT TIMEPERIOD HOLDOFF | no_where_clause] [at_times VALUE...]
+ *           [on_queries [select|update|insert|delete]]
  *@endcode
  * @subsection secUser User syntax
  * This is the syntax used when linking users to rules. It takes one or more
@@ -76,25 +80,29 @@
 #include <time.h>
 #include <assert.h>
 #include <regex.h>
+#include <maxscale_pcre2.h>
+#include <dbfwfilter.h>
+#include <ruleparser.yy.h>
+#include <lex.yy.h>
 
 MODULE_INFO info =
 {
-    MODULE_API_FILTER,
-    MODULE_ALPHA_RELEASE,
-    FILTER_VERSION,
-    "Firewall Filter"
+                    MODULE_API_FILTER,
+                    MODULE_ALPHA_RELEASE,
+                    FILTER_VERSION,
+                    "Firewall Filter"
 };
 
 static char *version_str = "V1.0.0";
 
 static char* required_rules[] =
 {
-    "wildcard",
-    "columns",
-    "regex",
-    "limit_queries",
-    "no_where_clause",
-    NULL
+                                 "wildcard",
+                                 "columns",
+                                 "regex",
+                                 "limit_queries",
+                                 "no_where_clause",
+                                 NULL
 };
 /*
  * The filter entry points
@@ -109,15 +117,15 @@ static void diagnostic(FILTER *instance, void *fsession, DCB *dcb);
 
 static FILTER_OBJECT MyObject =
 {
-    createInstance,
-    newSession,
-    closeSession,
-    freeSession,
-    setDownstream,
-    NULL,
-    routeQuery,
-    NULL,
-    diagnostic,
+                                 createInstance,
+                                 newSession,
+                                 closeSession,
+                                 freeSession,
+                                 setDownstream,
+                                 NULL,
+                                 routeQuery,
+                                 NULL,
+                                 diagnostic,
 };
 
 /**
@@ -136,13 +144,13 @@ typedef enum
 
 const char* rule_names[] =
 {
-    "UNDEFINED",
-    "COLUMN",
-    "THROTTLE",
-    "PERMISSION",
-    "WILDCARD",
-    "REGEX",
-    "CLAUSE"
+                            "UNDEFINED",
+                            "COLUMN",
+                            "THROTTLE",
+                            "PERMISSION",
+                            "WILDCARD",
+                            "REGEX",
+                            "CLAUSE"
 };
 
 /**
@@ -171,8 +179,8 @@ typedef struct queryspeed_t
 {
     time_t first_query; /*< Time when the first query occurred */
     time_t triggered; /*< Time when the limit was exceeded */
-    double period; /*< Measurement interval in seconds */
-    double cooldown; /*< Time the user is denied access for */
+    int period; /*< Measurement interval in seconds */
+    int cooldown; /*< Time the user is denied access for */
     int count; /*< Number of queries done */
     int limit; /*< Maximum number of queries */
     long id; /*< Unique id of the rule */
@@ -191,10 +199,11 @@ typedef struct rule_t
     void* data; /*< Actual implementation of the rule */
     char* name; /*< Name of the rule */
     ruletype_t type; /*< Type of the rule */
-    skygw_query_op_t on_queries; /*< Types of queries to inspect */
+    qc_query_op_t on_queries; /*< Types of queries to inspect */
     bool allow; /*< Allow or deny the query if this rule matches */
     int times_matched; /*< Number of times this rule has been matched */
     TIMERANGE* active; /*< List of times when this rule is active */
+    struct rule_t *next;
 } RULE;
 
 /**
@@ -205,6 +214,14 @@ typedef struct rulelist_t
     RULE* rule; /*< The rule structure */
     struct rulelist_t* next; /*< Next node in the list */
 } RULELIST;
+
+typedef struct user_template
+{
+    char *name;
+    enum match_type type; /** Matching type */
+    STRLINK *rulenames; /** names of the rules */
+    struct user_template *next;
+} user_template_t;
 
 typedef struct user_t
 {
@@ -229,14 +246,35 @@ typedef struct iprange_t
 } IPRANGE;
 
 /**
+ * Possible actions to take when the query matches a rule
+ */
+enum fw_actions
+{
+    FW_ACTION_ALLOW,
+    FW_ACTION_BLOCK,
+    FW_ACTION_IGNORE
+};
+
+/**
+ * Logging options for matched queries
+ */
+#define FW_LOG_NONE         0x00
+#define FW_LOG_MATCH        0x01
+#define FW_LOG_NO_MATCH     0x02
+
+/** Maximum length of the match/nomatch messages */
+#define FW_MAX_SQL_LEN      400
+
+/**
  * The Firewall filter instance.
  */
 typedef struct
 {
     HASHTABLE* htable; /*< User hashtable */
-    RULELIST* rules; /*< List of all the rules */
+    RULE* rules; /*< List of all the rules */
     STRLINK* userstrings; /*< Temporary list of raw strings of users */
-    bool def_op; /*< Default operation mode, defaults to deny */
+    enum fw_actions action; /*< Default operation mode, defaults to deny */
+    int log_match; /*< Log matching and/or non-matching queries */
     SPINLOCK* lock; /*< Instance spinlock */
     int idgen; /*< UID generator */
     int regflags;
@@ -253,50 +291,103 @@ typedef struct
     UPSTREAM up; /*< Next object in the upstream chain */
 } FW_SESSION;
 
-static int hashkeyfun(void* key);
-static int hashcmpfun(void *, void *);
 bool parse_at_times(const char** tok, char** saveptr, RULE* ruledef);
 bool parse_limit_queries(FW_INSTANCE* instance, RULE* ruledef, const char* rule, char** saveptr);
+
 /**
- * Hashtable key hashing function. Uses a simple string hashing algorithm.
- * @param key Key to hash
- * @return The hash value of the key
+ * Push a string onto a string stack
+ * @param head Head of the stack
+ * @param value value to add
+ * @return New top of the stack or NULL if memory allocation fails
  */
-static int hashkeyfun(
-                      void* key)
+static STRLINK* strlink_push(STRLINK* head, const char* value)
 {
-    if (key == NULL)
+    STRLINK* link = malloc(sizeof(STRLINK));
+
+    if (link && (link->value = strdup(value)))
     {
-        return 0;
+        link->next = head;
     }
-    unsigned int hash = 0, c = 0;
-    char* ptr = (char*) key;
-    while ((c = *ptr++))
+    else
     {
-        hash = c + (hash << 6) + (hash << 16) - hash;
+        free(link);
+        link = NULL;
+        MXS_ERROR("dbfwfilter: Memory allocation failed.");
     }
-    return hash;
+    return link;
 }
 
 /**
- * Hashtable entry comparison function. Does a string matching operation on the
- * two keys. This function assumes the values are pointers to null-terminated
- * character arrays.
- * @param v1 The first key
- * @param v2 The second key
- * @return Zero if the values are equal. Non-zero in other cases.
+ * Pop a string off of a string stack
+ * @param head Head of the stack
+ * @return New head of the stack or NULL if stack is empty
  */
-static int hashcmpfun(
-                      void* v1,
-                      void* v2)
+static STRLINK* strlink_pop(STRLINK* head)
 {
-    char* i1 = (char*) v1;
-    char* i2 = (char*) v2;
-
-    return strcmp(i1, i2);
+    if (head)
+    {
+        STRLINK* next = head->next;
+        free(head->value);
+        free(head);
+        return next;
+    }
+    return NULL;
 }
 
-void* rlistdup(void* fval)
+/**
+ * Free a string stack
+ * @param head Head of the stack
+ */
+static void strlink_free(STRLINK* head)
+{
+    while (head)
+    {
+        STRLINK* tmp = head;
+        head = head->next;
+        free(tmp->value);
+        free(tmp);
+    }
+}
+
+/**
+ * Clone a string stack. This function reverses the order of the stack.
+ * @param head Head of the stack to be cloned
+ * @return Clone of the head or NULL if memory allocation failed
+ */
+static STRLINK* strlink_reverse_clone(STRLINK* head)
+{
+    STRLINK* clone = NULL;
+    while (head)
+    {
+        STRLINK *tmp = strlink_push(clone, head->value);
+        if (tmp)
+        {
+            clone = tmp;
+        }
+        else
+        {
+            strlink_free(clone);
+            clone = NULL;
+            break;
+        }
+        head = head->next;
+    }
+    return clone;
+}
+
+static RULELIST* rulelist_push(RULELIST *head, RULE *rule)
+{
+    RULELIST *rval = malloc(sizeof(RULELIST));
+
+    if (rval)
+    {
+        rval->rule = rule;
+        rval->next = head;
+    }
+    return rval;
+}
+
+static void* rulelist_clone(void* fval)
 {
 
     RULELIST *rule = NULL,
@@ -313,10 +404,9 @@ void* rlistdup(void* fval)
     }
 
     return(void*) rule;
-
 }
 
-static void* hrulefree(void* fval)
+static void* rulelist_free(void* fval)
 {
     RULELIST *ptr = (RULELIST*) fval;
     while (ptr)
@@ -332,9 +422,9 @@ static void* huserfree(void* fval)
 {
     USER* value = (USER*) fval;
 
-    hrulefree(value->rules_and);
-    hrulefree(value->rules_or);
-    hrulefree(value->rules_strict_and);
+    rulelist_free(value->rules_and);
+    rulelist_free(value->rules_or);
+    rulelist_free(value->rules_strict_and);
     free(value->qs_limit);
     free(value->name);
     free(value);
@@ -342,49 +432,11 @@ static void* huserfree(void* fval)
 }
 
 /**
- * Strips the single or double quotes from a string.
- * This function modifies the passed string.
- * @param str String to parse
- * @return Pointer to the modified string
- */
-char* strip_tags(char* str)
-{
-
-    assert(str != NULL);
-
-    char *ptr = str, *re_start = NULL;
-    bool found = false;
-    while (*ptr != '\0')
-    {
-
-        if (*ptr == '"' ||
-            *ptr == '\'')
-        {
-            if (found)
-            {
-                *ptr = '\0';
-                memmove(str, re_start, ptr - re_start);
-                break;
-            }
-            else
-            {
-                *ptr = ' ';
-                re_start = ptr + 1;
-                found = true;
-            }
-        }
-        ptr++;
-
-    }
-
-    return str;
-}
-
-/**
  * Parses a string that contains an IP address and converts the last octet to '%'.
  * This modifies the string passed as the parameter.
  * @param str String to parse
- * @return Pointer to modified string or NULL if an error occurred or the string can't be made any less specific
+ * @return Pointer to modified string or NULL if an error occurred or the string can't
+ *         be made any less specific
  */
 char* next_ip_class(char* str)
 {
@@ -427,9 +479,9 @@ char* next_ip_class(char* str)
 }
 
 /**
- * Parses the strign for the types of queries this rule should be applied to.
+ * Parses the string for the types of queries this rule should be applied to.
  * @param str String to parse
- * @param rule Poiter to a rule
+ * @param rule Pointer to a rule
  * @return True if the string was parses successfully, false if an error occurred
  */
 bool parse_querytypes(const char* str, RULE* rule)
@@ -573,7 +625,8 @@ static TIMERANGE* parse_time(const char* str)
 /**
  * Splits the reversed timerange into two.
  *@param tr A reversed timerange
- *@return If the timerange is reversed, returns a pointer to the new TIMERANGE otherwise returns a NULL pointer
+ *@return If the timerange is reversed, returns a pointer to the new TIMERANGE
+ *        otherwise returns a NULL pointer
  */
 TIMERANGE* split_reverse_time(TIMERANGE* tr)
 {
@@ -631,13 +684,13 @@ FILTER_OBJECT * GetModuleObject()
  */
 RULE* find_rule(char* tok, FW_INSTANCE* instance)
 {
-    RULELIST* rlist = instance->rules;
+    RULE* rlist = instance->rules;
 
     while (rlist)
     {
-        if (strcmp(rlist->rule->name, tok) == 0)
+        if (strcmp(rlist->name, tok) == 0)
         {
-            return rlist->rule;
+            return rlist;
         }
         rlist = rlist->next;
     }
@@ -653,16 +706,62 @@ RULE* find_rule(char* tok, FW_INSTANCE* instance)
 void add_users(char* rule, FW_INSTANCE* instance)
 {
     assert(rule != NULL && instance != NULL);
+    instance->userstrings = strlink_push(instance->userstrings, rule);
+}
 
-    STRLINK* link = calloc(1, sizeof(STRLINK));
-    if (link == NULL)
+/**
+ * Apply a rule set to a user
+ *
+ * @param instance Filter instance
+ * @param user User name
+ * @param rulelist List of rules to apply
+ * @param type Matching type, one of MATCH_ANY, MATCH_ALL or MATCH_STRICT_ALL
+ * @return True of the rules were successfully applied. False if memory allocation
+ * fails
+ */
+static bool apply_rule_to_user(FW_INSTANCE *instance, char *username,
+                               RULELIST *rulelist, enum match_type type)
+{
+    USER* user;
+    ss_dassert(type == MATCH_ANY || type == MATCH_STRICT_ALL || type == MATCH_ALL);
+    if ((user = (USER*) hashtable_fetch(instance->htable, username)) == NULL)
     {
-        MXS_ERROR("Memory allocation failed");
-        return;
+        /**New user*/
+        if ((user = (USER*) calloc(1, sizeof(USER))) == NULL)
+        {
+            MXS_ERROR("dbfwfilter: failed to allocate memory when parsing rules.");
+            return false;
+        }
+        spinlock_init(&user->lock);
     }
-    link->next = instance->userstrings;
-    link->value = strdup(rule);
-    instance->userstrings = link;
+
+    user->name = (char*) strdup(username);
+    user->qs_limit = NULL;
+    RULELIST *tl = (RULELIST*) rulelist_clone(rulelist);
+    RULELIST *tail = tl;
+
+    while (tail && tail->next)
+    {
+        tail = tail->next;
+    }
+
+    switch (type)
+    {
+        case MATCH_ANY:
+            tail->next = user->rules_or;
+            user->rules_or = tl;
+            break;
+        case MATCH_STRICT_ALL:
+            tail->next = user->rules_and;
+            user->rules_strict_and = tl;
+            break;
+        case MATCH_ALL:
+            tail->next = user->rules_and;
+            user->rules_and = tl;
+            break;
+    }
+    hashtable_add(instance->htable, (void *) username, (void *) user);
+    return true;
 }
 
 /**
@@ -673,16 +772,12 @@ void add_users(char* rule, FW_INSTANCE* instance)
  */
 bool link_rules(char* orig, FW_INSTANCE* instance)
 {
-
-    /**Apply rules to users*/
-
-    bool match_any = true;
     bool rval = true;
     char *rule = strdup(orig);
     char *tok, *ruleptr, *userptr, *modeptr;
     char *saveptr = NULL;
+    enum match_type type;
     RULELIST* rulelist = NULL;
-    bool strict = false;
     userptr = strstr(rule, "users ");
     modeptr = strstr(rule, " match ");
     ruleptr = strstr(rule, " rules ");
@@ -690,7 +785,8 @@ bool link_rules(char* orig, FW_INSTANCE* instance)
     if ((userptr == NULL || ruleptr == NULL || modeptr == NULL) ||
         (userptr > modeptr || userptr > ruleptr || modeptr > ruleptr))
     {
-        MXS_ERROR("dbfwfilter: Rule syntax incorrect, right keywords not found in the correct order: %s", orig);
+        MXS_ERROR("dbfwfilter: Rule syntax incorrect, "
+                  "right keywords not found in the correct order: %s", orig);
         rval = false;
         goto parse_err;
     }
@@ -702,7 +798,8 @@ bool link_rules(char* orig, FW_INSTANCE* instance)
 
     if (tok == NULL)
     {
-        MXS_ERROR("dbfwfilter: Rule syntax incorrect, right keywords not found in the correct order: %s", orig);
+        MXS_ERROR("dbfwfilter: Rule syntax incorrect, "
+                  "right keywords not found in the correct order: %s", orig);
         rval = false;
         goto parse_err;
     }
@@ -718,20 +815,20 @@ bool link_rules(char* orig, FW_INSTANCE* instance)
         }
         if (strcmp(tok, "any") == 0)
         {
-            match_any = true;
+            type = MATCH_ANY;
         }
         else if (strcmp(tok, "all") == 0)
         {
-            match_any = false;
+            type = MATCH_ALL;
         }
         else if (strcmp(tok, "strict_all") == 0)
         {
-            match_any = false;
-            strict = true;
+            type = MATCH_STRICT_ALL;
         }
         else
         {
-            MXS_ERROR("dbfwfilter: Rule syntax incorrect, 'match' was not followed by correct keyword: %s", orig);
+            MXS_ERROR("dbfwfilter: Rule syntax incorrect, "
+                      "'match' was not followed by correct keyword: %s", orig);
             rval = false;
             goto parse_err;
         }
@@ -815,52 +912,11 @@ bool link_rules(char* orig, FW_INSTANCE* instance)
 
     while (userptr)
     {
-        USER* user;
-        RULELIST *tl = NULL, *tail = NULL;
-
-        if ((user = (USER*) hashtable_fetch(instance->htable, userptr)) == NULL)
+        if (!apply_rule_to_user(instance, userptr, rulelist, type))
         {
-
-            /**New user*/
-            user = (USER*) calloc(1, sizeof(USER));
-
-            if (user == NULL)
-            {
-                MXS_ERROR("dbfwfilter: failed to allocate memory when parsing rules.");
-                rval = false;
-                goto parse_err;
-            }
-
-            spinlock_init(&user->lock);
+            rval = false;
+            break;
         }
-
-        user->name = (char*) strdup(userptr);
-        user->qs_limit = NULL;
-        tl = (RULELIST*) rlistdup(rulelist);
-        tail = tl;
-        while (tail && tail->next)
-        {
-            tail = tail->next;
-        }
-
-
-        if (match_any)
-        {
-            tail->next = user->rules_or;
-            user->rules_or = tl;
-        }
-        else if (strict)
-        {
-            tail->next = user->rules_and;
-            user->rules_strict_and = tl;
-        }
-        else
-        {
-            tail->next = user->rules_and;
-            user->rules_and = tl;
-        }
-
-        hashtable_add(instance->htable, (void *) userptr, (void *) user);
         userptr = strtok_r(NULL, " ", &saveptr);
     }
 parse_err:
@@ -894,6 +950,67 @@ void tr_free(TIMERANGE* tr)
     }
 }
 
+/**
+ * Retrieve the quoted regex string from a rule definition and
+ * return the unquoted version of it.
+ * @param saved Pointer to the last stored position in the string
+ * @return The unquoted string or NULL if the string was malformed
+ */
+char* get_regex_string(char** saved)
+{
+    char *start = NULL, *ptr = *saved;
+    bool escaped = false, quoted = false;
+    char delimiter;
+    while (*ptr != '\0')
+    {
+        if (!escaped)
+        {
+            if (!isspace(*ptr))
+            {
+                switch (*ptr)
+                {
+                    case '\'':
+                    case '"':
+                        if (quoted)
+                        {
+                            if (*ptr == delimiter)
+                            {
+                                *ptr = '\0';
+                                *saved = ptr + 1;
+                                return start;
+                            }
+                        }
+                        else
+                        {
+                            delimiter = *ptr;
+                            start = ptr + 1;
+                            quoted = true;
+                        }
+                        break;
+                    case '\\':
+                        escaped = true;
+                        break;
+                    default:
+                        break;
+                }
+            }
+        }
+        else
+        {
+            escaped = false;
+        }
+        ptr++;
+    }
+
+    if (quoted)
+    {
+        MXS_ERROR("Missing ending quote, found '%c' but no matching unescaped"
+                  " one was found.", delimiter);
+    }
+
+    return NULL;
+}
+
 bool parse_rule_definition(FW_INSTANCE* instance, RULE* ruledef, char* rule, char** saveptr)
 {
     bool rval = true;
@@ -902,8 +1019,7 @@ bool parse_rule_definition(FW_INSTANCE* instance, RULE* ruledef, char* rule, cha
     if (tok == NULL)
     {
         MXS_ERROR("dbfwfilter: Rule parsing failed, no allow or deny: %s", rule);
-        rval = false;
-        goto retblock;
+        return false;
     }
 
     bool deny, allow;
@@ -917,8 +1033,7 @@ bool parse_rule_definition(FW_INSTANCE* instance, RULE* ruledef, char* rule, cha
         ruledef->type = RT_PERMISSION;
         tok = strtok_r(NULL, " ,", saveptr);
 
-
-        while (tok)
+        while (tok && rval)
         {
             for (int i = 0; required_rules[i] != NULL; i++)
             {
@@ -928,13 +1043,17 @@ bool parse_rule_definition(FW_INSTANCE* instance, RULE* ruledef, char* rule, cha
                     {
                         MXS_ERROR("dbfwfilter: Rule parsing failed, Multiple non-optional rules: %s", rule);
                         rval = false;
-                        goto retblock;
                     }
                     else
                     {
                         req_defined = true;
                     }
                 }
+            }
+
+            if (!rval)
+            {
+                break;
             }
 
             if (strcmp(tok, "wildcard") == 0)
@@ -949,10 +1068,7 @@ bool parse_rule_definition(FW_INSTANCE* instance, RULE* ruledef, char* rule, cha
                 while (tok && strcmp(tok, "at_times") != 0 &&
                        strcmp(tok, "on_queries") != 0)
                 {
-                    current = malloc(sizeof(STRLINK));
-                    current->value = strdup(tok);
-                    current->next = tail;
-                    tail = current;
+                    tail = strlink_push(tail, tok);
                     tok = strtok_r(NULL, " ,", saveptr);
                 }
 
@@ -964,124 +1080,60 @@ bool parse_rule_definition(FW_INSTANCE* instance, RULE* ruledef, char* rule, cha
             {
                 if (at_def)
                 {
-                    MXS_ERROR("dbfwfilter: Rule parsing failed, multiple 'at_times' tokens: %s", rule);
+                    MXS_ERROR("dbfwfilter: Rule parsing failed, multiple "
+                              "'at_times' tokens: %s", rule);
                     rval = false;
-                    goto retblock;
-                }
-
-                at_def = true;
-                tok = strtok_r(NULL, " ,", saveptr);
-                TIMERANGE *tr = NULL;
-
-                if (!parse_at_times(&tok, saveptr, ruledef))
-                {
-                    rval = false;
-                    break;
-                }
-
-                if (tok && strcmp(tok, "on_queries") == 0)
-                {
-                    continue;
-                }
-
-            }
-            else if (strcmp(tok, "regex") == 0)
-            {
-                bool escaped = false;
-                regex_t *re;
-                char* start, *str;
-                tok = strtok_r(NULL, " ", saveptr);
-                char delim = '\'';
-                int n_char = 0;
-
-                if (tok == NULL)
-                {
-                    MXS_ERROR("dbfwfilter: Rule parsing failed, No regex string.");
-                    rval = false;
-                    goto retblock;
-                }
-
-                if (*tok != '\'' && *tok != '\"')
-                {
-                    MXS_ERROR("dbfwfilter: Rule parsing failed, regex string not quoted.");
-                    rval = false;
-                    goto retblock;
-                }
-
-                while (*tok == '\'' || *tok == '"')
-                {
-                    delim = *tok;
-                    tok++;
-                }
-
-                start = (char*)tok;
-
-                while (isspace(*tok) || *tok == delim)
-                {
-                    tok++;
-                }
-
-                while (n_char < 2048)
-                {
-
-                    /** Hard-coded regex length cap */
-
-                    if ((*tok == delim) && !escaped)
-                    {
-                        break;
-                    }
-                    escaped = (*tok == '\\');
-                    tok++;
-                    n_char++;
-                }
-
-                if (n_char >= 2048)
-                {
-                    MXS_ERROR("dbfwfilter: Failed to parse rule, regular expression length is over 2048 characters.");
-                    rval = false;
-                    goto retblock;
-                }
-
-                str = calloc(((tok - start) + 1), sizeof(char));
-                if (str == NULL)
-                {
-                    MXS_ERROR("Fatal Error: malloc returned NULL.");
-                    rval = false;
-                    goto retblock;
-                }
-                re = (regex_t*) malloc(sizeof(regex_t));
-
-                if (re == NULL)
-                {
-                    MXS_ERROR("Fatal Error: malloc returned NULL.");
-                    rval = false;
-                    free(str);
-                    goto retblock;
-                }
-
-                memcpy(str, start, (tok - start));
-
-                if (regcomp(re, str, REG_NOSUB | instance->regflags))
-                {
-                    MXS_ERROR("dbfwfilter: Invalid regular expression '%s'.", str);
-                    rval = false;
-                    free(re);
-                    goto retblock;
                 }
                 else
                 {
-                    ruledef->type = RT_REGEX;
-                    ruledef->data = (void*) re;
-                }
-                free(str);
+                    at_def = true;
+                    tok = strtok_r(NULL, " ,", saveptr);
+                    TIMERANGE *tr = NULL;
 
+                    if (!parse_at_times(&tok, saveptr, ruledef))
+                    {
+                        rval = false;
+                    }
+                    else if (tok && strcmp(tok, "on_queries") == 0)
+                    {
+                        continue;
+                    }
+                }
+            }
+            else if (strcmp(tok, "regex") == 0)
+            {
+                pcre2_code *re;
+                int err;
+                size_t offset;
+                PCRE2_SPTR start = (PCRE2_SPTR)get_regex_string(saveptr);
+                if (start)
+                {
+                    if ((re = pcre2_compile(start, PCRE2_ZERO_TERMINATED,
+                                            0, &err, &offset, NULL)))
+                    {
+                        ruledef->type = RT_REGEX;
+                        ruledef->data = (void*) re;
+                    }
+                    else
+                    {
+                        PCRE2_UCHAR errbuf[STRERROR_BUFLEN];
+                        pcre2_get_error_message(err, errbuf, sizeof (errbuf));
+                        MXS_ERROR("dbfwfilter: Invalid regular expression '%s': %s",
+                                  start, errbuf);
+                        rval = false;
+                    }
+                }
+                else
+                {
+                    MXS_ERROR("Malformed regex string in rule: %s", rule);
+                    rval = false;
+                }
             }
             else if (strcmp(tok, "limit_queries") == 0)
             {
                 if (!parse_limit_queries(instance, ruledef, rule, saveptr))
                 {
-                   rval = false;
-                   break;
+                    rval = false;
                 }
             }
             else if (strcmp(tok, "no_where_clause") == 0)
@@ -1093,41 +1145,523 @@ bool parse_rule_definition(FW_INSTANCE* instance, RULE* ruledef, char* rule, cha
             {
                 if (oq_def)
                 {
-                    MXS_ERROR("dbfwfilter: Rule parsing failed, multiple 'on_queries' tokens: %s", rule);
+                    MXS_ERROR("dbfwfilter: Rule parsing failed, multiple "
+                              "'on_queries' tokens: %s", rule);
                     rval = false;
-                    goto retblock;
                 }
-                oq_def = true;
-                tok = strtok_r(NULL, " ", saveptr);
-
-                if (tok == NULL)
+                else
                 {
-                    MXS_ERROR("dbfwfilter: Missing parameter for 'on_queries'.");
-                    rval = false;
-                    goto retblock;
-                }
+                    oq_def = true;
+                    tok = strtok_r(NULL, " ", saveptr);
 
-                if (!parse_querytypes(tok, ruledef))
-                {
-                    MXS_ERROR("dbfwfilter: Invalid query type requirements: %s.", tok);
-                    rval = false;
-                    goto retblock;
+                    if (tok == NULL)
+                    {
+                        MXS_ERROR("dbfwfilter: Missing parameter for 'on_queries'.");
+                        rval = false;
+                    }
+                    else if (!parse_querytypes(tok, ruledef))
+                    {
+                        MXS_ERROR("dbfwfilter: Invalid query type requirements: %s.", tok);
+                        rval = false;
+                    }
                 }
             }
             else
             {
                 MXS_ERROR("dbfwfilter: Unknown rule type: %s", tok);
                 rval = false;
-                goto retblock;
             }
             tok = strtok_r(NULL, " ,", saveptr);
         }
-
-        goto retblock;
     }
-    retblock:
 
     return rval;
+}
+
+/**
+ * Structure used to hold rules and users that are being parsed
+ */
+struct parser_stack
+{
+    RULE* rule;
+    STRLINK* user;
+    STRLINK* active_rules;
+    enum match_type active_mode;
+    user_template_t* templates;
+};
+
+/**
+ * Report parsing errors
+ * @param scanner Currently active scanner
+ * @param error Error message
+ */
+void dbfw_yyerror(void* scanner, const char* error)
+{
+    MXS_ERROR("dbfwfilter: Error on line %d, %s: %s\n", dbfw_yyget_lineno(scanner),
+              error, dbfw_yyget_text(scanner));
+}
+
+/**
+ * Create a new rule
+ *
+ * The rule is created with the default type which will always match. The rule
+ * is later specialized by the definition of the actual rule.
+ * @param scanner Current scanner
+ * @param name Name of the rule
+ */
+bool create_rule(void* scanner, const char* name)
+{
+    bool rval = true;
+    RULE *ruledef = malloc(sizeof(RULE));
+
+    if (ruledef && (ruledef->name = strdup(name)))
+    {
+        ruledef->type = RT_UNDEFINED;
+        ruledef->on_queries = QUERY_OP_UNDEFINED;
+        struct parser_stack* rstack = dbfw_yyget_extra((yyscan_t) scanner);
+        ss_dassert(rstack);
+        ruledef->next = rstack->rule;
+        ruledef->active = NULL;
+        ruledef->times_matched = 0;
+        ruledef->data = NULL;
+        rstack->rule = ruledef;
+    }
+    else
+    {
+        MXS_ERROR("Memory allocation failed when creating rule '%s'.", name);
+        free(ruledef);
+        rval = false;
+    }
+
+    return rval;
+}
+
+/**
+ * Free a list of rules
+ * @param rule Rules to free
+ */
+static void free_rules(RULE* rule)
+{
+    while (rule)
+    {
+        RULE *tmp = rule->next;
+        while (rule->active)
+        {
+            TIMERANGE *tr = rule->active;
+            rule->active = rule->active->next;
+            free(tr);
+        }
+
+        switch (rule->type)
+        {
+            case RT_COLUMN:
+                strlink_free((STRLINK*) rule->data);
+                break;
+
+            case RT_THROTTLE:
+                free(rule->data);
+                break;
+
+            case RT_REGEX:
+                pcre2_code_free((pcre2_code*) rule->data);
+                break;
+
+            default:
+                break;
+        }
+
+        free(rule->name);
+        rule = tmp;
+    }
+}
+
+/**
+ * Add a user to the current rule linking expression
+ * @param scanner Current scanner
+ * @param name Name of the user
+ */
+bool add_active_user(void* scanner, const char* name)
+{
+    struct parser_stack* rstack = dbfw_yyget_extra((yyscan_t) scanner);
+    ss_dassert(rstack);
+    STRLINK *tmp = strlink_push(rstack->user, name);
+
+    if (tmp)
+    {
+        rstack->user = tmp;
+    }
+
+    return tmp != NULL;
+}
+
+/**
+ * Add a rule to the current rule linking expression
+ * @param scanner Current scanner
+ * @param name Name of the rule
+ */
+bool add_active_rule(void* scanner, const char* name)
+{
+    struct parser_stack* rstack = dbfw_yyget_extra((yyscan_t) scanner);
+    ss_dassert(rstack);
+    STRLINK *tmp = strlink_push(rstack->active_rules, name);
+
+    if (tmp)
+    {
+        rstack->active_rules = tmp;
+    }
+
+    return tmp != NULL;
+}
+
+/**
+ * Add an optional at_times definition to the rule
+ * @param scanner Current scanner
+ * @param range two ISO-8601 compliant times separated by a single dash
+ */
+bool add_at_times_rule(void* scanner, const char* range)
+{
+    struct parser_stack* rstack = dbfw_yyget_extra((yyscan_t) scanner);
+    ss_dassert(rstack);
+    TIMERANGE* timerange = parse_time(range);
+    ss_dassert(timerange);
+
+    if (timerange)
+    {
+        timerange->next = rstack->rule->active;
+        rstack->rule->active = timerange;
+    }
+
+    return timerange != NULL;
+}
+
+/**
+ * Add an optional on_queries definition to the rule
+ * @param scanner Current scanner
+ * @param sql List of SQL operations separated by vertical bars
+ */
+void add_on_queries_rule(void* scanner, const char* sql)
+{
+    struct parser_stack* rstack = dbfw_yyget_extra((yyscan_t) scanner);
+    ss_dassert(rstack);
+    parse_querytypes(sql, rstack->rule);
+}
+
+/**
+ * Link users and rules
+ * @param scanner Current scanner
+ */
+bool create_user_templates(void* scanner)
+{
+    struct parser_stack* rstack = dbfw_yyget_extra((yyscan_t) scanner);
+    ss_dassert(rstack);
+    user_template_t* templates = NULL;
+    STRLINK* user = rstack->user;
+
+    while (user)
+    {
+        user_template_t* newtemp = malloc(sizeof(user_template_t));
+        STRLINK* tmp;
+        if (newtemp && (newtemp->name = strdup(user->value)) &&
+            (newtemp->rulenames = strlink_reverse_clone(rstack->active_rules)))
+        {
+            newtemp->type = rstack->active_mode;
+            newtemp->next = templates;
+            templates = newtemp;
+        }
+        else
+        {
+            if (newtemp)
+            {
+                free(newtemp->name);
+                free(newtemp);
+            }
+            MXS_ERROR("Memory allocation failed when processing rule file users definitions.");
+            return false;
+        }
+        user = user->next;
+    }
+
+    templates->next = rstack->templates;
+    rstack->templates = templates;
+
+    strlink_free(rstack->user);
+    strlink_free(rstack->active_rules);
+    rstack->user = NULL;
+    rstack->active_rules = NULL;
+    return true;
+}
+
+void free_user_templates(user_template_t *templates)
+{
+    while (templates)
+    {
+        user_template_t *tmp = templates;
+        templates = templates->next;
+        strlink_free(tmp->rulenames);
+        free(tmp->name);
+        free(tmp);
+    }
+}
+
+void set_matching_mode(void* scanner, enum match_type mode)
+{
+    struct parser_stack* rstack = dbfw_yyget_extra((yyscan_t) scanner);
+    ss_dassert(rstack);
+    rstack->active_mode = mode;
+}
+
+/**
+ * Define the topmost rule as a wildcard rule
+ * @param scanner Current scanner
+ */
+void define_wildcard_rule(void* scanner)
+{
+    struct parser_stack* rstack = dbfw_yyget_extra((yyscan_t) scanner);
+    ss_dassert(rstack);
+    rstack->rule->type = RT_WILDCARD;
+}
+
+/**
+ * Remove backticks from a string
+ * @param string String to parse
+ * @return String without backticks
+ */
+static char* strip_backticks(char* string)
+{
+    char* ptr = strchr(string, '`');
+    if (ptr)
+    {
+        char *end = strrchr(string, '`');
+        ss_dassert(end);
+        *end = '\0';
+        return ptr + 1;
+    }
+    return string;
+}
+
+/**
+ * Define the current rule as a columns rule
+ * @param scanner Current scanner
+ * @param columns List of column names
+ */
+bool define_columns_rule(void* scanner, char* columns)
+{
+    struct parser_stack* rstack = dbfw_yyget_extra((yyscan_t) scanner);
+    ss_dassert(rstack);
+    STRLINK* list = NULL;
+
+    if ((list = strlink_push(rstack->rule->data, strip_backticks(columns))))
+    {
+        rstack->rule->type = RT_COLUMN;
+        rstack->rule->data = list;
+    }
+
+    return list != NULL;
+}
+
+/**
+ * Define the topmost rule as a no_where_clause rule
+ * @param scanner Current scanner
+ */
+void define_where_clause_rule(void* scanner)
+{
+    struct parser_stack* rstack = dbfw_yyget_extra((yyscan_t) scanner);
+    ss_dassert(rstack);
+    rstack->rule->type = RT_CLAUSE;
+}
+
+/**
+ * Define the topmost rule as a no_where_clause rule
+ * @param scanner Current scanner
+ */
+bool define_limit_queries_rule(void* scanner, int max, int timeperiod, int holdoff)
+{
+    struct parser_stack* rstack = dbfw_yyget_extra((yyscan_t) scanner);
+    ss_dassert(rstack);
+    QUERYSPEED* qs = malloc(sizeof(QUERYSPEED));
+
+    if (qs)
+    {
+        qs->limit = max;
+        qs->period = timeperiod;
+        qs->cooldown = holdoff;
+        rstack->rule->type = RT_THROTTLE;
+        rstack->rule->data = qs;
+    }
+    else
+    {
+        MXS_ERROR("dbfwfilter: Memory allocation failed when adding limit_queries rule.");
+    }
+
+    return qs != NULL;
+}
+
+/**
+ * Define the topmost rule as a regex rule
+ * @param scanner Current scanner
+ * @param pattern Quoted regex pattern
+ */
+bool define_regex_rule(void* scanner, char* pattern)
+{
+    /** This should never fail as long as the rule syntax is correct */
+    PCRE2_SPTR start = (PCRE2_SPTR) get_regex_string(&pattern);
+    ss_dassert(start);
+    pcre2_code *re;
+    int err;
+    size_t offset;
+    if ((re = pcre2_compile(start, PCRE2_ZERO_TERMINATED,
+                            0, &err, &offset, NULL)))
+    {
+        struct parser_stack* rstack = dbfw_yyget_extra((yyscan_t) scanner);
+        ss_dassert(rstack);
+        rstack->rule->type = RT_REGEX;
+        rstack->rule->data = (void*) re;
+    }
+    else
+    {
+        PCRE2_UCHAR errbuf[STRERROR_BUFLEN];
+        pcre2_get_error_message(err, errbuf, sizeof(errbuf));
+        MXS_ERROR("dbfwfilter: Invalid regular expression '%s': %s",
+                  start, errbuf);
+    }
+
+    return re != NULL;
+}
+
+static RULE* find_rule_by_name(RULE* rules, const char* name)
+{
+    while (rules)
+    {
+        if (strcmp(rules->name, name) == 0)
+        {
+            return rules;
+        }
+        rules = rules->next;
+    }
+
+    return NULL;
+}
+
+static bool process_user_templates(FW_INSTANCE *instance, user_template_t *templates,
+                                   RULE* rules)
+{
+    bool rval = true;
+    while (templates)
+    {
+        USER *user = hashtable_fetch(instance->htable, templates->name);
+
+        if (user == NULL)
+        {
+            if ((user = malloc(sizeof(USER)))&& (user->name = strdup(templates->name)))
+            {
+                user->rules_and = NULL;
+                user->rules_or = NULL;
+                user->rules_strict_and = NULL;
+                spinlock_init(&user->lock);
+                hashtable_add(instance->htable, user->name, user);
+            }
+            else
+            {
+                free(user);
+                rval = false;
+                break;
+                MXS_ERROR("Memory allocation failed when creating user '%s'.",
+                          templates->name);
+            }
+        }
+
+        RULELIST *foundrules = NULL;
+        RULE *rule;
+        STRLINK *names = templates->rulenames;
+
+        while (names && (rule = find_rule_by_name(rules, names->value)))
+        {
+            foundrules = rulelist_push(foundrules, rule);
+            names = names->next;
+        }
+
+        if (foundrules)
+        {
+            RULELIST *tail = foundrules;
+
+            while (tail->next)
+            {
+                tail = tail->next;
+            }
+
+            switch (templates->type)
+            {
+                case MATCH_ANY:
+                    tail->next = user->rules_or;
+                    user->rules_or = foundrules;
+                    break;
+
+                case MATCH_ALL:
+                    tail->next = user->rules_and;
+                    user->rules_and = foundrules;
+                    break;
+
+                case MATCH_STRICT_ALL:
+                    tail->next = user->rules_strict_and;
+                    user->rules_strict_and = foundrules;
+                    break;
+            }
+        }
+        else
+        {
+            MXS_ERROR("Could not find definition for rule '%s'.", names->value);
+            rval = false;
+            break;
+        }
+        templates = templates->next;
+    }
+    return rval;
+}
+
+/**
+ * Read a rule file from disk and process it into rule and user definitions
+ * @param filename Name of the file
+ * @param instance Filter isntance
+ * @return True on success, false on error.
+ */
+static bool process_rule_file(const char* filename, FW_INSTANCE* instance)
+{
+    FILE *file = fopen(filename, "r");
+    yyscan_t scanner;
+    struct parser_stack pstack;
+
+    pstack.rule = NULL;
+    pstack.user = NULL;
+    pstack.active_rules = NULL;
+    pstack.templates = NULL;
+
+    dbfw_yylex_init(&scanner);
+    YY_BUFFER_STATE buf = dbfw_yy_create_buffer(file, YY_BUF_SIZE, scanner);
+    dbfw_yyset_extra(&pstack, scanner);
+    dbfw_yy_switch_to_buffer(buf, scanner);
+
+    /** Parse the rule file */
+    int rc = dbfw_yyparse(scanner);
+
+    dbfw_yy_delete_buffer(buf, scanner);
+    dbfw_yylex_destroy(scanner);
+    fclose(file);
+
+    if (rc == 0 && process_user_templates(instance, pstack.templates, pstack.rule))
+    {
+        instance->rules = pstack.rule;
+    }
+    else
+    {
+        rc = 1;
+        free_rules(pstack.rule);
+    }
+
+    free_user_templates(pstack.templates);
+    strlink_free(pstack.active_rules);
+    strlink_free(pstack.user);
+
+    return rc == 0;
 }
 
 /**
@@ -1162,8 +1696,10 @@ bool parse_rule(char* rulestr, FW_INSTANCE* instance)
                     ruledef->type = RT_UNDEFINED;
                     ruledef->on_queries = QUERY_OP_UNDEFINED;
                     rlist->rule = ruledef;
+                    /** TODO: remove old rule processing
                     rlist->next = instance->rules;
                     instance->rules = rlist;
+                     */
                     rval = parse_rule_definition(instance, ruledef, rulestr, &saveptr);
                 }
                 else
@@ -1249,7 +1785,7 @@ createInstance(char **options, FILTER_PARAMETER **params)
 
     spinlock_init(my_instance->lock);
 
-    if ((ht = hashtable_alloc(100, hashkeyfun, hashcmpfun)) == NULL)
+    if ((ht = hashtable_alloc(100, simple_str_hash, strcmp)) == NULL)
     {
         MXS_ERROR("Unable to allocate hashtable.");
         free(my_instance);
@@ -1259,7 +1795,8 @@ createInstance(char **options, FILTER_PARAMETER **params)
     hashtable_memory_fns(ht, (HASHMEMORYFN) strdup, NULL, (HASHMEMORYFN) free, huserfree);
 
     my_instance->htable = ht;
-    my_instance->def_op = true;
+    my_instance->action = FW_ACTION_BLOCK;
+    my_instance->log_match = FW_LOG_NONE;
     my_instance->userstrings = NULL;
     my_instance->regflags = 0;
 
@@ -1267,11 +1804,43 @@ createInstance(char **options, FILTER_PARAMETER **params)
     {
         if (strcmp(params[i]->name, "rules") == 0)
         {
-            if (filename)
+            filename = params[i]->value;
+        }
+        else if (strcmp(params[i]->name, "log_match") == 0 &&
+                 config_truth_value(params[i]->value))
+        {
+            my_instance->log_match |= FW_LOG_MATCH;
+        }
+        else if (strcmp(params[i]->name, "log_no_match") == 0 &&
+                 config_truth_value(params[i]->value))
+        {
+            my_instance->log_match |= FW_LOG_NO_MATCH;
+        }
+        else if (strcmp(params[i]->name, "action") == 0)
+        {
+            if (strcmp(params[i]->value, "allow") == 0)
             {
-                free(filename);
+                my_instance->action = FW_ACTION_ALLOW;
             }
-            filename = strdup(params[i]->value);
+            else if (strcmp(params[i]->value, "block") == 0)
+            {
+                my_instance->action = FW_ACTION_BLOCK;
+            }
+            else if (strcmp(params[i]->value, "ignore") == 0)
+            {
+                my_instance->action = FW_ACTION_IGNORE;
+            }
+            else
+            {
+                MXS_ERROR("Unknown value for %s: %s. Expected one of 'allow', "
+                          "'block' or 'ignore'.", params[i]->name, params[i]->value);
+                err = true;
+            }
+        }
+        else if (!filter_standard_parameter(params[i]->name))
+        {
+            MXS_ERROR("Unknown parameter '%s' for dbfwfilter.", params[i]->name);
+            err = true;
         }
     }
 
@@ -1282,6 +1851,7 @@ createInstance(char **options, FILTER_PARAMETER **params)
             if (strcmp(options[i], "ignorecase") == 0)
             {
                 my_instance->regflags |= REG_ICASE;
+                break;
             }
         }
     }
@@ -1290,102 +1860,11 @@ createInstance(char **options, FILTER_PARAMETER **params)
     {
         MXS_ERROR("Unable to find rule file for firewall filter. Please provide the path with"
                   " rules=<path to file>");
-        hashtable_free(my_instance->htable);
-        free(my_instance);
-        return NULL;
-    }
-
-    if ((file = fopen(filename, "rb")) == NULL)
-    {
-        MXS_ERROR("Error while opening rule file for firewall filter.");
-        hashtable_free(my_instance->htable);
-        free(my_instance);
-        free(filename);
-        return NULL;
-    }
-
-
-    bool file_empty = true;
-
-    while (!feof(file))
-    {
-
-        if (fgets(buffer, 2048, file) == NULL)
-        {
-            if (ferror(file))
-            {
-                MXS_ERROR("Error while reading rule file for firewall filter.");
-                fclose(file);
-                hashtable_free(my_instance->htable);
-                free(my_instance);
-                return NULL;
-            }
-
-            if (feof(file))
-            {
-                break;
-            }
-        }
-
-        if ((nl = strchr(buffer, '\n')) != NULL && ((char*) nl - (char*) buffer) < 2048)
-        {
-            *nl = '\0';
-        }
-
-        if (strnlen(buffer, 2048) < 1 || is_comment(buffer))
-        {
-            continue;
-        }
-
-        file_empty = false;
-
-        if (!parse_rule(buffer, my_instance))
-        {
-            fclose(file);
-            err = true;
-            goto retblock;
-        }
-    }
-
-    if (file_empty)
-    {
-        MXS_ERROR("dbfwfilter: File is empty: %s", filename);
-        free(filename);
         err = true;
-        goto retblock;
     }
 
-    fclose(file);
-    free(filename);
-
-    /**Apply the rules to users*/
-    ptr = my_instance->userstrings;
-
-    if (ptr == NULL)
+    if (err || !process_rule_file(filename, my_instance))
     {
-        MXS_ERROR("dbfwfilter: No 'users' line found.");
-        err = true;
-        goto retblock;
-    }
-
-    while (ptr)
-    {
-        if (!link_rules(ptr->value, my_instance))
-        {
-            MXS_ERROR("dbfwfilter: Failed to parse rule: %s", ptr->value);
-            err = true;
-        }
-        tmp = ptr;
-        ptr = ptr->next;
-        free(tmp->value);
-        free(tmp);
-    }
-
-retblock:
-
-    if (err)
-    {
-        hrulefree(my_instance->rules);
         hashtable_free(my_instance->htable);
         free(my_instance);
         my_instance = NULL;
@@ -1422,7 +1901,9 @@ newSession(FILTER *instance, SESSION *session)
  * @param session	The session being closed
  */
 static void
-closeSession(FILTER *instance, void *session){ }
+closeSession(FILTER *instance, void *session)
+{
+}
 
 /**
  * Free the memory associated with the session
@@ -1497,7 +1978,7 @@ GWBUF* gen_dummy_error(FW_SESSION* session, char* msg)
     else
     {
         sprintf(errmsg, "Access denied for user '%s'@'%s' to database '%s'",
-                dcb->user, dcb->remote,  mysql_session->db);
+                dcb->user, dcb->remote, mysql_session->db);
     }
 
     if (msg != NULL)
@@ -1585,14 +2066,19 @@ bool rule_is_active(RULE* rule)
  * @param query Pointer to the null-terminated query string
  * @return true if the query matches the rule
  */
-bool rule_matches(FW_INSTANCE* my_instance, FW_SESSION* my_session, GWBUF *queue, USER* user, RULELIST *rulelist, char* query)
+bool rule_matches(FW_INSTANCE* my_instance,
+                  FW_SESSION* my_session,
+                  GWBUF *queue,
+                  USER* user,
+                  RULELIST *rulelist,
+                  char* query)
 {
     char *ptr, *where, *msg = NULL;
     char emsg[512];
 
     unsigned char* memptr = (unsigned char*) queue->start;
     bool is_sql, is_real, matches;
-    skygw_query_op_t optype = QUERY_OP_UNDEFINED;
+    qc_query_op_t optype = QUERY_OP_UNDEFINED;
     STRLINK* strln = NULL;
     QUERYSPEED* queryspeed = NULL;
     QUERYSPEED* rule_qs = NULL;
@@ -1607,13 +2093,8 @@ bool rule_matches(FW_INSTANCE* my_instance, FW_SESSION* my_session, GWBUF *queue
 
     if (is_sql)
     {
-        if (!query_is_parsed(queue))
-        {
-            parse_query(queue);
-        }
-        optype = query_classifier_get_operation(queue);
-        is_real = skygw_is_real_query(queue);
-
+        optype = qc_get_operation(queue);
+        is_real = qc_is_real_query(queue);
     }
 
     if (rulelist->rule->on_queries == QUERY_OP_UNDEFINED || rulelist->rule->on_queries & optype)
@@ -1625,20 +2106,31 @@ bool rule_matches(FW_INSTANCE* my_instance, FW_SESSION* my_session, GWBUF *queue
                 break;
 
             case RT_REGEX:
-                if (query && regexec(rulelist->rule->data, query, 0, NULL, 0) == 0)
+                if (query)
                 {
+                    pcre2_match_data *mdata = pcre2_match_data_create_from_pattern(
+                                                                                   rulelist->rule->data, NULL);
 
-                    matches = true;
-
-                    if (!rulelist->rule->allow)
+                    if (mdata)
                     {
-                        msg = strdup("Permission denied, query matched regular expression.");
-                        MXS_INFO("dbfwfilter: rule '%s': regex matched on query", rulelist->rule->name);
-                        goto queryresolved;
+                        if (pcre2_match((pcre2_code*) rulelist->rule->data,
+                                        (PCRE2_SPTR) query, PCRE2_ZERO_TERMINATED,
+                                        0, 0, mdata, NULL) > 0)
+                        {
+                            matches = true;
+                        }
+                        pcre2_match_data_free(mdata);
+                        if (matches && !rulelist->rule->allow)
+                        {
+                            msg = strdup("Permission denied, query matched regular expression.");
+                            MXS_INFO("dbfwfilter: rule '%s': regex matched on query", rulelist->rule->name);
+                            goto queryresolved;
+                        }
                     }
                     else
                     {
-                        break;
+                        MXS_ERROR("Allocation of matching data for PCRE2 failed."
+                                  " This is most likely caused by a lack of memory");
                     }
                 }
                 break;
@@ -1662,7 +2154,7 @@ bool rule_matches(FW_INSTANCE* my_instance, FW_SESSION* my_session, GWBUF *queue
             case RT_COLUMN:
                 if (is_sql && is_real)
                 {
-                    where = skygw_get_affected_fields(queue);
+                    where = qc_get_affected_fields(queue);
                     if (where != NULL)
                     {
                         char* saveptr;
@@ -1702,7 +2194,7 @@ bool rule_matches(FW_INSTANCE* my_instance, FW_SESSION* my_session, GWBUF *queue
                 if (is_sql && is_real)
                 {
                     char * strptr;
-                    where = skygw_get_affected_fields(queue);
+                    where = qc_get_affected_fields(queue);
 
                     if (where != NULL)
                     {
@@ -1713,7 +2205,8 @@ bool rule_matches(FW_INSTANCE* my_instance, FW_SESSION* my_session, GWBUF *queue
 
                             matches = true;
                             msg = strdup("Usage of wildcard denied.");
-                            MXS_INFO("dbfwfilter: rule '%s': query contains a wildcard.", rulelist->rule->name);
+                            MXS_INFO("dbfwfilter: rule '%s': query contains a wildcard.",
+                                     rulelist->rule->name);
                             goto queryresolved;
                         }
                         free(where);
@@ -1761,10 +2254,12 @@ bool rule_matches(FW_INSTANCE* my_instance, FW_SESSION* my_session, GWBUF *queue
                     if (difftime(time_now, queryspeed->triggered) < queryspeed->cooldown)
                     {
 
-                        double blocked_for = queryspeed->cooldown - difftime(time_now, queryspeed->triggered);
+                        double blocked_for =
+                            queryspeed->cooldown - difftime(time_now, queryspeed->triggered);
 
                         sprintf(emsg, "Queries denied for %f seconds", blocked_for);
-                        MXS_INFO("dbfwfilter: rule '%s': user denied for %f seconds", rulelist->rule->name, blocked_for);
+                        MXS_INFO("dbfwfilter: rule '%s': user denied for %f seconds",
+                                 rulelist->rule->name, blocked_for);
                         msg = strdup(emsg);
                         matches = true;
                     }
@@ -1782,13 +2277,14 @@ bool rule_matches(FW_INSTANCE* my_instance, FW_SESSION* my_session, GWBUF *queue
                         matches = true;
                         queryspeed->active = true;
 
-                        MXS_INFO("dbfwfilter: rule '%s': query limit triggered (%d queries in %f seconds), "
-                                 "denying queries from user for %f seconds.",
+                        MXS_INFO("dbfwfilter: rule '%s': query limit triggered (%d queries in %d seconds), "
+                                 "denying queries from user for %d seconds.",
                                  rulelist->rule->name,
                                  queryspeed->limit,
                                  queryspeed->period,
                                  queryspeed->cooldown);
-                        double blocked_for = queryspeed->cooldown - difftime(time_now, queryspeed->triggered);
+                        double blocked_for =
+                            queryspeed->cooldown - difftime(time_now, queryspeed->triggered);
                         sprintf(emsg, "Queries denied for %f seconds", blocked_for);
                         msg = strdup(emsg);
                     }
@@ -1807,12 +2303,12 @@ bool rule_matches(FW_INSTANCE* my_instance, FW_SESSION* my_session, GWBUF *queue
 
             case RT_CLAUSE:
                 if (is_sql && is_real &&
-                    !skygw_query_has_clause(queue))
+                    !qc_query_has_clause(queue))
                 {
                     matches = true;
                     msg = strdup("Required WHERE/HAVING clause is missing.");
                     MXS_INFO("dbfwfilter: rule '%s': query has no where/having "
-                        "clause, query is denied.", rulelist->rule->name);
+                             "clause, query is denied.", rulelist->rule->name);
                 }
                 break;
 
@@ -1849,54 +2345,34 @@ queryresolved:
  * @param user The user whose rulelist is checked
  * @return True if the query matches at least one of the rules otherwise false
  */
-bool check_match_any(FW_INSTANCE* my_instance, FW_SESSION* my_session, GWBUF *queue, USER* user)
+bool check_match_any(FW_INSTANCE* my_instance, FW_SESSION* my_session,
+                     GWBUF *queue, USER* user, char** rulename)
 {
-    bool is_sql, rval = false;
-    int qlen;
-    char *fullquery = NULL, *ptr;
-    unsigned char* memptr = (unsigned char*) queue->start;
     RULELIST* rulelist;
-    is_sql = modutil_is_SQL(queue) || modutil_is_SQL_prepare(queue);
+    bool rval = false;
 
-    if (is_sql)
+    if ((rulelist = user->rules_or) &&
+        (modutil_is_SQL(queue) || modutil_is_SQL_prepare(queue)))
     {
-        if (!query_is_parsed(queue))
+        char *fullquery = modutil_get_SQL(queue);
+        while (rulelist)
         {
-            parse_query(queue);
-        }
-
-        qlen = gw_mysql_get_byte3(memptr);
-        qlen = qlen < 0xffffff ? qlen : 0xffffff;
-        fullquery = malloc((qlen) * sizeof(char));
-        memcpy(fullquery, memptr + 5, qlen - 1);
-        memset(fullquery + qlen - 1, 0, 1);
-    }
-
-    if ((rulelist = user->rules_or) == NULL)
-    {
-        goto retblock;
-    }
-
-    while (rulelist)
-    {
-
-        if (!rule_is_active(rulelist->rule))
-        {
+            if (!rule_is_active(rulelist->rule))
+            {
+                rulelist = rulelist->next;
+                continue;
+            }
+            if (rule_matches(my_instance, my_session, queue, user, rulelist, fullquery))
+            {
+                *rulename = rulelist->rule->name;
+                rval = true;
+                break;
+            }
             rulelist = rulelist->next;
-            continue;
-        }
-        if ((rval = rule_matches(my_instance, my_session, queue, user, rulelist, fullquery)))
-        {
-            goto retblock;
         }
 
-        rulelist = rulelist->next;
+        free(fullquery);
     }
-
-retblock:
-
-    free(fullquery);
-
     return rval;
 }
 
@@ -1908,77 +2384,82 @@ retblock:
  * @param user The user whose rulelist is checked
  * @return True if the query matches all of the rules otherwise false
  */
-bool check_match_all(FW_INSTANCE* my_instance, FW_SESSION* my_session, GWBUF *queue, USER* user, bool strict_all)
+bool check_match_all(FW_INSTANCE* my_instance, FW_SESSION* my_session,
+                     GWBUF *queue, USER* user, bool strict_all, char** rulename)
 {
-    bool is_sql, rval = true;
+    bool rval = false;
     bool have_active_rule = false;
-    int qlen;
-    unsigned char* memptr = (unsigned char*) queue->start;
-    char *fullquery = NULL, *ptr;
+    RULELIST* rulelist = strict_all ? user->rules_strict_and : user->rules_and;
 
-    RULELIST* rulelist;
-    is_sql = modutil_is_SQL(queue) || modutil_is_SQL_prepare(queue);
-
-    if (is_sql)
+    if (rulelist && (modutil_is_SQL(queue) || modutil_is_SQL_prepare(queue)))
     {
-        if (!query_is_parsed(queue))
+        char *fullquery = modutil_get_SQL(queue);
+        rval = true;
+        while (rulelist)
         {
-            parse_query(queue);
-        }
-
-        qlen = gw_mysql_get_byte3(memptr);
-        qlen = qlen < 0xffffff ? qlen : 0xffffff;
-        fullquery = malloc((qlen) * sizeof(char));
-        memcpy(fullquery, memptr + 5, qlen - 1);
-        memset(fullquery + qlen - 1, 0, 1);
-    }
-
-    if (strict_all)
-    {
-        rulelist = user->rules_strict_and;
-    }
-    else
-    {
-        rulelist = user->rules_and;
-    }
-
-    if (rulelist == NULL)
-    {
-        rval = false;
-        goto retblock;
-    }
-
-    while (rulelist)
-    {
-
-        if (!rule_is_active(rulelist->rule))
-        {
-            rulelist = rulelist->next;
-            continue;
-        }
-
-        have_active_rule = true;
-
-        if (!rule_matches(my_instance, my_session, queue, user, rulelist, fullquery))
-        {
-            rval = false;
-            if (strict_all)
+            if (!rule_is_active(rulelist->rule))
             {
-                break;
+                rulelist = rulelist->next;
+                continue;
+            }
+
+            have_active_rule = true;
+
+            if (!rule_matches(my_instance, my_session, queue, user, rulelist, fullquery))
+            {
+                *rulename = rulelist->rule->name;
+                rval = false;
+                if (strict_all)
+                {
+                    break;
+                }
+            }
+            rulelist = rulelist->next;
+        }
+
+        if (!have_active_rule)
+        {
+            /** No active rules */
+            rval = false;
+        }
+        free(fullquery);
+    }
+
+    return rval;
+}
+
+/**
+ * Retrieve the user specific data for this session
+ *
+ * @param hash Hashtable containing the user data
+ * @param name Username
+ * @param remote Remove network address
+ * @return The user data or NULL if it was not found
+ */
+USER* find_user_data(HASHTABLE *hash, const char *name, const char *remote)
+{
+    char nameaddr[strlen(name) + strlen(remote) + 2];
+    snprintf(nameaddr, sizeof(nameaddr), "%s@%s", name, remote);
+    USER* user = (USER*) hashtable_fetch(hash, nameaddr);
+    if (user == NULL)
+    {
+        char *ip_start = strchr(nameaddr, '@') + 1;
+        while (user == NULL && next_ip_class(ip_start))
+        {
+            user = (USER*) hashtable_fetch(hash, nameaddr);
+        }
+
+        if (user == NULL)
+        {
+            snprintf(nameaddr, sizeof(nameaddr), "%%@%s", remote);
+            ip_start = strchr(nameaddr, '@') + 1;
+            while (user == NULL && next_ip_class(ip_start))
+            {
+                user = (USER*) hashtable_fetch(hash, nameaddr);
             }
         }
-        rulelist = rulelist->next;
     }
-
-    if (!have_active_rule)
-    {
-        /** No active rules */
-        rval = false;
-    }
-
-retblock:
-    free(fullquery);
-    return rval;
+    return user;
 }
 
 /**
@@ -1996,100 +2477,105 @@ routeQuery(FILTER *instance, void *session, GWBUF *queue)
 {
     FW_SESSION *my_session = (FW_SESSION *) session;
     FW_INSTANCE *my_instance = (FW_INSTANCE *) instance;
-    bool accept = my_instance->def_op;
-    char *msg = NULL, *fullquery = NULL, *ipaddr;
-    char uname_addr[128];
-    DCB* dcb = my_session->session->client;
-    USER* user = NULL;
-    GWBUF* forward;
-    ipaddr = strdup(dcb->remote);
-    sprintf(uname_addr, "%s@%s", dcb->user, ipaddr);
+    DCB *dcb = my_session->session->client;
+    int rval = 0;
+    ss_dassert(dcb && dcb->session);
 
     if (modutil_is_SQL(queue) && modutil_count_statements(queue) > 1)
     {
-        if (my_session->errmsg)
-        {
-            free(my_session->errmsg);
-        }
-        my_session->errmsg = strdup("This filter does not support multi-statements.");
-        accept = false;
-        goto queryresolved;
-    }
-
-    if ((user = (USER*) hashtable_fetch(my_instance->htable, uname_addr)) == NULL)
-    {
-        while (user == NULL && next_ip_class(ipaddr))
-        {
-            sprintf(uname_addr, "%s@%s", dcb->user, ipaddr);
-            user = (USER*) hashtable_fetch(my_instance->htable, uname_addr);
-        }
-    }
-
-    if (user == NULL)
-    {
-        strcpy(ipaddr, dcb->remote);
-        do
-        {
-            sprintf(uname_addr, "%%@%s", ipaddr);
-            user = (USER*) hashtable_fetch(my_instance->htable, uname_addr);
-        }
-        while (user == NULL && next_ip_class(ipaddr));
-    }
-
-    if (user == NULL)
-    {
-        /**
-         *No rules matched, do default operation.
-         */
-
-        goto queryresolved;
-    }
-
-    if (check_match_any(my_instance, my_session, queue, user))
-    {
-        accept = false;
-        goto queryresolved;
-    }
-
-    if (check_match_all(my_instance, my_session, queue, user, false))
-    {
-        accept = false;
-        goto queryresolved;
-    }
-
-    if (check_match_all(my_instance, my_session, queue, user, true))
-    {
-        accept = false;
-        goto queryresolved;
-    }
-
-queryresolved:
-
-    free(ipaddr);
-    free(fullquery);
-
-    if (accept)
-    {
-        return my_session->down.routeQuery(my_session->down.instance,
-                                           my_session->down.session, queue);
+        GWBUF* err = gen_dummy_error(my_session, "This filter does not support "
+                                     "multi-statements.");
+        gwbuf_free(queue);
+        free(my_session->errmsg);
+        my_session->errmsg = NULL;
+        rval = dcb->func.write(dcb, err);
     }
     else
     {
-        gwbuf_free(queue);
+        USER *user = find_user_data(my_instance->htable,
+                                    my_session->session->client->user,
+                                    my_session->session->client->remote);
+        bool query_ok = false;
 
-        if (my_session->errmsg)
+        if (user)
         {
-            msg = my_session->errmsg;
+            bool match = false;
+            char* rname;
+            if (check_match_any(my_instance, my_session, queue, user, &rname) ||
+                check_match_all(my_instance, my_session, queue, user, false, &rname) ||
+                check_match_all(my_instance, my_session, queue, user, true, &rname))
+            {
+                match = true;
+            }
+
+            switch (my_instance->action)
+            {
+                case FW_ACTION_ALLOW:
+                    if (match)
+                    {
+                        query_ok = true;
+                    }
+                    break;
+
+                case FW_ACTION_BLOCK:
+                    if (!match)
+                    {
+                        query_ok = true;
+                    }
+                    break;
+
+                case FW_ACTION_IGNORE:
+                    query_ok = true;
+                    break;
+
+                default:
+                    MXS_ERROR("Unknown dbfwfilter action: %d", my_instance->action);
+                    ss_dassert(false);
+                    break;
+            }
+
+            if (my_instance->log_match != FW_LOG_NONE)
+            {
+                char *sql;
+                int len;
+                if (modutil_extract_SQL(queue, &sql, &len))
+                {
+                    len = MIN(len, FW_MAX_SQL_LEN);
+                    if (match && my_instance->log_match & FW_LOG_MATCH)
+                    {
+                        MXS_NOTICE("Rule '%s' matched by '%s': %.*s", rname,
+                                   user->name, len, sql);
+                    }
+                    else if (!match && my_instance->log_match & FW_LOG_NO_MATCH)
+                    {
+                        MXS_NOTICE("Query by '%s' was not matched: %.*s",
+                                   user->name, len, sql);
+                    }
+                }
+            }
         }
-        forward = gen_dummy_error(my_session, msg);
-
-        if (my_session->errmsg)
+            /** If the instance is in whitelist mode, only users that have a rule
+             * defined for them are allowed */
+        else if (my_instance->action != FW_ACTION_ALLOW)
         {
+            query_ok = true;
+        }
+
+        if (query_ok)
+        {
+            rval = my_session->down.routeQuery(my_session->down.instance,
+                                               my_session->down.session, queue);
+        }
+        else
+        {
+            GWBUF* forward = gen_dummy_error(my_session, my_session->errmsg);
+            gwbuf_free(queue);
             free(my_session->errmsg);
             my_session->errmsg = NULL;
+            rval = dcb->func.write(dcb, forward);
         }
-        return dcb->func.write(dcb, forward);
     }
+    return rval;
 }
 
 /**
@@ -2106,7 +2592,7 @@ static void
 diagnostic(FILTER *instance, void *fsession, DCB *dcb)
 {
     FW_INSTANCE *my_instance = (FW_INSTANCE *) instance;
-    RULELIST* rules;
+    RULE* rules;
     int type;
 
     if (my_instance)
@@ -2118,19 +2604,19 @@ diagnostic(FILTER *instance, void *fsession, DCB *dcb)
         dcb_printf(dcb, "%-24s%-24s%-24s\n", "Rule", "Type", "Times Matched");
         while (rules)
         {
-            if ((int) rules->rule->type > 0 &&
-                (int) rules->rule->type < sizeof(rule_names) / sizeof(char**))
+            if ((int) rules->type > 0 &&
+                (int) rules->type < sizeof(rule_names) / sizeof(char**))
             {
-                type = (int) rules->rule->type;
+                type = (int) rules->type;
             }
             else
             {
                 type = 0;
             }
             dcb_printf(dcb, "%-24s%-24s%-24d\n",
-                       rules->rule->name,
+                       rules->name,
                        rule_names[type],
-                       rules->rule->times_matched);
+                       rules->times_matched);
             rules = rules->next;
         }
         spinlock_release(my_instance->lock);
@@ -2182,6 +2668,10 @@ bool parse_at_times(const char** tok, char** saveptr, RULE* ruledef)
     {
         ruledef->active = tr;
     }
+    else
+    {
+        free(tr);
+    }
 
     return success;
 }
@@ -2215,7 +2705,7 @@ bool parse_limit_queries(FW_INSTANCE* instance, RULE* ruledef, const char* rule,
         goto retblock;
     }
 
-    qs->limit = strtol(tok, &errptr, 0);
+    qs->limit = strtol(tok, &errptr, 10);
 
     if (errptr && *errptr != '\0')
     {
@@ -2238,7 +2728,7 @@ bool parse_limit_queries(FW_INSTANCE* instance, RULE* ruledef, const char* rule,
         goto retblock;
     }
 
-    qs->period = strtod(tok, &errptr);
+    qs->period = strtol(tok, &errptr, 10);
 
     if (errptr && *errptr != '\0')
     {
@@ -2260,7 +2750,7 @@ bool parse_limit_queries(FW_INSTANCE* instance, RULE* ruledef, const char* rule,
         MXS_ERROR("dbfwfilter: Missing parameter in limit_queries: '%s'.", rule);
         goto retblock;
     }
-    qs->cooldown = strtod(tok, &errptr);
+    qs->cooldown = strtol(tok, &errptr, 10);
 
     if (errptr && *errptr != '\0')
     {
@@ -2340,9 +2830,9 @@ int main(int argc, char** argv)
 
     int argc_ = 2;
     char* argv_[] ={
-        "log_manager",
-        "-o",
-        NULL
+                     "log_manager",
+                     "-o",
+                     NULL
     };
 
     mxs_log_init(argc_, argv_);

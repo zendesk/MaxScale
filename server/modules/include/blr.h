@@ -45,7 +45,7 @@
 #include <memlog.h>
 #include <zlib.h>
 
-#define BINLOG_FNAMELEN		16
+#define BINLOG_FNAMELEN		255
 #define BLR_PROTOCOL		"MySQLBackend"
 #define BINLOG_MAGIC		{ 0xfe, 0x62, 0x69, 0x6e }
 #define BINLOG_NAMEFMT		"%s.%06d"
@@ -185,6 +185,7 @@
 #define SLAVE_POS_READ_ERR			0xff
 #define SLAVE_POS_READ_UNSAFE			0xfe
 #define SLAVE_POS_BAD_FD			0xfd
+#define SLAVE_POS_BEYOND_EOF			0xfc
 
 /**
  * Some useful macros for examining the MySQL Response packets
@@ -301,7 +302,9 @@ typedef struct router_slave {
 	char		binlogfile[BINLOG_FNAMELEN+1];
 					/*< Current binlog file for this slave */
 	char		*uuid;		/*< Slave UUID */
+#ifdef BLFILE_IN_SLAVE
 	BLFILE		*file;		/*< Currently open binlog file */
+#endif
 	int		serverid;	/*< Server-id of the slave */
 	char		*hostname;	/*< Hostname of the slave, if known */
 	char		*user;		/*< Username if given */

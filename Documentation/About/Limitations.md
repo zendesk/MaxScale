@@ -12,13 +12,13 @@ Compression is not included in MySQL server handshake
 
 ## Limitations with Galera Cluster Monitoring
 
-Master selection is based only on MIN(wsrep_local_index), no other server parameter.
+The default master selection is based only on MIN(wsrep_local_index). This can be influenced with the server priority mechanic described in the [Galera Monitor](../Monitors/Galera-Monitor.md) manual.
 
 ## Limitations in the connection router
 
 * If Master changes (ie. new Master promotion) during current connection the router cannot check the change
 
-* LONGBLOB is not supported
+* Sending of LONGBLOB data is not supported
 
 ## Limitations in the Read/Write Splitter
 

@@ -103,26 +103,26 @@ static backend_ref_t* get_bref_from_dcb(ROUTER_CLIENT_SES* rses, DCB* dcb);
 static DCB* rses_get_client_dcb(ROUTER_CLIENT_SES* rses);
 
 static route_target_t get_route_target (
-	skygw_query_type_t qtype,
-	bool               trx_active,
-	bool               load_active,
-	target_t           use_sql_variables_in,
-	HINT*              hint);
+	qc_query_type_t qtype,
+	bool            trx_active,
+	bool            load_active,
+	target_t        use_sql_variables_in,
+	HINT*           hint);
 
 static backend_ref_t* check_candidate_bref(
 	backend_ref_t* candidate_bref,
 	backend_ref_t* new_bref,
 	select_criteria_t sc);
 
-static skygw_query_type_t is_read_tmp_table(
+static qc_query_type_t is_read_tmp_table(
 	ROUTER_CLIENT_SES* router_cli_ses,
 	GWBUF*  querybuf,
-	skygw_query_type_t type);
+	qc_query_type_t type);
 
 static void check_create_tmp_table(
 	ROUTER_CLIENT_SES* router_cli_ses,
 	GWBUF*  querybuf,
-	skygw_query_type_t type);
+	qc_query_type_t type);
 
 static bool route_single_stmt(
 	ROUTER_INSTANCE*   inst,
@@ -276,7 +276,7 @@ static bool route_session_write(
         GWBUF*             querybuf,
         ROUTER_INSTANCE*   inst,
         unsigned char      packet_type,
-        skygw_query_type_t qtype);
+        qc_query_type_t    qtype);
 
 static void refreshInstance(
         ROUTER_INSTANCE*  router,
@@ -833,6 +833,7 @@ static void* newSession(
          */
         client_rses->rses_autocommit_enabled = true;
         client_rses->rses_transaction_active = false;
+        client_rses->have_tmp_tables = false;
         
         router_nservers = router_get_servercount(router);
         
@@ -1369,19 +1370,17 @@ static backend_ref_t* check_candidate_bref(
  *          if the query would otherwise be routed to slave.
  */
 static route_target_t get_route_target (
-        skygw_query_type_t qtype,
-        bool               trx_active,
-        bool               load_active,
-	target_t           use_sql_variables_in,
-        HINT*              hint)
+        qc_query_type_t qtype,
+        bool            trx_active,
+        bool            load_active,
+	target_t        use_sql_variables_in,
+        HINT*           hint)
 {
         route_target_t target = TARGET_UNDEFINED;
 	/**
 	 * These queries are not affected by hints
 	 */
 	if (!load_active && (QUERY_IS_TYPE(qtype, QUERY_TYPE_SESSION_WRITE) ||
-		QUERY_IS_TYPE(qtype, QUERY_TYPE_PREPARE_STMT) ||
-		QUERY_IS_TYPE(qtype, QUERY_TYPE_PREPARE_NAMED_STMT) ||
 		/** Configured to allow writing variables to all nodes */
 		(use_sql_variables_in == TYPE_ALL &&
 			QUERY_IS_TYPE(qtype, QUERY_TYPE_GSYSVAR_WRITE)) ||
@@ -1560,7 +1559,7 @@ static route_target_t get_route_target (
 void check_drop_tmp_table(
 	ROUTER_CLIENT_SES* router_cli_ses,
         GWBUF*  querybuf,
-	skygw_query_type_t type)
+	qc_query_type_t type)
 {
 
   int tsize = 0, klen = 0,i;
@@ -1608,9 +1607,9 @@ void check_drop_tmp_table(
 
   dbname = (char*)data->db;
 
-  if (is_drop_table_query(querybuf))
+  if (qc_is_drop_table_query(querybuf))
     {
-      tbl = skygw_get_table_names(querybuf,&tsize,false);
+      tbl = qc_get_table_names(querybuf,&tsize,false);
 	  if(tbl != NULL){		
 		  for(i = 0; i<tsize; i++)
 			  {
@@ -1645,10 +1644,10 @@ void check_drop_tmp_table(
  * @param type The type of the query resolved so far
  * @return The type of the query
  */
-static skygw_query_type_t is_read_tmp_table(
+static qc_query_type_t is_read_tmp_table(
 	ROUTER_CLIENT_SES* router_cli_ses,
 	GWBUF*  querybuf,
-	skygw_query_type_t type)
+	qc_query_type_t type)
 {
 
   bool target_tmp_table = false;
@@ -1658,9 +1657,9 @@ static skygw_query_type_t is_read_tmp_table(
   char hkey[MYSQL_DATABASE_MAXLEN+MYSQL_TABLE_MAXLEN+2];
   MYSQL_session* data;
 
-  DCB*               master_dcb     = NULL;
-  skygw_query_type_t qtype = type;
-  rses_property_t*   rses_prop_tmp;
+  DCB*             master_dcb     = NULL;
+  qc_query_type_t  qtype = type;
+  rses_property_t* rses_prop_tmp;
 
   if(router_cli_ses == NULL || querybuf == NULL)
   {
@@ -1676,6 +1675,8 @@ static skygw_query_type_t is_read_tmp_table(
       return type;
   }
 
+  if (BREF_IS_IN_USE(router_cli_ses->rses_master_ref))
+  {
   rses_prop_tmp = router_cli_ses->rses_properties[RSES_PROP_TYPE_TMPTABLES];
   master_dcb = router_cli_ses->rses_master_ref->bref_dcb;
 
@@ -1704,7 +1705,7 @@ static skygw_query_type_t is_read_tmp_table(
 	  QUERY_IS_TYPE(qtype, QUERY_TYPE_SYSVAR_READ) ||
 	  QUERY_IS_TYPE(qtype, QUERY_TYPE_GSYSVAR_READ))	  
     {
-      tbl = skygw_get_table_names(querybuf,&tsize,false);
+      tbl = qc_get_table_names(querybuf,&tsize,false);
 
       if (tbl != NULL && tsize > 0)
 	{ 
@@ -1737,7 +1738,8 @@ static skygw_query_type_t is_read_tmp_table(
 			}
 		free(tbl);
 	}
-	
+  }
+
 	return qtype;
 }
 
@@ -1753,8 +1755,13 @@ static skygw_query_type_t is_read_tmp_table(
 static void check_create_tmp_table(
 	ROUTER_CLIENT_SES* router_cli_ses,
 	GWBUF*  querybuf,
-	skygw_query_type_t type)
+	qc_query_type_t type)
 {
+    if (!QUERY_IS_TYPE(type, QUERY_TYPE_CREATE_TMP_TABLE))
+    {
+        return;
+    }
+
   int klen = 0;
   char *hkey,*dbname;
   MYSQL_session* data;
@@ -1776,6 +1783,7 @@ static void check_create_tmp_table(
       return;
   }
 
+  router_cli_ses->have_tmp_tables = true;
   rses_prop_tmp = router_cli_ses->rses_properties[RSES_PROP_TYPE_TMPTABLES];
   master_dcb = router_cli_ses->rses_master_ref->bref_dcb;
 
@@ -1800,12 +1808,10 @@ static void check_create_tmp_table(
   dbname = (char*)data->db;
 
 
-  if (QUERY_IS_TYPE(type, QUERY_TYPE_CREATE_TMP_TABLE))
-    {
       bool  is_temp = true;
       char* tblname = NULL;
 		
-      tblname = skygw_get_created_table_name(querybuf);
+      tblname = qc_get_created_table_name(querybuf);
 		
       if (tblname && strlen(tblname) > 0)
 	{
@@ -1877,7 +1883,6 @@ static void check_create_tmp_table(
 	  
       free(hkey);
       free(tblname);
-    }
 }
 
 /**
@@ -2073,7 +2078,7 @@ static bool route_single_stmt(
 	ROUTER_CLIENT_SES* rses,
 	GWBUF*             querybuf)
 {
-	skygw_query_type_t qtype          = QUERY_TYPE_UNKNOWN;
+	qc_query_type_t    qtype          = QUERY_TYPE_UNKNOWN;
 	mysql_server_cmd_t packet_type = MYSQL_COM_UNDEFINED;
 	uint8_t*           packet;
 	size_t		   packet_len;
@@ -2131,23 +2136,23 @@ static bool route_single_stmt(
 		case MYSQL_COM_DEBUG:       /*< 0d all servers dump debug info to stdout */
 		case MYSQL_COM_PING:        /*< 0e all servers are pinged */
 		case MYSQL_COM_CHANGE_USER: /*< 11 all servers change it accordingly */
-		case MYSQL_COM_STMT_CLOSE:  /*< free prepared statement */
-		case MYSQL_COM_STMT_SEND_LONG_DATA: /*< send data to column */
-		case MYSQL_COM_STMT_RESET:  /*< resets the data of a prepared statement */
 			qtype = QUERY_TYPE_SESSION_WRITE;
 			break;
 			
 		case MYSQL_COM_CREATE_DB:   /**< 5 DDL must go to the master */
 		case MYSQL_COM_DROP_DB:     /**< 6 DDL must go to the master */
+		case MYSQL_COM_STMT_CLOSE:  /*< free prepared statement */
+		case MYSQL_COM_STMT_SEND_LONG_DATA: /*< send data to column */
+		case MYSQL_COM_STMT_RESET:  /*< resets the data of a prepared statement */
 			qtype = QUERY_TYPE_WRITE;
 			break;
 			
 		case MYSQL_COM_QUERY:
-			qtype = query_classifier_get_type(querybuf);
+			qtype = qc_get_type(querybuf);
 			break;
 			
 		case MYSQL_COM_STMT_PREPARE:
-			qtype = query_classifier_get_type(querybuf);
+			qtype = qc_get_type(querybuf);
 			qtype |= QUERY_TYPE_PREPARE_STMT;
 			break;
 			
@@ -2176,9 +2181,16 @@ static bool route_single_stmt(
     /**
      * Check if the query has anything to do with temporary tables.
      */
-	qtype = is_read_tmp_table(rses, querybuf, qtype);
+    if(rses->have_tmp_tables && (packet_type == MYSQL_COM_QUERY ||
+                                 packet_type == MYSQL_COM_DROP_DB))
+    {
+        check_drop_tmp_table(rses, querybuf,qtype);
+        if(packet_type == MYSQL_COM_QUERY)
+        {
+            qtype = is_read_tmp_table(rses, querybuf, qtype);
+        }
+    }
 	check_create_tmp_table(rses, querybuf, qtype);
-	check_drop_tmp_table(rses, querybuf,qtype);
 
     /**
      * Check if this is a LOAD DATA LOCAL INFILE query. If so, send all queries
@@ -2186,7 +2198,7 @@ static bool route_single_stmt(
      */
     if (!rses->rses_load_active)
     {
-        skygw_query_op_t queryop = query_classifier_get_operation(querybuf);
+        qc_query_op_t queryop = qc_get_operation(querybuf);
         if (queryop == QUERY_OP_LOAD)
         {
             rses->rses_load_active = true;
@@ -2246,7 +2258,7 @@ static bool route_single_stmt(
                                  MYSQL_GET_PACKET_LEN((unsigned char *)querybuf->start) - 1);
                 char* data = (char*) &packet[5];
                 char* contentstr = strndup(data, MIN(len, RWSPLIT_TRACE_MSG_LEN));
-                char* qtypestr = skygw_get_qtype_str(qtype);
+                char* qtypestr = qc_get_qtype_str(qtype);
 
                 MXS_INFO("> Autocommit: %s, trx is %s, cmd: %s, type: %s, "
                          "stmt: %s%s %s",
@@ -2299,7 +2311,7 @@ static bool route_single_stmt(
 			backend_ref_t* bref = rses->rses_backend_ref;
 			
 			char* query_str = modutil_get_query(querybuf);
-			char* qtype_str = skygw_get_qtype_str(qtype);
+			char* qtype_str = qc_get_qtype_str(qtype);
 			
 			MXS_ERROR("Can't route %s:%s:\"%s\". SELECT with "
                                   "session data modification is not supported "
@@ -2479,8 +2491,7 @@ static bool route_single_stmt(
 #if defined(SS_EXTRA_DEBUG)
                         MXS_INFO("Found DCB for slave.");
 #endif
-			ss_dassert(get_root_master_bref(rses) == 
-				rses->rses_master_ref);
+
 			atomic_add(&inst->stats.n_slave, 1);
 		}
 		else
@@ -4332,7 +4343,7 @@ static bool route_session_write(
         GWBUF*             querybuf,
         ROUTER_INSTANCE*   inst,
         unsigned char      packet_type,
-        skygw_query_type_t qtype)
+        qc_query_type_t    qtype)
 {
         bool              succp;
         rses_property_t*  prop;

@@ -29,32 +29,35 @@
  * The filter makes no attempt to deal with queries that do not fit
  * in a single GWBUF or result sets that span multiple GWBUFs.
  *
- * To use a SSL connection the CA certificate, the client certificate and the client public key must be provided.
+ * To use a SSL connection the CA certificate, the client certificate and the client public
+ * key must be provided.
  * By default this filter uses a TCP connection.
  *@verbatim
  * The options for this filter are:
  *
- *	logging_trigger	Set the logging level
- *	logging_strict	Sets whether to trigger when any of the parameters match or only if all parameters match
- *	logging_log_all	Log only SELECT, UPDATE, DELETE and INSERT or all possible queries
- * 	hostname	The server hostname where the messages are sent
- * 	port		Port to send the messages to
- * 	username	Server login username
- * 	password 	Server login password
- * 	vhost		The virtual host location on the server, where the messages are sent
- * 	exchange	The name of the exchange
- * 	exchange_type	The type of the exchange, defaults to direct
- * 	key		The routing key used when sending messages to the exchange
- * 	queue		The queue that will be bound to the used exchange
- * 	ssl_CA_cert	Path to the CA certificate in PEM format
- * 	ssl_client_cert Path to the client cerificate in PEM format
- * 	ssl_client_key	Path to the client public key in PEM format
+ *      logging_trigger Set the logging level
+ *      logging_strict  Sets whether to trigger when any of the parameters match or only if
+ *                      all parameters match
+ *      logging_log_all Log only SELECT, UPDATE, DELETE and INSERT or all possible queries
+ *      hostname        The server hostname where the messages are sent
+ *      port            Port to send the messages to
+ *      username        Server login username
+ *      password        Server login password
+ *      vhost           The virtual host location on the server, where the messages are sent
+ *      exchange        The name of the exchange
+ *      exchange_type   The type of the exchange, defaults to direct
+ *      key             The routing key used when sending messages to the exchange
+ *      queue           The queue that will be bound to the used exchange
+ *      ssl_CA_cert     Path to the CA certificate in PEM format
+ *      ssl_client_cert Path to the client cerificate in PEM format
+ *      ssl_client_key  Path to the client public key in PEM format
  *
  * The logging trigger levels are:
- *	all	Log everything
- *	source	Trigger on statements originating from a particular source (database user and host combination)
- *	schema	Trigger on a certain schema
- *	object	Trigger on a particular database object (table or view)
+ *      all     Log everything
+ *      source  Trigger on statements originating from a particular source (database user and
+ *              host combination)
+ *      schema  Trigger on a certain schema
+ *      object  Trigger on a particular database object (table or view)
  *@endverbatim
  * See the individual struct documentations for logging trigger parameters
  */
@@ -77,7 +80,6 @@
 #include <query_classifier.h>
 #include <spinlock.h>
 #include <session.h>
-#include <plugin.h>
 #include <housekeeper.h>
 
 MODULE_INFO info =
@@ -146,8 +148,8 @@ enum log_trigger_t
  * Both options allow multiple values separated by a ','.
  * @verbatim
  * Trigger options:
- *	logging_source_user	Comma-separated list of usernames to log
- *	logging_source_host	Comma-separated list of hostnames to log
+ *      logging_source_user     Comma-separated list of usernames to log
+ *      logging_source_host     Comma-separated list of hostnames to log
  * @endverbatim
  */
 typedef struct source_trigger_t
@@ -164,7 +166,7 @@ typedef struct source_trigger_t
  * Log only those queries that target a specific database.
  *
  * Trigger options:
- *	logging_schema	Comma-separated list of databases
+ *      logging_schema  Comma-separated list of databases
  */
 typedef struct schema_trigger_t
 {
@@ -178,7 +180,7 @@ typedef struct schema_trigger_t
  * Log only those queries that target specific database objects.
  *@verbatim
  * Trigger options:
- *	logging_object	Comma-separated list of database objects
+ *      logging_object  Comma-separated list of database objects
  *@endverbatim
  */
 typedef struct object_trigger_t
@@ -313,8 +315,8 @@ init_conn(MQ_INSTANCE *my_instance)
 
         if ((my_instance->sock = amqp_ssl_socket_new(my_instance->conn)) != NULL)
         {
-
-            if ((amqp_ok = amqp_ssl_socket_set_cacert(my_instance->sock, my_instance->ssl_CA_cert)) != AMQP_STATUS_OK)
+            amqp_ok = amqp_ssl_socket_set_cacert(my_instance->sock, my_instance->ssl_CA_cert);
+            if (amqp_ok != AMQP_STATUS_OK)
             {
                 MXS_ERROR("Failed to set CA certificate: %s", amqp_error_string2(amqp_ok));
                 goto cleanup;
@@ -345,13 +347,15 @@ init_conn(MQ_INSTANCE *my_instance)
     }
 
     /**Socket creation was successful, trying to open the socket*/
-    if ((amqp_ok = amqp_socket_open(my_instance->sock, my_instance->hostname, my_instance->port)) != AMQP_STATUS_OK)
+    amqp_ok = amqp_socket_open(my_instance->sock, my_instance->hostname, my_instance->port);
+    if (amqp_ok != AMQP_STATUS_OK)
     {
         MXS_ERROR("Failed to open socket: %s", amqp_error_string2(amqp_ok));
         goto cleanup;
     }
     amqp_rpc_reply_t reply;
-    reply = amqp_login(my_instance->conn, my_instance->vhost, 0, AMQP_DEFAULT_FRAME_SIZE, 0, AMQP_SASL_METHOD_PLAIN, my_instance->username, my_instance->password);
+    reply = amqp_login(my_instance->conn, my_instance->vhost, 0, AMQP_DEFAULT_FRAME_SIZE, 0,
+                       AMQP_SASL_METHOD_PLAIN, my_instance->username, my_instance->password);
     if (reply.reply_type != AMQP_RESPONSE_NORMAL)
     {
         MXS_ERROR("Login to RabbitMQ server failed.");
@@ -383,17 +387,20 @@ init_conn(MQ_INSTANCE *my_instance)
         {
             if (reply.reply.id == AMQP_CHANNEL_CLOSE_METHOD)
             {
-                amqp_send_method(my_instance->conn, my_instance->channel, AMQP_CHANNEL_CLOSE_OK_METHOD, NULL);
+                amqp_send_method(my_instance->conn, my_instance->channel,
+                                 AMQP_CHANNEL_CLOSE_OK_METHOD, NULL);
             }
             else if (reply.reply.id == AMQP_CONNECTION_CLOSE_METHOD)
             {
-                amqp_send_method(my_instance->conn, my_instance->channel, AMQP_CONNECTION_CLOSE_OK_METHOD, NULL);
+                amqp_send_method(my_instance->conn, my_instance->channel,
+                                 AMQP_CONNECTION_CLOSE_OK_METHOD, NULL);
             }
 
             my_instance->channel++;
             amqp_channel_open(my_instance->conn, my_instance->channel);
 
-            amqp_exchange_delete(my_instance->conn, my_instance->channel, amqp_cstring_bytes(my_instance->exchange), 0);
+            amqp_exchange_delete(my_instance->conn, my_instance->channel,
+                                 amqp_cstring_bytes(my_instance->exchange), 0);
             amqp_exchange_declare(my_instance->conn, my_instance->channel,
                                   amqp_cstring_bytes(my_instance->exchange),
                                   amqp_cstring_bytes(my_instance->exchange_type),
@@ -492,7 +499,7 @@ char** parse_optstr(char* str, char* tok, int* szstore)
  * Create an instance of the filter for a particular service
  * within MaxScale.
  *
- * @param options	The options for this filter
+ * @param options       The options for this filter
  *
  * @return The instance data for this new instance
  */
@@ -502,7 +509,7 @@ createInstance(char **options, FILTER_PARAMETER **params)
     MQ_INSTANCE *my_instance;
     int paramcount = 0, parammax = 64, i = 0, x = 0, arrsize = 0;
     FILTER_PARAMETER** paramlist;
-    char** arr;
+    char** arr = NULL;
     char taskname[512];
 
     if ((my_instance = calloc(1, sizeof(MQ_INSTANCE))))
@@ -514,6 +521,8 @@ createInstance(char **options, FILTER_PARAMETER **params)
 
         if ((my_instance->conn = amqp_new_connection()) == NULL)
         {
+            free(paramlist);
+            free(my_instance);
             return NULL;
         }
         my_instance->channel = 1;
@@ -610,6 +619,10 @@ createInstance(char **options, FILTER_PARAMETER **params)
 
                 if (arrsize > 0)
                 {
+                    for (int x = 0; x < arrsize; x++)
+                    {
+                        free(arr[x]);
+                    }
                     free(arr);
                 }
                 arrsize = 0;
@@ -769,7 +782,8 @@ createInstance(char **options, FILTER_PARAMETER **params)
 
         if (my_instance->use_ssl)
         {
-            amqp_set_initialize_ssl_library(0); /**Assume the underlying SSL library is already initialized*/
+            /**Assume the underlying SSL library is already initialized*/
+            amqp_set_initialize_ssl_library(0);
         }
 
         /**Connect to the server*/
@@ -777,7 +791,11 @@ createInstance(char **options, FILTER_PARAMETER **params)
 
         snprintf(taskname, 511, "mqtask%d", atomic_add(&hktask_id, 1));
         hktask_add(taskname, sendMessage, (void*) my_instance, 5);
-
+        for (int x = 0; x < arrsize; x++)
+        {
+            free(arr[x]);
+        }
+        free(arr);
     }
     return(FILTER *) my_instance;
 }
@@ -834,7 +852,7 @@ void sendMessage(void* data)
 {
     MQ_INSTANCE *instance = (MQ_INSTANCE*) data;
     mqmessage *tmp;
-    int err_num;
+    int err_num = AMQP_STATUS_OK;
 
     spinlock_acquire(&instance->rconn_lock);
     if (instance->conn_stat != AMQP_STATUS_OK)
@@ -958,8 +976,8 @@ void pushMessage(MQ_INSTANCE *instance, amqp_basic_properties_t* prop, char* msg
  * a connection to the server and prepares the exchange and the queue for use.
  *
  *
- * @param instance	The filter instance data
- * @param session	The session itself
+ * @param instance      The filter instance data
+ * @param session       The session itself
  * @return Session specific data for this session
  */
 static void *
@@ -992,8 +1010,8 @@ newSession(FILTER *instance, SESSION *session)
  * by which a filter may cleanup data structure etc.
  * In the case of the MQ filter we do nothing.
  *
- * @param instance	The filter instance data
- * @param session	The session being closed
+ * @param instance      The filter instance data
+ * @param session       The session being closed
  */
 static void
 closeSession(FILTER *instance, void *session){ }
@@ -1001,8 +1019,8 @@ closeSession(FILTER *instance, void *session){ }
 /**
  * Free the memory associated with the session
  *
- * @param instance	The filter instance
- * @param session	The filter session
+ * @param instance      The filter instance
+ * @param session       The filter session
  */
 static void
 freeSession(FILTER *instance, void *session)
@@ -1018,9 +1036,9 @@ freeSession(FILTER *instance, void *session)
  * Set the downstream filter or router to which queries will be
  * passed from this filter.
  *
- * @param instance	The filter instance data
- * @param session	The filter session
- * @param downstream	The downstream filter or router.
+ * @param instance      The filter instance data
+ * @param session       The filter session
+ * @param downstream    The downstream filter or router.
  */
 static void
 setDownstream(FILTER *instance, void *session, DOWNSTREAM *downstream)
@@ -1076,9 +1094,9 @@ unsigned int pktlen(void* c)
  * The message is tagged with an unique identifier and the clientReply will
  * use the same identifier for the reply from the backend to form a query-reply pair.
  *
- * @param instance	The filter instance data
- * @param session	The filter session
- * @param queue		The query data
+ * @param instance      The filter instance data
+ * @param session       The filter session
+ * @param queue         The query data
  */
 static int
 routeQuery(FILTER *instance, void *session, GWBUF *queue)
@@ -1106,23 +1124,11 @@ routeQuery(FILTER *instance, void *session, GWBUF *queue)
 
     if (modutil_is_SQL(queue))
     {
-
-        /**Parse the query*/
-
-        if (!query_is_parsed(queue))
-        {
-            success = parse_query(queue);
-        }
-
-        if (!success)
-        {
-            MXS_ERROR("Parsing query failed.");
-            goto send_downstream;
-        }
+        success = true;
 
         if (!my_instance->log_all)
         {
-            if (!skygw_is_real_query(queue))
+            if (!qc_is_real_query(queue))
             {
                 goto send_downstream;
             }
@@ -1151,7 +1157,8 @@ routeQuery(FILTER *instance, void *session, GWBUF *queue)
                     {
                         if (strcmp(my_instance->src_trg->user[i], sessusr) == 0)
                         {
-                            MXS_INFO("Trigger is TRG_SOURCE: user: %s = %s", my_instance->src_trg->user[i], sessusr);
+                            MXS_INFO("Trigger is TRG_SOURCE: user: %s = %s",
+                                     my_instance->src_trg->user[i], sessusr);
                             src_ok = true;
                             break;
                         }
@@ -1168,7 +1175,8 @@ routeQuery(FILTER *instance, void *session, GWBUF *queue)
 
                         if (strcmp(my_instance->src_trg->host[i], sesshost) == 0)
                         {
-                            MXS_INFO("Trigger is TRG_SOURCE: host: %s = %s", my_instance->src_trg->host[i], sesshost);
+                            MXS_INFO("Trigger is TRG_SOURCE: host: %s = %s",
+                                     my_instance->src_trg->host[i], sesshost);
                             src_ok = true;
                             break;
                         }
@@ -1191,7 +1199,7 @@ routeQuery(FILTER *instance, void *session, GWBUF *queue)
         if (my_instance->trgtype & TRG_SCHEMA && my_instance->shm_trg)
         {
             int tbsz = 0, z;
-            char** tblnames = skygw_get_table_names(queue, &tbsz, true);
+            char** tblnames = qc_get_table_names(queue, &tbsz, true);
             char* tmp;
             bool all_remotes = true;
 
@@ -1207,7 +1215,8 @@ routeQuery(FILTER *instance, void *session, GWBUF *queue)
                         if (strcmp(tmp, my_instance->shm_trg->objects[i]) == 0)
                         {
 
-                            MXS_INFO("Trigger is TRG_SCHEMA: %s = %s", tmp, my_instance->shm_trg->objects[i]);
+                            MXS_INFO("Trigger is TRG_SCHEMA: %s = %s",
+                                     tmp, my_instance->shm_trg->objects[i]);
 
                             schema_ok = true;
                             break;
@@ -1231,7 +1240,8 @@ routeQuery(FILTER *instance, void *session, GWBUF *queue)
                     if (strcmp(my_session->db, my_instance->shm_trg->objects[i]) == 0)
                     {
 
-                        MXS_INFO("Trigger is TRG_SCHEMA: %s = %s", my_session->db, my_instance->shm_trg->objects[i]);
+                        MXS_INFO("Trigger is TRG_SCHEMA: %s = %s",
+                                 my_session->db, my_instance->shm_trg->objects[i]);
 
                         schema_ok = true;
                         break;
@@ -1256,7 +1266,7 @@ routeQuery(FILTER *instance, void *session, GWBUF *queue)
         if (my_instance->trgtype & TRG_OBJECT && my_instance->obj_trg)
         {
 
-            sesstbls = skygw_get_table_names(queue, &dbcount, false);
+            sesstbls = qc_get_table_names(queue, &dbcount, false);
 
             for (j = 0; j < dbcount; j++)
             {
@@ -1281,7 +1291,8 @@ routeQuery(FILTER *instance, void *session, GWBUF *queue)
                     if (!strcmp(tbnm, my_instance->obj_trg->objects[i]))
                     {
                         obj_ok = true;
-                        MXS_INFO("Trigger is TRG_OBJECT: %s = %s", my_instance->obj_trg->objects[i], sesstbls[j]);
+                        MXS_INFO("Trigger is TRG_OBJECT: %s = %s",
+                                 my_instance->obj_trg->objects[i], sesstbls[j]);
                         break;
                     }
 
@@ -1372,7 +1383,7 @@ validate_triggers:
                 {
 
                     /**Try to convert to a canonical form and use the plain query if unsuccessful*/
-                    if ((canon_q = skygw_get_canonical(queue)) == NULL)
+                    if ((canon_q = qc_get_canonical(queue)) == NULL)
                     {
                         MXS_ERROR("Cannot form canonical query.");
                     }
@@ -1469,7 +1480,8 @@ unsigned int consume_leitoi(unsigned char** c)
 }
 
 /**
- * Converts length-encoded strings to character strings and advanced the pointer to the next unrelated byte.
+ * Converts length-encoded strings to character strings and advanced
+ * the pointer to the next unrelated byte.
  * The caller is responsible for freeing the allocated memory.
  * @param c Pointer to the first byte of a valid packet.
  * @return The newly allocated string or NULL of an error occurred
@@ -1507,9 +1519,9 @@ unsigned int is_eof(void* p)
  * adds a timestamp to it and publishes the resulting string on the exchange.
  * The message is tagged with the same identifier that the query was.
  *
- * @param instance	The filter instance data
- * @param session	The filter session
- * @param reply		The response data
+ * @param instance      The filter instance data
+ * @param session       The filter session
+ * @param reply         The response data
  */
 static int clientReply(FILTER* instance, void *session, GWBUF *reply)
 {
@@ -1650,9 +1662,9 @@ static int clientReply(FILTER* instance, void *session, GWBUF *reply)
  * Prints the connection details and the names of the exchange,
  * queue and the routing key.
  *
- * @param	instance	The filter instance
- * @param	fsession	Filter session, may be NULL
- * @param	dcb		The DCB for diagnostic output
+ * @param       instance        The filter instance
+ * @param       fsession        Filter session, may be NULL
+ * @param       dcb             The DCB for diagnostic output
  */
 static void
 diagnostic(FILTER *instance, void *fsession, DCB *dcb)

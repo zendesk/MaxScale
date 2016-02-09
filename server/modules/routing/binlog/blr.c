@@ -756,7 +756,9 @@ ROUTER_SLAVE		*slave;
         spinlock_init(&slave->catch_lock);
 	slave->dcb = session->client;
 	slave->router = inst;
+#ifdef BLFILE_IN_SLAVE
 	slave->file = NULL;
+#endif
 	strcpy(slave->binlogfile, "unassigned");
 	slave->connect_time = time(0);
 	slave->lastEventTimestamp = 0;
@@ -901,19 +903,15 @@ ROUTER_SLAVE	 *slave = (ROUTER_SLAVE *)router_session;
 		 */
 		slave->state = BLRS_UNREGISTERED;
 
+#if BLFILE_IN_SLAVE
+                // TODO: Is it really certain the file can be closed here? If other
+                // TODO: threads are using the slave instance, bag things will happen. [JWi].
 		if (slave->file)
 			blr_close_binlog(router, slave->file);
+#endif
 
                 /* Unlock */
                 rses_end_locked_router_action(slave);
-
-		/**
-		 * Close the slave server connection
-		 */
-                if (slave->dcb != NULL) {
-                        CHK_DCB(slave->dcb);
-                        dcb_close(slave->dcb);
-                }
         }
 }
 
@@ -1096,12 +1094,11 @@ struct tm	tm;
 		if (!router_inst->mariadb10_compat) {
 			dcb_printf(dcb, "\tLast event from master:  			0x%x, %s\n",
 				router_inst->lastEventReceived,
-				(router_inst->lastEventReceived >= 0 && 
-				router_inst->lastEventReceived <= MAX_EVENT_TYPE) ?
+				(router_inst->lastEventReceived <= MAX_EVENT_TYPE) ?
 				event_names[router_inst->lastEventReceived] : "unknown");
 		} else {
 			char *ptr = NULL;
-			if (router_inst->lastEventReceived >= 0 && router_inst->lastEventReceived <= MAX_EVENT_TYPE) {
+			if (router_inst->lastEventReceived <= MAX_EVENT_TYPE) {
 				ptr = event_names[router_inst->lastEventReceived];
 			} else {
 				/* Check MariaDB 10 new events */
@@ -1983,13 +1980,11 @@ blr_last_event_description(ROUTER_INSTANCE *router) {
 char *event_desc = NULL;
 
 	if (!router->mariadb10_compat) {
-		if (router->lastEventReceived >= 0 &&
-			router->lastEventReceived <= MAX_EVENT_TYPE) {
+		if (router->lastEventReceived <= MAX_EVENT_TYPE) {
 			event_desc = event_names[router->lastEventReceived];
 		}
 	} else {
-		if (router->lastEventReceived >= 0 &&
-			router->lastEventReceived <= MAX_EVENT_TYPE) {
+		if (router->lastEventReceived <= MAX_EVENT_TYPE) {
 			event_desc = event_names[router->lastEventReceived];
 		} else {
 			/* Check MariaDB 10 new events */
@@ -2015,13 +2010,11 @@ blr_get_event_description(ROUTER_INSTANCE *router, uint8_t event) {
 char *event_desc = NULL;
 
 	if (!router->mariadb10_compat) {
-		if (event >= 0 &&
-			event <= MAX_EVENT_TYPE) {
+		if (event <= MAX_EVENT_TYPE) {
 			event_desc = event_names[event];
 		}
 	} else {
-		if (event >= 0 &&
-			event <= MAX_EVENT_TYPE) {
+		if (event <= MAX_EVENT_TYPE) {
 			event_desc = event_names[event];
 		} else {
 			/* Check MariaDB 10 new events */

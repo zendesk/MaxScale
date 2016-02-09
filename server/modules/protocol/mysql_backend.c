@@ -227,11 +227,10 @@ static int gw_read_backend_event(DCB *dcb) {
                                 spinlock_acquire(&dcb->session->ses_lock);
 
                                 /** 
-				 * Decode password and send the auth credentials
-				 * to backend.
-				 */
-                                if (gw_send_authentication_to_backend(
-                                            current_session->db,
+                                 * Decode password and send the auth credentials
+                                 * to backend.
+                                 */
+                                if (gw_send_authentication_to_backend(current_session->db,
                                             current_session->user,
                                             current_session->client_sha1,
                                             backend_protocol) != 0)
